@@ -1,0 +1,11 @@
+livekit-client-android=https://github.com/livekit/client-sdk-android.git@cc34346c190d22ce07881ba78120edb7b2bd06d6
+livekit-server=https://github.com/livekit/livekit.git@69871d86c473c854543b15a65c8e67549b4cb03a
+srs=https://github.com/ossrs/srs.git@f7968893cfdefcfa681ed5499c804095daf67469
+openim-sdk-core=https://github.com/openimsdk/openim-sdk-core.git@db36e316a00eef4b647666a828c689ad5d9460f7
+openim-server=https://github.com/openimsdk/open-im-server.git@9502a1a15fe63f6342fb1e2d8068346a82f278d8
+ZLMediaKit=https://github.com/ZLMediaKit/ZLMediaKit.git@fcb2889ad15ef48aa7c15081cf9f1672cbb7ffad
+billd-live-server=https://github.com/galaxy-s10/billd-live-server.git@331d2649ec608f8b8e8f4adcc88ecbf03b2e8306
+billd-live-kotlin=https://github.com/galaxy-s10/billd-live-kotlin.git@6836de5663a11e379e2bb5b18a8b86cf928d211a
+billd-live-flutter=https://github.com/galaxy-s10/billd-live-flutter.git@89f7bb9fac915f25971651be0db3bcb0eb361ac3
+live-revenue-integrity-lab=https://github.com/wenkikikiki/live-revenue-integrity-lab.git@7410d78bc6ed8ab4b877f5a3b49387da7f8d7219
+rem=https://github.com/junsey111/-rem.git@empty-repository

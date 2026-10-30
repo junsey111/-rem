@@ -1,0 +1,24 @@
+[submodule "third_party/billd-live-server"]
+	path = third_party/billd-live-server
+	url = https://github.com/galaxy-s10/billd-live-server.git
+[submodule "third_party/live-revenue-integrity-lab"]
+	path = third_party/live-revenue-integrity-lab
+	url = https://github.com/wenkikikiki/live-revenue-integrity-lab.git
+[submodule "third_party/openim-server"]
+	path = third_party/openim-server
+	url = https://github.com/openimsdk/open-im-server.git
+[submodule "third_party/openim-sdk-core"]
+	path = third_party/openim-sdk-core
+	url = https://github.com/openimsdk/openim-sdk-core.git
+[submodule "third_party/livekit-server"]
+	path = third_party/livekit-server
+	url = https://github.com/livekit/livekit.git
+[submodule "third_party/livekit-client-android"]
+	path = third_party/livekit-client-android
+	url = https://github.com/livekit/client-sdk-android.git
+[submodule "third_party/srs"]
+	path = third_party/srs
+	url = https://github.com/ossrs/srs.git
+[submodule "third_party/ZLMediaKit"]
+	path = third_party/ZLMediaKit
+	url = https://github.com/ZLMediaKit/ZLMediaKit.git

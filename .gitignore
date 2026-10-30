@@ -1,0 +1,16 @@
+.gradle/
+.kotlin/
+.tools/
+local.properties
+**/build/
+**/dist/
+**/node_modules/
+**/.eslintcache
+**/.env
+*.apk
+*.aab
+*.exe
+*.log
+third_party/*/
+!third_party/.keep
+third_party/rem/
