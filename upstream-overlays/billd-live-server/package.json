@@ -30,13 +30,6 @@
       "path": "./node_modules/cz-conventional-changelog"
     }
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "cpu-features",
-      "mediasoup",
-      "ssh2"
-    ]
-  },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.0.0",
     "alipay-sdk": "^3.3.1",
