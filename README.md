@@ -67,7 +67,7 @@ docker compose -p live-platform -f backend-compose.yml up --build
 
 账务服务的 MySQL、Redis、Kafka 使用独立的 `live-revenue-private` 网络；只有账务 API 同时加入 `live_backend`，因此不会与 Billd 的同名依赖容器发生 DNS 冲突。Socket.IO 开播登记需要在握手中携带 Billd JWT，服务端会校验主播用户 ID。
 
-业务 API 为 `http://localhost:8080`，例如 `POST /v1/gifts`、`GET /v1/lives/{id}/contributors`、`GET /v1/creators/me/earnings`、`GET /v1/users/me/level`、`GET /v1/rankings/creators`、`GET /v1/rankings/contributors`、`GET /v1/matches/{id}/score` 和 `GET /v1/settlements/{id}`。Billd API 为 `http://localhost:4300`，SRS 为 `http://localhost:1985`。
+业务 API 默认通过 `http://localhost:18080` 暴露（可用 `REVENUE_PORT` 覆盖），例如 `POST /v1/gifts`、`GET /v1/lives/{id}/contributors`、`GET /v1/creators/me/earnings`、`GET /v1/users/me/level`、`GET /v1/rankings/creators`、`GET /v1/rankings/contributors`、`GET /v1/matches/{id}/score` 和 `GET /v1/settlements/{id}`。Billd API 为 `http://localhost:4300`，SRS 为 `http://localhost:1985`。
 
 Billd 客户端登录入口为 `POST /user/create`（JSON：`username`、`password`、可选 `avatar`/`desc`）和 `POST /user/login`（JSON：`id`、`password`）。登录响应中的 `data` 是 JWT，后续账务接口使用 `Authorization: Bearer <JWT>`。`GET /live/list` 返回当前通过 Billd Socket.IO 开播的房间。
 

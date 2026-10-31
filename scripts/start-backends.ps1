@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+$revenuePort = if ($env:REVENUE_PORT) { [int]$env:REVENUE_PORT } else { 18080 }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw 'Docker CLI was not found. Install Docker Desktop and start its Linux engine.'
@@ -34,6 +35,7 @@ function Wait-TcpEndpoint([string]$Name, [string]$Host, [int]$Port, [int]$Timeou
 # each keeps its own database schema and Kafka/Redis dependencies.
 docker compose -p live-platform -f (Join-Path $PSScriptRoot '..\backend-compose.yml') up --build -d
 if ($LASTEXITCODE -ne 0) { throw 'Billd/SRS stack did not become ready.' }
+$env:API_PORT = [string]$revenuePort
 docker compose -p live-revenue -f (Join-Path $PSScriptRoot '..\third_party\live-revenue-integrity-lab\docker-compose.yml') up --build -d
 if ($LASTEXITCODE -ne 0) { throw 'Revenue stack did not become ready.' }
 $openImRoot = Join-Path $PSScriptRoot '..\third_party\openim-server'
@@ -46,13 +48,13 @@ docker compose --env-file (Join-Path $openImRoot '.env') -f (Join-Path $openImRo
 if ($LASTEXITCODE -ne 0) { throw 'OpenIM stack did not start.' }
 
 Wait-HttpEndpoint 'Billd' 'http://localhost:4300/'
-Wait-HttpEndpoint 'Revenue API' 'http://localhost:8080/healthz' 300
+Wait-HttpEndpoint 'Revenue API' "http://localhost:$revenuePort/healthz" 300
 Wait-HttpEndpoint 'SRS' 'http://localhost:1985/api/v1/versions'
 Wait-TcpEndpoint 'LiveKit' 'localhost' 7880
 Wait-TcpEndpoint 'OpenIM API' 'localhost' 10002 600
 Wait-TcpEndpoint 'OpenIM message WebSocket' 'localhost' 10001 600
 Write-Host 'Billd API: http://localhost:4300'
-Write-Host 'Revenue API: http://localhost:8080'
+Write-Host "Revenue API: http://localhost:$revenuePort"
 Write-Host 'SRS API: http://localhost:1985'
 Write-Host 'LiveKit: ws://localhost:7880 (dev key: devkey, secret: secret)'
 Write-Host 'OpenIM API: http://localhost:10002'

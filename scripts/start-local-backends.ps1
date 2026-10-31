@@ -5,6 +5,7 @@ param(
   [string]$MySqlUser = 'billd',
   [string]$MySqlPassword = 'billd',
   [int]$RedisPort = 8888,
+  [int]$RevenuePort = 18080,
   [switch]$StartMySqlAsAdmin,
   [switch]$SkipBilld
 )
@@ -51,6 +52,6 @@ if (-not $SkipBilld) {
   $env:REDIS_HOST = '127.0.0.1'
   $env:REDIS_PORT = [string]$RedisPort
   $env:DB_SYNC_MODE = '2'
-  $env:REVENUE_API_URL = 'http://127.0.0.1:8080'
+  $env:REVENUE_API_URL = "http://127.0.0.1:$RevenuePort"
   pnpm --dir $billdRoot dev
 }

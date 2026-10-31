@@ -1,6 +1,6 @@
 param(
   [string]$BilldUrl = 'http://localhost:4300',
-  [string]$RevenueUrl = 'http://localhost:8080',
+  [string]$RevenueUrl = 'http://localhost:18080',
   [switch]$SkipOpenIm
 )
 
