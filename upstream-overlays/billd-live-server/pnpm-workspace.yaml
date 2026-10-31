@@ -1,4 +1,4 @@
-onlyBuiltDependencies:
-  - cpu-features
-  - mediasoup
-  - ssh2
+allowBuilds:
+  cpu-features: true
+  mediasoup: true
+  ssh2: true
