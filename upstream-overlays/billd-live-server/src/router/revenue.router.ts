@@ -56,6 +56,16 @@ revenueRouter.get('/wallet', async (ctx, next) => {
   await next();
 });
 
+revenueRouter.get('/level', async (ctx, next) => {
+  const user = await requireUser(ctx);
+  await syncRevenueUser(user);
+  const result = await axios.get(`${REVENUE_API_URL}/v1/users/me/level`, {
+    headers: { Authorization: ctx.headers.authorization || '' },
+  });
+  successHandler({ ctx, data: result });
+  await next();
+});
+
 revenueRouter.get('/earnings', async (ctx, next) => {
   await requireUser(ctx);
   const result = await axios.get(`${REVENUE_API_URL}/v1/creators/me/earnings`, {

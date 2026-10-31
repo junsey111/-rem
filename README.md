@@ -67,13 +67,13 @@ docker compose -p live-platform -f backend-compose.yml up --build
 
 账务服务的 MySQL、Redis、Kafka 使用独立的 `live-revenue-private` 网络；只有账务 API 同时加入 `live_backend`，因此不会与 Billd 的同名依赖容器发生 DNS 冲突。Socket.IO 开播登记需要在握手中携带 Billd JWT，服务端会校验主播用户 ID。
 
-业务 API 为 `http://localhost:8080`，例如 `POST /v1/gifts`、`GET /v1/lives/{id}/contributors`、`GET /v1/creators/me/earnings`、`GET /v1/rankings/creators`、`GET /v1/rankings/contributors`、`GET /v1/matches/{id}/score` 和 `GET /v1/settlements/{id}`。Billd API 为 `http://localhost:4300`，SRS 为 `http://localhost:1985`。
+业务 API 为 `http://localhost:8080`，例如 `POST /v1/gifts`、`GET /v1/lives/{id}/contributors`、`GET /v1/creators/me/earnings`、`GET /v1/users/me/level`、`GET /v1/rankings/creators`、`GET /v1/rankings/contributors`、`GET /v1/matches/{id}/score` 和 `GET /v1/settlements/{id}`。Billd API 为 `http://localhost:4300`，SRS 为 `http://localhost:1985`。
 
 Billd 客户端登录入口为 `POST /user/create`（JSON：`username`、`password`、可选 `avatar`/`desc`）和 `POST /user/login`（JSON：`id`、`password`）。登录响应中的 `data` 是 JWT，后续账务接口使用 `Authorization: Bearer <JWT>`。`GET /live/list` 返回当前通过 Billd Socket.IO 开播的房间。
 
 LiveKit 房间 token 入口为 `POST /livekit/token`（JSON：`live_session_id`），需要 Billd JWT。服务端先查询账务服务中的直播会话，再签发 10 分钟 token；主播获得发布权限，观众只获得订阅权限。`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET` 只配置在服务端环境。
 
-业务写接口经由 `http://localhost:4300/revenue/...` 使用 Billd JWT；充值只接受支付服务使用 `PAYMENT_WEBHOOK_SECRET` 生成的 `X-Payment-Signature`。账务数据库中的用户和直播会话由 Billd 服务通过私有网络及 `X-Internal-Key` 自动同步。
+业务接口经由 `http://localhost:4300/revenue/...` 使用 Billd JWT，例如 `GET /revenue/level` 会返回当前用户的消费等级和主播等级；充值只接受支付服务使用 `PAYMENT_WEBHOOK_SECRET` 生成的 `X-Payment-Signature`。账务数据库中的用户和直播会话由 Billd 服务通过私有网络及 `X-Internal-Key` 自动同步。
 
 真实支付宝充值入口为 `GET /alipay/recharge?coins=100`，异步通知为 `POST /alipay/notify`；通知会先由支付宝 SDK 验签，再写入账务钱包。
 

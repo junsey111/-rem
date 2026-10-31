@@ -60,6 +60,7 @@ func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentS
 	mux.HandleFunc("/v1/gifts/catalog", s.wrap("gift_catalog", s.handleGiftCatalog))
 	mux.HandleFunc("/v1/wallets/me", s.requireAuth(s.wrap("wallet_balance", s.handleWalletBalance)))
 	mux.HandleFunc("/v1/creators/me/earnings", s.requireAuth(s.wrap("creator_earnings", s.handleCreatorEarnings)))
+	mux.HandleFunc("/v1/users/me/level", s.requireAuth(s.wrap("user_level", s.handleUserLevel)))
 	mux.HandleFunc("/v1/rankings/creators", s.requireAuth(s.wrap("creator_rankings", s.handleCreatorRankings)))
 	mux.HandleFunc("/v1/rankings/contributors", s.requireAuth(s.wrap("contributor_rankings", s.handleContributorRankings)))
 	mux.HandleFunc("/v1/wallets/recharges", s.wrap("wallet_recharge", s.handleRecharge))
@@ -170,6 +171,32 @@ func (s *Server) handleCreatorEarnings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"creator_id": authenticatedUserID(r), "period": period, "diamonds": diamonds, "gifts": gifts})
+}
+
+func (s *Server) handleUserLevel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
+		return
+	}
+	userID := authenticatedUserID(r)
+	var spent, earned int64
+	err := s.db.QueryRowContext(r.Context(), `
+		SELECT
+			COALESCE(SUM(CASE WHEN viewer_id = ? AND status = 'ACCEPTED' THEN charged_coins ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN creator_id = ? AND status = 'ACCEPTED' THEN diamond_reward ELSE 0 END), 0)
+		FROM gift_orders
+	`, userID, userID).Scan(&spent, &earned)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"user_id":        userID,
+		"viewer_points":  spent,
+		"viewer_level":   service.LevelForPoints(spent),
+		"creator_points": earned,
+		"creator_level":  service.LevelForPoints(earned),
+	})
 }
 
 func (s *Server) handleCreatorRankings(w http.ResponseWriter, r *http.Request) {
