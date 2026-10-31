@@ -61,6 +61,8 @@ docker compose -p live-platform -f backend-compose.yml up --build
 
 统一通过 `scripts/start-backends.ps1` 启动。它先创建 `live_backend` 网络并启动 Billd/SRS，再启动账务服务；账务 API 通过该私有网络与 Billd 通信。
 
+不使用 Docker 时，可运行 `.\scripts\start-local-backends.ps1`。脚本会直接启动本机 Redis，并连接本机 MySQL 后启动 Billd；默认按当前机器的 MySQL `13306`、Redis `8888` 配置。若 MySQL 服务未启动，可加 `-StartMySqlAsAdmin`，系统会请求管理员权限。若本机数据库账号不是 `billd/billd`，请传入 `-MySqlUser` 和 `-MySqlPassword`。Revenue、OpenIM、SRS 和 LiveKit 仍需各自的本地进程或 Docker 服务。
+
 启动完成后可运行 `.\scripts\smoke-backends.ps1` 做一次真实冒烟检查；它会创建临时用户并验证 Billd 注册、登录、礼物目录、钱包和 OpenIM 会话代理。若暂时没有 OpenIM，可加 `-SkipOpenIm`。
 
 账务服务的 MySQL、Redis、Kafka 使用独立的 `live-revenue-private` 网络；只有账务 API 同时加入 `live_backend`，因此不会与 Billd 的同名依赖容器发生 DNS 冲突。Socket.IO 开播登记需要在握手中携带 Billd JWT，服务端会校验主播用户 ID。

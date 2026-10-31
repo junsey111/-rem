@@ -1,6 +1,7 @@
 .gradle/
 .kotlin/
 .tools/
+.local/
 local.properties
 **/build/
 **/dist/
