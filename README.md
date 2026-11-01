@@ -75,6 +75,8 @@ OpenIM 上游 Compose 使用固定的 `mongo`、`redis` 等容器名，在其独
 
 `LiveKitRoomGateway` 已调用官方 SDK 的 `LiveKit.create()` 和 `Room.connect()`。礼物、充值、榜单、收益、审核和管理员操作必须接入业务 API，由服务端校验余额和权限，不能在客户端计算或保存真实账目。
 
+当前 Android 客户端已接通真实注册/登录、JWT 会话、直播列表、Revenue 钱包/礼物/等级/收益/榜单、送礼、开播/关播、LiveKit token 和 Billd Socket.IO 房间登记，并在模拟器中完成安装启动验证。VM 当前 Billd 和 SRS 可达；LiveKit 与 OpenIM 端口尚未对外可达，因此连麦和私信仍会按真实错误状态提示，不能视为已完成的线上功能。运营审核、封禁和聚合运营统计也需要后端补充对应 API。
+
 ## 后端启动
 
 直播房间与媒体服务：

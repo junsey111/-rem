@@ -1,8 +1,14 @@
 package cn.liveroom.app
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,29 +29,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.EmojiEvents
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
-import androidx.compose.material.icons.filled.ManageAccounts
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -57,6 +55,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -64,9 +63,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -80,14 +79,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.MediaItem
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 private val NightInk = Color(0xFF10141A)
 private val NightSurface = Color(0xFF171D24)
@@ -97,12 +96,14 @@ private val Fog = Color(0xFFAEB8C4)
 private val Coral = Color(0xFFFF7166)
 private val Mint = Color(0xFF68D5AE)
 private val Amber = Color(0xFFF0B35B)
+private val liveRoomColors = listOf(Color(0xFF4C5C8A), Color(0xFF2B6F70), Color(0xFF87544C), Color(0xFF596B40))
 
-private val liveRoomColors = listOf(
-    Color(0xFF4C5C8A),
-    Color(0xFF2B6F70),
-    Color(0xFF87544C),
-    Color(0xFF596B40),
+private data class LiveRoom(
+    val host: String,
+    val title: String,
+    val creatorId: Long,
+    val accent: Color,
+    val stream: String,
 )
 
 class MainActivity : ComponentActivity() {
@@ -112,63 +113,10 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class Room(
-    val host: String,
-    val title: String,
-    val category: String,
-    val viewers: String,
-    val accent: Color,
-    val stream: String,
-)
-
-private data class Contact(val name: String, val message: String, val time: String)
-
-private val contacts = listOf(
-    Contact("小满", "谢谢你的支持，晚上见～", "10:42"),
-    Contact("阿哲", "PK 要不要约在 8 点？", "昨天"),
-    Contact("平台助手", "本周直播数据已更新", "周三"),
-)
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LiveRoomApp() {
-    var selected by remember { mutableIntStateOf(0) }
-    var role by remember { mutableStateOf("观众") }
-    var coins by remember { mutableIntStateOf(1280) }
-    var activeRoom by remember { mutableStateOf<Room?>(null) }
-    var rooms by remember { mutableStateOf(emptyList<Room>()) }
-    var roomsStatus by remember { mutableStateOf("正在连接 Billd 直播服务…") }
-    var loading by remember { mutableStateOf(true) }
-    var refreshKey by remember { mutableIntStateOf(0) }
-    val snackbar = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
-    val notify: (String) -> Unit = { message ->
-        scope.launch { snackbar.showSnackbar(message, duration = SnackbarDuration.Short) }
-    }
-
-    LaunchedEffect(refreshKey) {
-        loading = true
-        BilldApi().liveRooms()
-            .onSuccess { liveRooms ->
-                rooms = liveRooms.mapIndexed { index, item ->
-                    Room(
-                        host = item.host,
-                        title = item.title,
-                        category = "直播",
-                        viewers = "在线",
-                        accent = liveRoomColors[index % liveRoomColors.size],
-                        stream = item.roomId,
-                    )
-                }
-                roomsStatus = if (rooms.isEmpty()) "当前没有在线直播" else "服务在线 · ${rooms.size} 个房间"
-            }
-            .onFailure { error ->
-                roomsStatus = "连接失败 · ${error.message ?: "请检查服务地址"}"
-                rooms = emptyList()
-            }
-        loading = false
-    }
-
+    val context = LocalContext.current
+    var session by remember { mutableStateOf(readSession(context)) }
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = Coral,
@@ -185,225 +133,423 @@ private fun LiveRoomApp() {
             outline = NightLine,
         ),
     ) {
-        Scaffold(
-            modifier = Modifier.fillMaxSize().background(NightInk),
-            containerColor = NightInk,
-            snackbarHost = { SnackbarHost(snackbar) },
-            bottomBar = {
-                NavigationBar(
-                    containerColor = NightSurface,
-                    modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars),
-                ) {
-                    val tabs = listOf("直播", "榜单", "消息", "我的")
-                    val icons = listOf(Icons.Default.Home, Icons.Default.EmojiEvents, Icons.Default.ChatBubbleOutline, Icons.Default.PersonOutline)
-                    tabs.forEachIndexed { index, title ->
-                        NavigationBarItem(
-                            selected = selected == index,
-                            onClick = { selected = index },
-                            icon = { Icon(icons[index], contentDescription = title) },
-                            label = { Text(title) },
-                        )
-                    }
-                }
-            },
-        ) { padding ->
-            Column(
-                Modifier.fillMaxSize()
-                    .padding(padding),
-            ) {
-                TopBar(
-                    role = role,
-                    status = roomsStatus,
-                    onRole = { role = it },
-                    onRefresh = { refreshKey++ },
-                )
-                when (selected) {
-                    0 -> if (role == "运营") {
-                        OperationsScreen(rooms, loading, onAction = notify)
-                    } else {
-                        LiveScreen(
-                            role = role,
-                            status = roomsStatus,
-                            rooms = rooms,
-                            loading = loading,
-                            onJoin = { activeRoom = it },
-                            onRefresh = { refreshKey++ },
-                            onAction = notify,
-                        )
-                    }
-                    1 -> RankingsScreen()
-                    2 -> MessagesScreen(onOpen = { notify("已打开与 $it 的私信会话") })
-                    else -> ProfileScreen(
-                        role = role,
-                        coins = coins,
-                        onTopUp = { amount -> coins += amount; notify("金币余额已更新") },
-                        onAction = notify,
-                    )
-                }
-            }
-        }
-
-        activeRoom?.let { room ->
-            ModalBottomSheet(
-                onDismissRequest = { activeRoom = null },
-                containerColor = NightSurface,
-                dragHandle = { Surface(Modifier.padding(vertical = 10.dp).size(34.dp, 4.dp).clip(RoundedCornerShape(4.dp)), color = NightLine) {} },
-            ) {
-                RoomSheet(
-                    room = room,
-                    coins = coins,
-                    onClose = { activeRoom = null },
-                    onGift = { cost ->
-                        if (coins >= cost) {
-                            coins -= cost
-                            notify("礼物已送出，金币 -$cost")
-                        } else {
-                            notify("金币不足，请先充值")
-                        }
-                    },
-                    onAction = notify,
-                )
-            }
+        if (session == null) {
+            AuthScreen(onAuthenticated = {
+                saveSession(context, it)
+                session = it
+            })
+        } else {
+            AuthenticatedApp(
+                session = session!!,
+                onLogout = {
+                    saveSession(context, null)
+                    session = null
+                },
+            )
         }
     }
 }
 
 @Composable
-private fun TopBar(role: String, status: String, onRole: (String) -> Unit, onRefresh: () -> Unit) {
-    var menuOpen by remember { mutableStateOf(false) }
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun AuthScreen(onAuthenticated: (UserSession) -> Unit) {
+    val api = remember { LivePlatformApi() }
+    val scope = rememberCoroutineScope()
+    var registering by remember { mutableStateOf(false) }
+    var accountId by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier.fillMaxSize().background(NightInk).padding(horizontal = 24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text("现场 Live", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                LiveDot(active = status.startsWith("服务在线"))
-                Text(status, style = MaterialTheme.typography.labelMedium, color = Fog, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("现场 Live", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text(if (registering) "创建账号" else "登录", style = MaterialTheme.typography.titleMedium, color = Fog, modifier = Modifier.padding(top = 8.dp, bottom = 22.dp))
+        if (registering) {
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it; error = null },
+                label = { Text("用户名") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            OutlinedTextField(
+                value = accountId,
+                onValueChange = { accountId = it.filter(Char::isDigit); error = null },
+                label = { Text("账号 ID") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it; error = null },
+            label = { Text("密码") },
+            visualTransformation = PasswordVisualTransformation(),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+        )
+        error?.let { Text(it, color = Coral, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 10.dp)) }
+        Button(
+            enabled = !busy && password.isNotBlank() && if (registering) username.isNotBlank() else accountId.isNotBlank(),
+            onClick = {
+                scope.launch {
+                    busy = true
+                    error = null
+                    try {
+                        if (registering) {
+                            val created = api.register(username, password)
+                            val loggedIn = api.login(created.id, password).copy(username = created.username)
+                            onAuthenticated(loggedIn)
+                        } else {
+                            val id = accountId.toLongOrNull() ?: error("账号 ID 格式无效")
+                            onAuthenticated(api.login(id, password).copy(username = "用户$id"))
+                        }
+                    } catch (cause: Exception) {
+                        error = cause.message ?: "请求失败，请检查服务地址"
+                    } finally {
+                        busy = false
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
+        ) {
+            if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text(if (registering) "注册并登录" else "登录")
+        }
+        TextButton(onClick = { registering = !registering; error = null }) {
+            Text(if (registering) "已有账号？登录" else "创建新账号")
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
+    val context = LocalContext.current
+    val api = remember { LivePlatformApi() }
+    val scope = rememberCoroutineScope()
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var refreshKey by remember { mutableIntStateOf(0) }
+    var rooms by remember { mutableStateOf(emptyList<LiveRoom>()) }
+    var roomsLoading by remember { mutableStateOf(true) }
+    var roomsStatus by remember { mutableStateOf("正在连接直播服务") }
+    var gifts by remember { mutableStateOf(emptyList<Gift>()) }
+    var wallet by remember { mutableStateOf<Wallet?>(null) }
+    var level by remember { mutableStateOf<UserLevel?>(null) }
+    var dailyEarnings by remember { mutableStateOf<Earnings?>(null) }
+    var monthlyEarnings by remember { mutableStateOf<Earnings?>(null) }
+    var activeRoom by remember { mutableStateOf<LiveRoom?>(null) }
+    var activeRoomStatus by remember { mutableStateOf("正在连接媒体服务") }
+    var roomGateway by remember { mutableStateOf<LiveKitRoomGateway?>(null) }
+    var roomRegistration by remember { mutableStateOf<BilldRoomRegistration?>(null) }
+    var startingLive by remember { mutableStateOf(false) }
+    var giftLoading by remember { mutableStateOf(false) }
+    var rankTypeContributors by remember { mutableStateOf(false) }
+    var rankPeriod by remember { mutableStateOf("daily") }
+    var rankingEntries by remember { mutableStateOf(emptyList<RankingEntry>()) }
+    var rankingsLoading by remember { mutableStateOf(false) }
+    var rankingsError by remember { mutableStateOf<String?>(null) }
+    var openImStatus by remember { mutableStateOf("尚未获取 OpenIM 会话") }
+    val snackbar = remember { SnackbarHostState() }
+    val notify: (String) -> Unit = { message -> scope.launch { snackbar.showSnackbar(message, duration = SnackbarDuration.Short) } }
+
+    LaunchedEffect(session.token, refreshKey) {
+        roomsLoading = true
+        launch {
+            runCatching { api.liveRooms() }
+                .onSuccess { result ->
+                    rooms = result.mapIndexed { index, item ->
+                        LiveRoom(item.host, item.title, item.creatorId, liveRoomColors[index % liveRoomColors.size], item.roomId)
+                    }
+                    roomsStatus = if (rooms.isEmpty()) "服务在线 · 当前没有在线直播" else "服务在线 · ${rooms.size} 个房间"
+                }
+                .onFailure { error -> roomsStatus = "直播列表读取失败 · ${error.message ?: "服务不可用"}"; rooms = emptyList() }
+            roomsLoading = false
+        }
+        launch { runCatching { api.giftCatalog() }.onSuccess { gifts = it } }
+        launch { runCatching { api.wallet(session.token) }.onSuccess { wallet = it }.onFailure { wallet = null } }
+        launch { runCatching { api.level(session.token) }.onSuccess { level = it }.onFailure { level = null } }
+        launch { runCatching { api.earnings(session.token, "daily") }.onSuccess { dailyEarnings = it }.onFailure { dailyEarnings = null } }
+        launch { runCatching { api.earnings(session.token, "monthly") }.onSuccess { monthlyEarnings = it }.onFailure { monthlyEarnings = null } }
+    }
+
+    LaunchedEffect(session.token, rankTypeContributors, rankPeriod, selectedTab) {
+        if (selectedTab != 1) return@LaunchedEffect
+        rankingsLoading = true
+        rankingsError = null
+        runCatching {
+            if (rankTypeContributors) api.contributorRankings(session.token, rankPeriod)
+            else api.creatorRankings(session.token, rankPeriod)
+        }.onSuccess { rankingEntries = it }
+            .onFailure { rankingsError = it.message ?: "榜单读取失败"; rankingEntries = emptyList() }
+        rankingsLoading = false
+    }
+
+    LaunchedEffect(activeRoom?.stream, session.token) {
+        val room = activeRoom ?: return@LaunchedEffect
+        val liveSessionId = room.stream.toLongOrNull()
+        if (liveSessionId == null) {
+            activeRoomStatus = "此房间不是 Revenue/LiveKit 会话，无法从当前服务加入"
+            return@LaunchedEffect
+        }
+        val gateway = LiveKitRoomGateway(context)
+        roomGateway = gateway
+        activeRoomStatus = "正在获取房间凭证"
+        runCatching {
+            val credentials = api.liveKitToken(session.token, liveSessionId)
+            gateway.join(credentials.url, credentials.token)
+            if (room.creatorId == session.id) gateway.publishCameraAndMicrophone()
+        }.onSuccess {
+            activeRoomStatus = if (room.creatorId == session.id) "直播已连接 · 正在发布摄像头和麦克风" else "已加入直播间"
+        }.onFailure {
+            gateway.leave()
+            roomGateway = null
+            activeRoomStatus = "媒体连接失败 · ${it.message ?: "请检查 LiveKit 服务"}"
+        }
+    }
+
+    val requestMediaPermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        if (grants.values.all { it }) {
+            scope.launch {
+                startingLive = true
+                var sessionId: Long? = null
+                var registration: BilldRoomRegistration? = null
+                try {
+                    sessionId = api.startLive(session.token)
+                    registration = BilldRoomRegistration()
+                    withTimeout(15_000) {
+                        registration.register(session.token, session.id, session.username, sessionId.toString(), "${session.username} 的直播间")
+                    }
+                    roomRegistration = registration
+                    activeRoom = LiveRoom(session.username, "${session.username} 的直播间", session.id, liveRoomColors[0], sessionId.toString())
+                    refreshKey++
+                } catch (error: Exception) {
+                    registration?.close()
+                    sessionId?.let { runCatching { api.closeLive(session.token, it) } }
+                    notify("开播失败 · ${error.message ?: "服务不可用"}")
+                } finally {
+                    startingLive = false
+                }
+            }
+        } else {
+            notify("开播需要相机和麦克风权限")
+        }
+    }
+
+    fun leaveRoom() {
+        val room = activeRoom ?: return
+        scope.launch {
+            val id = room.stream.toLongOrNull()
+            val isHost = room.creatorId == session.id
+            try {
+                if (isHost && id != null) api.closeLive(session.token, id)
+                if (isHost) roomRegistration?.close()
+                roomGateway?.leave()
+                activeRoom = null
+                roomGateway = null
+                roomRegistration = null
+                activeRoomStatus = "已离开"
+                if (isHost) refreshKey++
+            } catch (error: Exception) {
+                notify("结束直播失败 · ${error.message ?: "请求失败"}")
             }
         }
-        IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, contentDescription = "刷新直播") }
-        Box {
-            IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.ManageAccounts, contentDescription = "切换角色") }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                listOf("观众", "主播", "运营").forEach { value ->
-                    DropdownMenuItem(
-                        text = { Text(if (value == role) "$value · 当前" else value) },
-                        onClick = { onRole(value); menuOpen = false },
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize().background(NightInk),
+        containerColor = NightInk,
+        snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = {
+            NavigationBar(containerColor = NightSurface, modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)) {
+                val tabs = listOf("直播", "榜单", "消息", "我的", "运营")
+                val icons = listOf(Icons.Default.Home, Icons.Default.EmojiEvents, Icons.Default.ChatBubbleOutline, Icons.Default.PersonOutline, Icons.Default.Shield)
+                tabs.forEachIndexed { index, title ->
+                    NavigationBarItem(
+                        selected = selectedTab == index,
+                        onClick = { selectedTab = index },
+                        icon = { Icon(icons[index], contentDescription = title) },
+                        label = { Text(title) },
                     )
                 }
             }
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            TopBar(
+                username = session.username,
+                status = roomsStatus,
+                onRefresh = { refreshKey++ },
+                onLogout = onLogout,
+            )
+            when (selectedTab) {
+                0 -> LiveScreen(
+                    rooms = rooms,
+                    loading = roomsLoading,
+                    status = roomsStatus,
+                    starting = startingLive,
+                    onStart = {
+                        if (context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
+                            context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                        ) {
+                            requestMediaPermissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
+                        } else {
+                            requestMediaPermissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
+                        }
+                    },
+                    onJoin = { activeRoom = it },
+                    onRefresh = { refreshKey++ },
+                )
+                1 -> RankingsScreen(
+                    entries = rankingEntries,
+                    loading = rankingsLoading,
+                    error = rankingsError,
+                    contributors = rankTypeContributors,
+                    period = rankPeriod,
+                    onContributors = { rankTypeContributors = it },
+                    onPeriod = { rankPeriod = it },
+                )
+                2 -> MessagesScreen(
+                    status = openImStatus,
+                    onConnect = {
+                        scope.launch {
+                            openImStatus = "正在获取 OpenIM 会话"
+                            runCatching { api.openImSession(session.token) }
+                                .onSuccess { openImStatus = "OpenIM 已签发登录凭证；当前 APK 尚未集成消息 SDK，无法收发私信" }
+                                .onFailure { openImStatus = "OpenIM 连接失败 · ${it.message ?: "服务不可用"}" }
+                        }
+                    },
+                )
+                3 -> ProfileScreen(
+                    session = session,
+                    wallet = wallet,
+                    level = level,
+                    daily = dailyEarnings,
+                    monthly = monthlyEarnings,
+                    onRefresh = { refreshKey++ },
+                    onTopUp = { amount ->
+                        scope.launch {
+                            runCatching { api.rechargeUrl(session.token, amount) }
+                                .onSuccess { url ->
+                                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                                        .onFailure { notify("无法打开支付页面 · ${it.message ?: "无可用浏览器"}") }
+                                }
+                                .onFailure { notify("充值暂不可用 · ${it.message ?: "请检查支付宝配置"}") }
+                        }
+                    },
+                )
+                else -> OperationsScreen(rooms, roomsLoading, roomsStatus)
+            }
         }
+    }
+
+    activeRoom?.let { room ->
+        ModalBottomSheet(
+            onDismissRequest = { leaveRoom() },
+            containerColor = NightSurface,
+            dragHandle = { Surface(Modifier.padding(vertical = 10.dp).size(34.dp, 4.dp).clip(RoundedCornerShape(4.dp)), color = NightLine) {} },
+        ) {
+            RoomSheet(
+                room = room,
+                gateway = roomGateway,
+                status = activeRoomStatus,
+                wallet = wallet,
+                gifts = gifts,
+                giftLoading = giftLoading,
+                isHost = room.creatorId == session.id,
+                onClose = { leaveRoom() },
+                onGift = { gift ->
+                    val id = room.stream.toLongOrNull()
+                    if (id == null || room.creatorId <= 0) {
+                        notify("该房间没有可用的 Revenue 会话，无法送礼")
+                    } else {
+                        scope.launch {
+                            giftLoading = true
+                            runCatching { api.sendGift(session.token, room.creatorId, id, gift.id, 1) }
+                                .onSuccess { wallet = it; notify("礼物已由服务端确认") }
+                                .onFailure { notify("送礼失败 · ${it.message ?: "请求失败"}") }
+                            giftLoading = false
+                        }
+                    }
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun TopBar(username: String, status: String, onRefresh: () -> Unit, onLogout: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("现场 Live", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("$username · $status", style = MaterialTheme.typography.labelMedium, color = Fog, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, contentDescription = "刷新") }
+        IconButton(onClick = onLogout) { Icon(Icons.Default.Logout, contentDescription = "退出登录") }
     }
 }
 
 @Composable
 private fun LiveScreen(
-    role: String,
-    status: String,
-    rooms: List<Room>,
+    rooms: List<LiveRoom>,
     loading: Boolean,
-    onJoin: (Room) -> Unit,
+    status: String,
+    starting: Boolean,
+    onStart: () -> Unit,
+    onJoin: (LiveRoom) -> Unit,
     onRefresh: () -> Unit,
-    onAction: (String) -> Unit,
 ) {
-    LazyColumn(
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
+    LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
-            LiveSummary(
-                role = role,
-                status = status,
-                roomCount = rooms.size,
-                onRefresh = onRefresh,
-                onStart = { onAction("已创建开播入口，推流地址由 SRS 服务提供") },
-            )
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = true, onClick = {}, label = { Text("全部") })
-                FilterChip(selected = false, onClick = { onAction("分类筛选将在接入房间标签后启用") }, label = { Text("才艺") })
-                FilterChip(selected = false, onClick = { onAction("分类筛选将在接入房间标签后启用") }, label = { Text("游戏") })
+            Surface(shape = RoundedCornerShape(18.dp), color = NightSurfaceRaised) {
+                Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("正在发生", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(status, style = MaterialTheme.typography.bodySmall, color = Fog)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(onClick = onStart, enabled = !starting) {
+                            if (starting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("开始直播")
+                        }
+                        OutlinedButton(onClick = onRefresh) { Text("刷新") }
+                    }
+                }
             }
         }
-        if (loading) {
+        if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth(), color = Coral, trackColor = NightSurfaceRaised) }
+        if (!loading && rooms.isEmpty()) {
             item {
-                LinearProgressIndicator(Modifier.fillMaxWidth(), color = Coral, trackColor = NightSurfaceRaised)
+                Column(Modifier.fillMaxWidth().padding(vertical = 32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.LiveTv, contentDescription = null, tint = Fog, modifier = Modifier.size(40.dp))
+                    Text("暂时没有在线直播", style = MaterialTheme.typography.titleMedium)
+                }
             }
-        } else if (rooms.isEmpty()) {
-            item { EmptyLiveState(role = role, onRefresh = onRefresh, onAction = onAction) }
-        } else {
-            item { Text("正在直播", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
-            items(rooms, key = { it.stream }) { room -> RoomTile(room, onClick = { onJoin(room) }) }
         }
-        item { InteractionSection(onAction) }
+        if (rooms.isNotEmpty()) item { Text("正在直播", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+        items(rooms, key = { it.stream }) { room -> RoomTile(room, onClick = { onJoin(room) }) }
     }
 }
 
 @Composable
-private fun LiveSummary(role: String, status: String, roomCount: Int, onRefresh: () -> Unit, onStart: () -> Unit) {
-    Surface(shape = RoundedCornerShape(22.dp), color = NightSurfaceRaised, tonalElevation = 2.dp) {
-        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
-                    Text(if (role == "主播") "准备好开播了吗？" else "现在正在发生", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(5.dp))
-                    Text(if (role == "主播") "打开摄像头，和观众开始互动" else "找到一个房间，马上加入现场", style = MaterialTheme.typography.bodyMedium, color = Fog)
-                }
-                Surface(shape = RoundedCornerShape(12.dp), color = if (status.startsWith("服务在线")) Mint.copy(alpha = .14f) else Coral.copy(alpha = .14f)) {
-                    Text("${roomCount} 场", Modifier.padding(horizontal = 10.dp, vertical = 7.dp), color = if (status.startsWith("服务在线")) Mint else Coral, fontWeight = FontWeight.Bold)
-                }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                LiveDot(active = status.startsWith("服务在线"))
-                Text(status, style = MaterialTheme.typography.bodySmall, color = Fog)
-                Spacer(Modifier.weight(1f))
-                if (role == "主播") {
-                    Button(onClick = onStart, contentPadding = PaddingValues(horizontal = 15.dp, vertical = 8.dp)) { Text("开始直播") }
-                } else {
-                    TextButton(onClick = onRefresh, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)) { Text("重新连接") }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyLiveState(role: String, onRefresh: () -> Unit, onAction: (String) -> Unit) {
-    Surface(shape = RoundedCornerShape(18.dp), color = NightSurface) {
-        Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(Icons.Default.LiveTv, contentDescription = null, tint = Fog, modifier = Modifier.size(42.dp))
-            Text(if (role == "主播") "还没有你的直播间" else "暂时没有在线直播", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(if (role == "主播") "创建房间后，观众就能在这里找到你" else "刷新一下，或者稍后再来看看", style = MaterialTheme.typography.bodyMedium, color = Fog)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onRefresh) { Text("刷新") }
-                if (role == "主播") Button(onClick = { onAction("开播入口已准备，正式推流需连接 SRS") }) { Text("创建房间") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RoomTile(room: Room, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(18.dp), color = NightSurface, tonalElevation = 1.dp) {
+private fun RoomTile(room: LiveRoom, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = NightSurface) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(88.dp, 98.dp).clip(RoundedCornerShape(13.dp)).background(room.accent), contentAlignment = Alignment.BottomStart) {
-                Column(Modifier.fillMaxSize().padding(9.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Box(Modifier.size(76.dp, 82.dp).clip(RoundedCornerShape(12.dp)).background(room.accent), contentAlignment = Alignment.BottomStart) {
+                Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.SpaceBetween) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        LiveDot(active = true, size = 7)
+                        LiveDot(true, 7)
                         Text("LIVE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
                     }
-                    Text(room.category, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .78f))
+                    Text("直播", style = MaterialTheme.typography.labelSmall, color = Color.White)
                 }
             }
             Column(Modifier.weight(1f).padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(room.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("主播 ${room.host}", style = MaterialTheme.typography.bodySmall, color = Fog, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Icon(Icons.Default.Favorite, contentDescription = null, tint = Coral, modifier = Modifier.size(14.dp))
-                    Text("${room.viewers} 人正在看", style = MaterialTheme.typography.bodySmall, color = Mint)
-                }
+                Text("主播 ${room.host}", style = MaterialTheme.typography.bodySmall, color = Fog)
+                Text("会话 ${room.stream}", style = MaterialTheme.typography.labelSmall, color = Fog)
             }
             Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "进入直播间", tint = Fog, modifier = Modifier.size(20.dp))
         }
@@ -411,235 +557,215 @@ private fun RoomTile(room: Room, onClick: () -> Unit) {
 }
 
 @Composable
-private fun InteractionSection(onAction: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        HorizontalDivider(color = NightLine, modifier = Modifier.padding(top = 6.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("互动工具", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text("更多", style = MaterialTheme.typography.labelMedium, color = Fog)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AssistChip(onClick = { onAction("视频连麦入口由 LiveKit 提供") }, label = { Text("视频连麦") }, leadingIcon = { Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp)) })
-            AssistChip(onClick = { onAction("语音连麦入口由 LiveKit 提供") }, label = { Text("语音连麦") }, leadingIcon = { Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(18.dp)) })
-        }
-        AssistChip(
-            onClick = { onAction("PK 邀请可从直播间发起") },
-            label = { Text("双人 PK") },
-            leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(18.dp)) },
-            colors = AssistChipDefaults.assistChipColors(containerColor = Amber.copy(alpha = .13f), labelColor = Amber, leadingIconContentColor = Amber),
-        )
-    }
-}
-
-@Composable
-private fun RoomSheet(room: Room, coins: Int, onClose: () -> Unit, onGift: (Int) -> Unit, onAction: (String) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 26.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(room.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${room.host} · ${room.viewers} 在线", style = MaterialTheme.typography.bodySmall, color = Fog)
-            }
-            IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "关闭直播间") }
-        }
-        SrsPlayback(stream = room.stream, fallbackColor = room.accent)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Mint, modifier = Modifier.size(18.dp))
-                Text("$coins 金币", fontWeight = FontWeight.SemiBold)
-            }
-            Text("直播互动", style = MaterialTheme.typography.labelMedium, color = Fog)
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("花朵" to 10, "星星" to 50, "烟花" to 100).forEach { (name, value) ->
-                AssistChip(onClick = { onGift(value) }, label = { Text("$name $value") }, modifier = Modifier.weight(1f))
-            }
-        }
-        OutlinedButton(onClick = { onAction("已发起双人 PK / 连麦邀请") }, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("邀请主播 PK / 连麦")
-        }
-        Text("礼物与金币会由业务后台校验，当前客户端保留演示反馈。", style = MaterialTheme.typography.bodySmall, color = Fog)
-    }
-}
-
-@Composable
-private fun SrsPlayback(stream: String, fallbackColor: Color) {
-    val context = LocalContext.current
-    val playbackUrl = "${BuildConfig.SRS_PLAYBACK_URL}/live/$stream.m3u8"
-    val player = remember(playbackUrl) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(playbackUrl))
-            prepare()
-            playWhenReady = true
-        }
-    }
-    DisposableEffect(player) { onDispose { player.release() } }
-    Box(Modifier.fillMaxWidth().height(196.dp).clip(RoundedCornerShape(16.dp)).background(fallbackColor)) {
-        AndroidView(
-            factory = { PlayerView(it).apply { useController = true; this.player = player } },
-            modifier = Modifier.fillMaxSize(),
-        )
-        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("${stream} 的直播间", style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = FontWeight.Bold)
-            Text("SRS HLS", color = Color.White.copy(alpha = .78f), style = MaterialTheme.typography.labelSmall)
-        }
-    }
-}
-
-@Composable
-private fun RankingsScreen() {
-    var period by remember { mutableStateOf("日榜") }
-    val names = listOf("小满", "阿哲", "林间风", "星野", "一颗糖", "南山")
-    val values = if (period == "日榜") listOf("42,860", "31,240", "26,890", "18,650", "12,340", "9,800") else listOf("386,200", "312,800", "268,900", "186,500", "132,400", "98,000")
-    LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+private fun RoomSheet(
+    room: LiveRoom,
+    gateway: LiveKitRoomGateway?,
+    status: String,
+    wallet: Wallet?,
+    gifts: List<Gift>,
+    giftLoading: Boolean,
+    isHost: Boolean,
+    onClose: () -> Unit,
+    onGift: (Gift) -> Unit,
+) {
+    LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
-            Text("主播榜单", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("按礼物贡献实时更新", style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 4.dp))
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("日榜", "月榜").forEach { FilterChip(period == it, { period = it }, label = { Text(it) }) } }
-        }
-        items(names.indices.toList()) { index ->
-            Row(Modifier.fillMaxWidth().height(66.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("${index + 1}", Modifier.width(32.dp), color = if (index < 3) Amber else Fog, fontWeight = FontWeight.Bold)
-                Avatar(names[index], index)
-                Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(names[index], fontWeight = FontWeight.SemiBold)
-                    Text("人气主播 · Lv.${18 - index}", style = MaterialTheme.typography.bodySmall, color = Fog)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(room.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${room.host} · ${room.stream}", style = MaterialTheme.typography.bodySmall, color = Fog)
                 }
-                Text("${values[index]} 票", color = Mint, style = MaterialTheme.typography.bodyMedium)
-            }
-            if (index < names.lastIndex) HorizontalDivider(color = NightLine)
-        }
-    }
-}
-
-@Composable
-private fun MessagesScreen(onOpen: (String) -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp)) {
-        item {
-            Text("消息", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("和主播保持联系", style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
-        }
-        items(contacts) { contact ->
-            Surface(onClick = { onOpen(contact.name) }, color = Color.Transparent) {
-                Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(contact.name, contact.name.length)
-                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(contact.name, fontWeight = FontWeight.SemiBold)
-                            Text(contact.time, style = MaterialTheme.typography.labelSmall, color = Fog)
-                        }
-                        Text(contact.message, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, color = Fog, modifier = Modifier.padding(top = 4.dp))
-                    }
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "打开会话", tint = Fog, modifier = Modifier.size(18.dp).padding(start = 4.dp))
-                }
-            }
-            HorizontalDivider(color = NightLine)
-        }
-        item { Text("私信服务由 OpenIM 提供", style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 14.dp)) }
-    }
-}
-
-@Composable
-private fun ProfileScreen(role: String, coins: Int, onTopUp: (Int) -> Unit, onAction: (String) -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Avatar(if (role == "主播") "小满" else "直播用户", 1, 56)
-                Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                    Text(if (role == "主播") "主播小满" else "直播用户", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("用户等级 Lv.12 · 主播等级 Lv.8", style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 4.dp))
-                }
-                AssistChip(onClick = { onAction("等级规则即将开放") }, label = { Text("Lv.12") })
+                IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = if (isHost) "结束直播" else "离开直播间") }
             }
         }
         item {
-            Surface(shape = RoundedCornerShape(18.dp), color = NightSurfaceRaised) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Mint, modifier = Modifier.size(20.dp))
-                            Text("金币余额", color = Fog)
-                        }
-                        Text("$coins", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Mint)
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(100, 500, 1000).forEach { amount -> OutlinedButton(onClick = { onTopUp(amount) }, modifier = Modifier.weight(1f)) { Text("+$amount") } }
-                    }
-                    Text("充值入口由服务端支付回调确认", style = MaterialTheme.typography.bodySmall, color = Fog)
+            if (gateway != null) LiveKitVideo(gateway)
+            else Surface(shape = RoundedCornerShape(14.dp), color = NightSurfaceRaised) {
+                Box(Modifier.fillMaxWidth().height(196.dp), contentAlignment = Alignment.Center) {
+                    Text(status, color = Fog, modifier = Modifier.padding(16.dp))
                 }
             }
         }
         item {
-            Text("主播收益", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Metric("今日收益", "¥ 286.50", Modifier.weight(1f))
-                Metric("本月收益", "¥ 8,620", Modifier.weight(1f))
-            }
-        }
-        item {
-            Text("快捷入口", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            listOf("我的直播间" to Icons.Default.LiveTv, "礼物记录" to Icons.Default.Favorite, "收益明细" to Icons.Default.BarChart, "设置" to Icons.Default.Menu).forEach { (label, icon) ->
-                TextButton(onClick = { onAction("${label}功能正在接入业务后台") }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(vertical = 11.dp)) {
-                    Icon(icon, contentDescription = null, tint = Fog, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Text(label, modifier = Modifier.weight(1f), color = Color(0xFFF5F7FA))
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = Fog, modifier = Modifier.size(18.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Mint, modifier = Modifier.size(18.dp))
+                    Text(wallet?.balance?.let { "$it 金币" } ?: "余额暂不可用", fontWeight = FontWeight.SemiBold)
                 }
+                Text(status, style = MaterialTheme.typography.labelSmall, color = Fog, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-    }
-}
-
-@Composable
-private fun OperationsScreen(rooms: List<Room>, loading: Boolean, onAction: (String) -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item {
-            Text("运营台", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("平台运行概览", style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 4.dp))
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Metric("直播中", if (loading) "…" else rooms.size.toString(), Modifier.weight(1f))
-                Metric("在线用户", "24,680", Modifier.weight(1f))
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Metric("今日礼物", "¥ 38,620", Modifier.weight(1f))
-                Metric("待审核", "16", Modifier.weight(1f))
-            }
-        }
-        item { Text("直播间管理", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
-        if (rooms.isEmpty()) {
-            item {
-                Surface(shape = RoundedCornerShape(16.dp), color = NightSurface) {
-                    Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Shield, contentDescription = null, tint = Amber, modifier = Modifier.size(22.dp))
-                        Text("暂无待管理的在线房间", Modifier.padding(start = 12.dp), color = Fog)
-                    }
-                }
-            }
+        if (gifts.isEmpty()) {
+            item { Text("礼物目录读取失败或暂时为空", style = MaterialTheme.typography.bodySmall, color = Fog) }
         } else {
-            items(rooms, key = { it.stream }) { room ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                    LiveDot(active = true)
-                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                        Text(room.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${room.host} · ${room.viewers} 在线", style = MaterialTheme.typography.bodySmall, color = Fog)
+            item { Text("礼物", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            items(gifts, key = { it.id }) { gift ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(gift.name, fontWeight = FontWeight.SemiBold)
+                        Text("${gift.coinPrice} 金币 · ${gift.diamonds} 钻石", style = MaterialTheme.typography.bodySmall, color = Fog)
                     }
-                    TextButton(onClick = { onAction("已打开 ${room.title} 的审核面板") }) { Text("管理") }
+                    OutlinedButton(onClick = { onGift(gift) }, enabled = !giftLoading && !isHost) {
+                        Text(if (giftLoading) "提交中" else "赠送")
+                    }
                 }
                 HorizontalDivider(color = NightLine)
             }
         }
-        item { Text("运营数据需要从业务后台读取，当前只展示页面结构。", style = MaterialTheme.typography.bodySmall, color = Fog) }
+        item { Spacer(Modifier.height(18.dp)) }
+    }
+}
+
+@Composable
+private fun LiveKitVideo(gateway: LiveKitRoomGateway) {
+    AndroidView(
+        factory = { context -> gateway.createVideoRenderer(context) },
+        update = { gateway.attachVideoRenderer(it) },
+        modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(14.dp)).background(Color.Black),
+    )
+}
+
+@Composable
+private fun RankingsScreen(
+    entries: List<RankingEntry>,
+    loading: Boolean,
+    error: String?,
+    contributors: Boolean,
+    period: String,
+    onContributors: (Boolean) -> Unit,
+    onPeriod: (String) -> Unit,
+) {
+    LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Text(if (contributors) "贡献榜" else "主播榜", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Revenue 服务实时数据", style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(!contributors, { onContributors(false) }, label = { Text("主播") })
+                FilterChip(contributors, { onContributors(true) }, label = { Text("贡献者") })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                FilterChip(period == "daily", { onPeriod("daily") }, label = { Text("日榜") })
+                FilterChip(period == "monthly", { onPeriod("monthly") }, label = { Text("月榜") })
+            }
+        }
+        if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth(), color = Coral, trackColor = NightSurfaceRaised) }
+        error?.let { item { Text("榜单读取失败 · $it", color = Coral, style = MaterialTheme.typography.bodySmall) } }
+        if (!loading && error == null && entries.isEmpty()) item { Text("当前周期暂无榜单数据", color = Fog) }
+        items(entries.indices.toList()) { index ->
+            val entry = entries[index]
+            Row(Modifier.fillMaxWidth().height(66.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${index + 1}", Modifier.width(32.dp), color = if (index < 3) Amber else Fog, fontWeight = FontWeight.Bold)
+                Avatar("${entry.userId}", index)
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text("用户 #${entry.userId}", fontWeight = FontWeight.SemiBold)
+                    Text("${entry.gifts} 件礼物", style = MaterialTheme.typography.bodySmall, color = Fog)
+                }
+                Text("${entry.value} ${if (contributors) "金币" else "钻石"}", color = Mint, style = MaterialTheme.typography.bodyMedium)
+            }
+            if (index < entries.lastIndex) HorizontalDivider(color = NightLine)
+        }
+    }
+}
+
+@Composable
+private fun MessagesScreen(status: String, onConnect: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("消息", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(status, style = MaterialTheme.typography.bodyMedium, color = Fog)
+        Button(onClick = onConnect) { Text("连接 OpenIM") }
+    }
+}
+
+@Composable
+private fun ProfileScreen(
+    session: UserSession,
+    wallet: Wallet?,
+    level: UserLevel?,
+    daily: Earnings?,
+    monthly: Earnings?,
+    onRefresh: () -> Unit,
+    onTopUp: (Int) -> Unit,
+) {
+    LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Avatar(session.username, 1, 56)
+                Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                    Text(session.username, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("账号 ID ${session.id}", style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 4.dp))
+                }
+                IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, contentDescription = "刷新账户信息") }
+            }
+            Text(
+                level?.let { "用户等级 Lv.${it.viewerLevel} · 主播等级 Lv.${it.creatorLevel}" } ?: "等级信息暂不可用",
+                style = MaterialTheme.typography.bodySmall,
+                color = Fog,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+        }
+        item {
+            Surface(shape = RoundedCornerShape(16.dp), color = NightSurfaceRaised) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Mint, modifier = Modifier.size(20.dp))
+                            Text("金币余额", color = Fog)
+                        }
+                        Text(wallet?.balance?.toString() ?: "—", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Mint)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(100, 500, 1000).forEach { amount ->
+                            OutlinedButton(onClick = { onTopUp(amount) }, modifier = Modifier.weight(1f)) { Text("+$amount") }
+                        }
+                    }
+                    Text("到账以支付通知和服务端账本为准", style = MaterialTheme.typography.bodySmall, color = Fog)
+                }
+            }
+        }
+        item { Text("主播收益", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Metric("今日钻石", daily?.diamonds?.toString() ?: "—", Modifier.weight(1f))
+                Metric("本月钻石", monthly?.diamonds?.toString() ?: "—", Modifier.weight(1f))
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Metric("今日礼物", daily?.gifts?.toString() ?: "—", Modifier.weight(1f))
+                Metric("本月礼物", monthly?.gifts?.toString() ?: "—", Modifier.weight(1f))
+            }
+        }
+        item {
+            level?.let { Text("累计消费 ${it.viewerPoints} 积分 · 主播积分 ${it.creatorPoints}", style = MaterialTheme.typography.bodySmall, color = Fog) }
+        }
+    }
+}
+
+@Composable
+private fun OperationsScreen(rooms: List<LiveRoom>, loading: Boolean, status: String) {
+    LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item {
+            Text("运营", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("$status\n当前后端未提供运营审核、封禁或数据汇总接口。", style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 8.dp))
+        }
+        item { Text("在线直播间 · ${if (loading) "…" else rooms.size}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+        if (rooms.isEmpty() && !loading) item { Text("当前没有在线直播", color = Fog) }
+        items(rooms, key = { it.stream }) { room ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                LiveDot(true)
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(room.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${room.host} · 会话 ${room.stream}", style = MaterialTheme.typography.bodySmall, color = Fog)
+                }
+            }
+            HorizontalDivider(color = NightLine)
+        }
     }
 }
 
 @Composable
 private fun Metric(label: String, value: String, modifier: Modifier = Modifier) {
-    Surface(modifier, shape = RoundedCornerShape(14.dp), color = NightSurface) {
+    Surface(modifier, shape = RoundedCornerShape(12.dp), color = NightSurface) {
         Column(Modifier.padding(14.dp)) {
             Text(label, style = MaterialTheme.typography.bodySmall, color = Fog)
             Spacer(Modifier.height(5.dp))
@@ -659,4 +785,21 @@ private fun Avatar(name: String, index: Int, size: Int = 42) {
     Box(Modifier.size(size.dp).clip(CircleShape).background(colors[index % colors.size]), contentAlignment = Alignment.Center) {
         Text(name.take(1), color = Color.White, fontWeight = FontWeight.Bold, fontSize = (size / 2.4f).sp)
     }
+}
+
+private fun readSession(context: android.content.Context): UserSession? {
+    val prefs = context.getSharedPreferences("live_session", android.content.Context.MODE_PRIVATE)
+    val id = prefs.getLong("id", 0)
+    val token = prefs.getString("token", null).orEmpty()
+    return if (id > 0 && token.isNotBlank()) UserSession(id, prefs.getString("username", "用户$id").orEmpty(), token) else null
+}
+
+private fun saveSession(context: android.content.Context, session: UserSession?) {
+    context.getSharedPreferences("live_session", android.content.Context.MODE_PRIVATE).edit().apply {
+        if (session == null) clear() else {
+            putLong("id", session.id)
+            putString("username", session.username)
+            putString("token", session.token)
+        }
+    }.apply()
 }
