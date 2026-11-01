@@ -66,6 +66,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -105,6 +106,8 @@ private data class LiveRoom(
     val accent: Color,
     val stream: String,
 )
+
+private data class OpenImConversation(val userId: String, val name: String, val latestMessage: String)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -232,6 +235,7 @@ private fun AuthScreen(onAuthenticated: (UserSession) -> Unit) {
 private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     val context = LocalContext.current
     val api = remember { LivePlatformApi() }
+    val openImGateway = remember(context) { OpenImGateway(context) }
     val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableIntStateOf(0) }
     var refreshKey by remember { mutableIntStateOf(0) }
@@ -255,8 +259,15 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var rankingsLoading by remember { mutableStateOf(false) }
     var rankingsError by remember { mutableStateOf<String?>(null) }
     var openImStatus by remember { mutableStateOf("尚未获取 OpenIM 会话") }
+    var openImConversations by remember { mutableStateOf(emptyList<OpenImConversation>()) }
+    var openImRecipient by remember { mutableStateOf("") }
+    var openImMessage by remember { mutableStateOf("") }
+    var openImBusy by remember { mutableStateOf(false) }
+    var openImReady by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val notify: (String) -> Unit = { message -> scope.launch { snackbar.showSnackbar(message, duration = SnackbarDuration.Short) } }
+
+    DisposableEffect(openImGateway) { onDispose { openImGateway.close() } }
 
     LaunchedEffect(session.token, refreshKey) {
         roomsLoading = true
@@ -416,12 +427,56 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                 )
                 2 -> MessagesScreen(
                     status = openImStatus,
+                    conversations = openImConversations,
+                    recipientId = openImRecipient,
+                    message = openImMessage,
+                    busy = openImBusy,
+                    ready = openImReady,
+                    onRecipientId = { openImRecipient = it.filter(Char::isDigit) },
+                    onMessage = { openImMessage = it },
+                    onRefresh = {
+                        scope.launch {
+                            openImBusy = true
+                            runCatching { openImGateway.conversations() }
+                                .onSuccess { openImConversations = parseOpenImConversations(it) }
+                                .onFailure { openImStatus = "会话列表读取失败 · ${it.message ?: "请求失败"}" }
+                            openImBusy = false
+                        }
+                    },
                     onConnect = {
                         scope.launch {
-                            openImStatus = "正在获取 OpenIM 会话"
-                            runCatching { api.openImSession(session.token) }
-                                .onSuccess { openImStatus = "OpenIM 已签发登录凭证；当前 APK 尚未集成消息 SDK，无法收发私信" }
-                                .onFailure { openImStatus = "OpenIM 连接失败 · ${it.message ?: "服务不可用"}" }
+                            openImBusy = true
+                            openImStatus = "正在连接 OpenIM"
+                            runCatching {
+                                val credentials = api.openImSession(session.token)
+                                openImGateway.login(credentials)
+                                openImGateway.conversations()
+                            }.onSuccess { raw ->
+                                openImReady = true
+                                openImConversations = parseOpenImConversations(raw)
+                                openImStatus = "OpenIM 已登录 · ${openImConversations.size} 个会话"
+                            }.onFailure {
+                                openImReady = false
+                                openImStatus = "OpenIM 连接失败 · ${it.message ?: "服务不可用"}"
+                            }
+                            openImBusy = false
+                        }
+                    },
+                    onSend = {
+                        val recipient = openImRecipient.trim()
+                        val content = openImMessage.trim()
+                        if (recipient.isNotBlank() && content.isNotBlank()) {
+                            scope.launch {
+                                openImBusy = true
+                                runCatching { openImGateway.sendText(recipient, content) }
+                                    .onSuccess {
+                                        openImMessage = ""
+                                        openImStatus = "消息已由 OpenIM 接收"
+                                        runCatching { openImGateway.conversations() }.onSuccess { openImConversations = parseOpenImConversations(it) }
+                                    }
+                                    .onFailure { openImStatus = "消息发送失败 · ${it.message ?: "请求失败"}" }
+                                openImBusy = false
+                            }
                         }
                     },
                 )
@@ -668,11 +723,64 @@ private fun RankingsScreen(
 }
 
 @Composable
-private fun MessagesScreen(status: String, onConnect: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("消息", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text(status, style = MaterialTheme.typography.bodyMedium, color = Fog)
-        Button(onClick = onConnect) { Text("连接 OpenIM") }
+private fun MessagesScreen(
+    status: String,
+    conversations: List<OpenImConversation>,
+    recipientId: String,
+    message: String,
+    busy: Boolean,
+    ready: Boolean,
+    onRecipientId: (String) -> Unit,
+    onMessage: (String) -> Unit,
+    onRefresh: () -> Unit,
+    onConnect: () -> Unit,
+    onSend: () -> Unit,
+) {
+    LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Text("消息", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(status, style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
+                Button(onClick = onConnect, enabled = !busy) { Text(if (ready) "重新登录" else "连接 OpenIM") }
+                OutlinedButton(onClick = onRefresh, enabled = ready && !busy) { Text("刷新会话") }
+            }
+        }
+        item {
+            Text("发送单聊消息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(
+                value = recipientId,
+                onValueChange = onRecipientId,
+                label = { Text("收件人用户 ID") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            OutlinedTextField(
+                value = message,
+                onValueChange = onMessage,
+                label = { Text("消息内容") },
+                enabled = ready,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+            Button(onClick = onSend, enabled = ready && !busy && recipientId.isNotBlank() && message.isNotBlank(), modifier = Modifier.padding(top = 8.dp)) {
+                Text(if (busy) "处理中" else "发送")
+            }
+        }
+        item { Text("真实会话", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+        if (conversations.isEmpty()) {
+            item { Text(if (ready) "当前没有会话" else "连接 OpenIM 后读取会话", color = Fog) }
+        } else {
+            items(conversations, key = { it.userId }) { conversation ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(conversation.name, conversation.userId.hashCode())
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text(conversation.name, fontWeight = FontWeight.SemiBold)
+                        Text(conversation.latestMessage, style = MaterialTheme.typography.bodySmall, color = Fog, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Text(conversation.userId, style = MaterialTheme.typography.labelSmall, color = Fog)
+                }
+                HorizontalDivider(color = NightLine)
+            }
+        }
     }
 }
 
@@ -803,3 +911,32 @@ private fun saveSession(context: android.content.Context, session: UserSession?)
         }
     }.apply()
 }
+
+private fun parseOpenImConversations(raw: String): List<OpenImConversation> = runCatching {
+    val value = org.json.JSONTokener(raw).nextValue()
+    val rows = when (value) {
+        is org.json.JSONArray -> value
+        is org.json.JSONObject -> value.optJSONArray("conversationList")
+            ?: value.optJSONArray("conversations")
+            ?: value.optJSONArray("data")
+            ?: org.json.JSONArray()
+        else -> org.json.JSONArray()
+    }
+    buildList {
+        for (index in 0 until rows.length()) {
+            val row = rows.optJSONObject(index) ?: continue
+            val userId = row.optString("userID").ifBlank { row.optString("groupID") }
+            if (userId.isBlank()) continue
+            val latest = row.optString("latestMsg")
+            val message = runCatching { org.json.JSONObject(latest) }.getOrNull()
+            val text = message?.optJSONObject("textElem")?.optString("content")
+                ?: message?.optString("content")
+                ?: latest
+            add(OpenImConversation(
+                userId = userId,
+                name = row.optString("showName").ifBlank { "用户 $userId" },
+                latestMessage = text,
+            ))
+        }
+    }
+}.getOrDefault(emptyList())

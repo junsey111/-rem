@@ -44,7 +44,7 @@ services:
       ALIPAY_PUBLIC_KEY: ${ALIPAY_PUBLIC_KEY:-}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
-      LIVEKIT_URL: ${LIVEKIT_URL:-ws://10.0.2.2:7880}
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://192.168.254.132:17880}
       OPENIM_API_URL: ${OPENIM_API_URL:-http://openim-server:10002}
       OPENIM_PUBLIC_API_URL: ${OPENIM_PUBLIC_API_URL:-http://10.0.2.2:10002}
       OPENIM_SECRET: ${OPENIM_SECRET:-openIM123}
@@ -76,7 +76,7 @@ services:
       - "${SRS_SRT_PORT:-10080}:10080/udp"
   livekit:
     image: livekit/livekit-server:latest
-    command: --dev
+    command: --dev --bind 0.0.0.0
     restart: unless-stopped
     ports:
       - "${LIVEKIT_PORT:-7880}:7880"

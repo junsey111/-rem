@@ -9,7 +9,7 @@ Android app
   └─ OpenIM SDK Core      -> OpenIM Server -> private messages and chat
 ```
 
-`app/src/main/java/cn/liveroom/app/LiveKitRoomGateway.kt` is the app-side adapter around the official LiveKit Android `Room` API. The current UI deliberately keeps the room screen usable without credentials; the gateway is ready for the application API to provide a short-lived token.
+`app/src/main/java/cn/liveroom/app/LiveKitRoomGateway.kt` adapts the official LiveKit Android `Room` API. Room access uses short-lived credentials issued by the Billd application gateway.
 
 ## What remains server-side
 
@@ -17,7 +17,7 @@ The app must call an application API for login, room discovery, gift purchase, c
 
 ## Android integration status
 
-The Android client now uses the Billd application gateway for real registration/login and JWT persistence, live-room discovery, Revenue gift catalog and gift submission, wallet balance, user/creator levels, daily/monthly creator and contributor rankings, creator earnings, Alipay recharge URL creation, live-session start/close, LiveKit token issuance, and Billd Socket.IO host-room registration. Gift and wallet changes are accepted only after the server response; the client does not maintain a local ledger.
+The Android client uses the Billd application gateway for registration/login and JWT persistence, live-room discovery, Revenue gift catalog and gift submission, wallet balance, user/creator levels, daily/monthly creator and contributor rankings, creator earnings, Alipay recharge URL creation, live-session start/close, LiveKit token issuance, and Billd Socket.IO host-room registration. Gift and wallet changes are accepted only after the server response; the client does not maintain a local ledger. The OpenIM SDK adapter is present in the Android app and uses Billd-issued user credentials.
 
 The debug APK can be built for the VMware backend with:
 
@@ -26,7 +26,14 @@ $argsList = @(':app:assembleDebug', '-PbackendHost=192.168.254.132', '-PsrsApiPo
 & .tools/gradle-8.10.2/bin/gradle.bat @argsList
 ```
 
-The current VM check confirms Billd on `4300` and SRS on `11985/18088`; the VM currently does not expose LiveKit on `17880` or OpenIM on `10002/10001`. Until those services are reachable, LiveKit camera/microphone rooms and OpenIM messages cannot pass end to end. The Android UI reports those failures instead of displaying demo success. The operations tab also reports that this backend checkout does not expose moderation, bans, or aggregate operations endpoints.
+The VMware check on 2026-11-01 confirms Billd on `4300` and LiveKit on `17880` (HTTP 200). OpenIM is not running: its Compose image pull failed because the VM could not reach Docker Hub, so messaging is not yet available end to end. SRS is configured on `11985/18088`; broadcast ingest/playback has not been verified from an Android device. The operations tab currently shows online rooms only; this backend checkout does not expose moderation, bans, or aggregate operations endpoints. PK/co-host controls are not implemented. Alipay can only complete payment after production merchant credentials and callback configuration are supplied and a real sandbox/production payment is verified.
+
+## Verification snapshot
+
+- `:app:assembleDebug` succeeds with VMware endpoint properties, and the APK installs and launches on the connected Android emulator.
+- Billd registration/login, wallet, levels, earnings, rankings, live start/close, and LiveKit credential issuance were previously exercised against the VMware backend with a temporary account.
+- LiveKit's VMware HTTP endpoint responds successfully. A full camera/microphone publish and subscriber playback session has not been verified in this run.
+- OpenIM, Alipay settlement, moderation, PK/co-host and Android SRS broadcast/playback remain unverified or unavailable as noted above. Do not treat these as production-ready.
 
 ## Local service choices
 
