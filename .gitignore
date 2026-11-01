@@ -8,6 +8,7 @@ local.properties
 **/node_modules/
 **/.eslintcache
 **/.env
+/.impeccable/
 *.apk
 *.aab
 *.exe

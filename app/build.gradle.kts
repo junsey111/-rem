@@ -8,6 +8,14 @@ android {
     namespace = "cn.liveroom.app"
     compileSdk = 35
 
+    val backendHost = providers.gradleProperty("backendHost").orElse("10.0.2.2").get()
+    val billdPort = providers.gradleProperty("billdPort").orElse("4300").get()
+    val srsApiPort = providers.gradleProperty("srsApiPort").orElse("1985").get()
+    val srsPlaybackPort = providers.gradleProperty("srsPlaybackPort").orElse("8088").get()
+    val livekitPort = providers.gradleProperty("livekitPort").orElse("7880").get()
+    val openImApiPort = providers.gradleProperty("openImApiPort").orElse("10002").get()
+    val openImWsPort = providers.gradleProperty("openImWsPort").orElse("10001").get()
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
@@ -19,12 +27,12 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-        buildConfigField("String", "SRS_URL", "\"http://10.0.2.2:1985\"")
-        buildConfigField("String", "BILLD_API_URL", "\"http://10.0.2.2:4300\"")
-        buildConfigField("String", "SRS_PLAYBACK_URL", "\"http://10.0.2.2:8088\"")
-        buildConfigField("String", "LIVEKIT_URL", "\"ws://10.0.2.2:7880\"")
-        buildConfigField("String", "OPENIM_API_URL", "\"http://10.0.2.2:10002\"")
-        buildConfigField("String", "OPENIM_WS_URL", "\"ws://10.0.2.2:10001\"")
+        buildConfigField("String", "SRS_URL", "\"http://$backendHost:$srsApiPort\"")
+        buildConfigField("String", "BILLD_API_URL", "\"http://$backendHost:$billdPort\"")
+        buildConfigField("String", "SRS_PLAYBACK_URL", "\"http://$backendHost:$srsPlaybackPort\"")
+        buildConfigField("String", "LIVEKIT_URL", "\"ws://$backendHost:$livekitPort\"")
+        buildConfigField("String", "OPENIM_API_URL", "\"http://$backendHost:$openImApiPort\"")
+        buildConfigField("String", "OPENIM_WS_URL", "\"ws://$backendHost:$openImWsPort\"")
     }
 
     buildFeatures {

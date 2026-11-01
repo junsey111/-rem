@@ -59,7 +59,19 @@ OpenIM 上游 Compose 使用固定的 `mongo`、`redis` 等容器名，在其独
 
 ## App 端配置
 
-默认模拟器地址在 `app/build.gradle.kts`：Billd API `4300`、SRS API `1985`、SRS 播放 `8088`、LiveKit `7880`、OpenIM API `10002`、WebSocket `10001`。首页会调用已拉取的 Billd `/live/list`，显示实际在线 Socket 房间；没有启动后端时显示连接状态。生产环境由应用 API 下发短期 LiveKit/OpenIM token；APK 不应包含服务端密钥。
+默认模拟器地址为 `10.0.2.2`，端口为 Billd `4300`、SRS API `1985`、SRS 播放 `8088`、LiveKit `7880`、OpenIM API `10002`、WebSocket `10001`。首页会调用已拉取的 Billd `/live/list`，显示实际在线 Socket 房间；没有启动后端时显示连接状态。生产环境由应用 API 下发短期 LiveKit/OpenIM token；APK 不应包含服务端密钥。
+
+构建到 VMware Debian 后端时，用构建参数替换模拟器地址和端口。当前 VM 的 Billd、SRS、LiveKit 端口分别是 `4300`、`11985`、`18088`、`17880`：
+
+```powershell
+.tools\gradle-8.10.2\bin\gradle.bat :app:assembleDebug `
+  -PbackendHost=192.168.254.132 `
+  -PsrsApiPort=11985 `
+  -PsrsPlaybackPort=18088 `
+  -PlivekitPort=17880
+```
+
+生成的 APK 在 `app/build/outputs/apk/debug/app-debug.apk`。实体手机必须能访问 VMware 的桥接/局域网地址；模拟器仍使用默认的 `10.0.2.2`。如果首页显示“暂时没有在线直播”，说明服务可达但当前没有主播通过 Socket.IO 开播，不代表前端页面缺失。
 
 `LiveKitRoomGateway` 已调用官方 SDK 的 `LiveKit.create()` 和 `Room.connect()`。礼物、充值、榜单、收益、审核和管理员操作必须接入业务 API，由服务端校验余额和权限，不能在客户端计算或保存真实账目。
 
