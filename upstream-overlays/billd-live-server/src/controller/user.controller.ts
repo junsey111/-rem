@@ -1,6 +1,8 @@
 import { ParameterizedContext } from 'koa';
 
 import { authJwt, signJwt } from '@/app/auth/authJwt';
+import { changePassword, passwordLogin } from '@/app/auth/password-login';
+import { validPassword } from '@/app/auth/password';
 import { verifyUserAuth } from '@/app/auth/verifyUserAuth';
 import successHandler from '@/app/handler/success-handle';
 import {
@@ -96,9 +98,9 @@ class UserController {
 
   create = async (ctx: ParameterizedContext, next) => {
     const { username, password, desc, avatar }: IUser = ctx.request.body;
-    if (!username) {
+    if (typeof username !== 'string' || !username.trim() || Array.from(username).length > 20 || !validPassword(password)) {
       throw new CustomError(
-        'username不能为空！',
+        '请填写有效的用户名和密码',
         ALLOW_HTTP_CODE.paramsError,
         ALLOW_HTTP_CODE.paramsError
       );
@@ -128,33 +130,7 @@ class UserController {
     await next();
   };
 
-  login = async (ctx: ParameterizedContext, next) => {
-    const { id, password, exp = 24 } = ctx.request.body;
-    const userInfo: any = await User.findOne({
-      attributes: { exclude: ['password', 'token'] },
-      where: { id, password },
-    });
-    if (!userInfo) {
-      throw new CustomError(
-        '账号或密码错误！',
-        ALLOW_HTTP_CODE.paramsError,
-        ALLOW_HTTP_CODE.paramsError
-      );
-    }
-    const token = signJwt({
-      userInfo,
-      exp,
-    });
-    await User.update({ token }, { where: { id: userInfo?.id } }); // 每次登录都更新token
-    successHandler({ ctx, data: token, message: '登录成功！' });
-
-    /**
-     * 这个其实是最后一个中间件了，其实加不加调不调用next都没硬性，但是为了防止后面要
-     * 是扩展又加了一个中间件，这里不调用await next()的话，会导致下一个中间件出现404或其他问题，
-     * 因此还是得在这调用一次await next()
-     */
-    await next();
-  };
+  login = passwordLogin;
 
   async list(ctx: ParameterizedContext, next) {
     // @ts-ignore
@@ -194,17 +170,7 @@ class UserController {
   }
 
   async getPwd(ctx: ParameterizedContext, next) {
-    const { userInfo } = await authJwt(ctx);
-    if (!userInfo) {
-      throw new CustomError(
-        `请登录！`,
-        ALLOW_HTTP_CODE.forbidden,
-        ALLOW_HTTP_CODE.forbidden
-      );
-    }
-    const result = await userService.findPwd(userInfo.id!);
-    successHandler({ ctx, data: result });
-    await next();
+    throw new CustomError('不支持读取密码，请使用修改密码功能', 410, 410);
   }
 
   async getUserInfo(ctx: ParameterizedContext, next) {
@@ -219,36 +185,7 @@ class UserController {
   }
 
   async updatePwd(ctx: ParameterizedContext, next) {
-    const { userInfo } = await authJwt(ctx);
-    if (!userInfo) {
-      throw new CustomError(
-        `请登录！`,
-        ALLOW_HTTP_CODE.forbidden,
-        ALLOW_HTTP_CODE.forbidden
-      );
-    }
-    const { oldpwd, newpwd } = ctx.request.body;
-    if (!oldpwd || !newpwd) {
-      throw new CustomError(
-        `oldpwd和newpwd不能为空！`,
-        ALLOW_HTTP_CODE.paramsError,
-        ALLOW_HTTP_CODE.paramsError
-      );
-    }
-    const user = await userService.findPwd(userInfo.id!);
-    if (user?.password !== oldpwd) {
-      throw new CustomError(
-        `旧密码错误！`,
-        ALLOW_HTTP_CODE.paramsError,
-        ALLOW_HTTP_CODE.paramsError
-      );
-    }
-    await userService.updatePwd({
-      id: userInfo.id,
-      password: newpwd,
-    });
-    successHandler({ ctx, message: '修改密码成功！' });
-    await next();
+    await changePassword(ctx, next);
   }
 
   async update(ctx: ParameterizedContext, next) {

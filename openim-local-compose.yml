@@ -1,0 +1,142 @@
+# Run GitHub upstream binaries compiled by scripts/build-openim-server.ps1.
+# This development deployment shares the existing Kafka broker, using OpenIM's separate topics.
+x-openim: &openim
+  image: busybox:1.37.0
+  restart: unless-stopped
+  working_dir: /openim
+  volumes:
+    - ./.tools/openim-linux:/openim/bin:ro
+    - ./third_party/openim-server/config:/openim/config:ro
+    - openim-logs:/openim/logs
+    - /etc/ssl/certs:/etc/ssl/certs:ro
+  environment: &im-env
+    GOMEMLIMIT: 64MiB
+    GOGC: "50"
+    IMENV_DISCOVERY_ETCD_ADDRESS: im-etcd:2379
+    IMENV_MONGODB_ADDRESS: im-mongodb:27017
+    IMENV_MONGODB_USERNAME: root
+    IMENV_MONGODB_PASSWORD: ${OPENIM_MONGO_PASSWORD:-openIM123}
+    IMENV_MONGODB_AUTHSOURCE: admin
+    IMENV_MONGODB_MAXPOOLSIZE: "10"
+    IMENV_REDIS_ADDRESS: im-redis:6379
+    IMENV_REDIS_PASSWORD: ${OPENIM_REDIS_PASSWORD:-openIM123}
+    IMENV_REDIS_POOLSIZE: "10"
+    IMENV_KAFKA_ADDRESS: kafka:9092
+    IMENV_MINIO_INTERNALADDRESS: im-minio:9000
+    IMENV_MINIO_EXTERNALADDRESS: http://${OPENIM_EXTERNAL_HOST:-192.168.254.132}:10005
+    IMENV_MINIO_ACCESSKEYID: root
+    IMENV_MINIO_SECRETACCESSKEY: ${OPENIM_MINIO_PASSWORD:-openIM123}
+    IMENV_SHARE_SECRET: ${OPENIM_SECRET:-openIM123}
+    IMENV_LOG_STORAGELOCATION: /openim/logs
+    IMENV_LOG_REMAINLOGLEVEL: "3"
+    IMENV_LOG_ISSTDOUT: "true"
+  networks: [openim, revenue]
+  depends_on:
+    im-mongodb: {condition: service_healthy}
+    im-redis: {condition: service_healthy}
+    im-etcd: {condition: service_started}
+    im-minio: {condition: service_started}
+
+services:
+  im-mongodb:
+    image: mongo:7.0
+    restart: unless-stopped
+    command: [mongod, --wiredTigerCacheSizeGB, "0.25", --bind_ip_all]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${OPENIM_MONGO_PASSWORD:-openIM123}
+    volumes: [openim-mongodb:/data/db]
+    networks: [openim]
+    healthcheck:
+      test: [CMD-SHELL, 'mongosh --quiet -u root -p "$$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "db.runCommand({ping:1}).ok" | grep 1']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  im-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${OPENIM_REDIS_PASSWORD:-openIM123}
+    command: [sh, -c, 'exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes']
+    volumes: [openim-redis:/data]
+    networks: [openim]
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  im-etcd:
+    image: bitnamilegacy/etcd:3.5.21
+    restart: unless-stopped
+    environment:
+      ALLOW_NONE_AUTHENTICATION: "yes"
+      ETCD_ADVERTISE_CLIENT_URLS: http://im-etcd:2379
+    volumes: [openim-etcd:/bitnami/etcd]
+    networks: [openim]
+  im-minio:
+    image: bitnamilegacy/minio:2024.1.13
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: root
+      MINIO_ROOT_PASSWORD: ${OPENIM_MINIO_PASSWORD:-openIM123}
+    volumes: [openim-minio:/bitnami/minio/data]
+    networks: [openim]
+    ports: ["10005:9000"]
+  im-user:
+    <<: *openim
+    command: [/openim/bin/openim-rpc-user, -c, /openim/config]
+  im-auth:
+    <<: *openim
+    command: [/openim/bin/openim-rpc-auth, -c, /openim/config]
+  im-conversation:
+    <<: *openim
+    command: [/openim/bin/openim-rpc-conversation, -c, /openim/config]
+  im-friend:
+    <<: *openim
+    command: [/openim/bin/openim-rpc-friend, -c, /openim/config]
+  im-group:
+    <<: *openim
+    command: [/openim/bin/openim-rpc-group, -c, /openim/config]
+  im-msg:
+    <<: *openim
+    command: [/openim/bin/openim-rpc-msg, -c, /openim/config]
+  im-third:
+    <<: *openim
+    command: [/openim/bin/openim-rpc-third, -c, /openim/config]
+  im-push:
+    <<: *openim
+    command: [/openim/bin/openim-push, -c, /openim/config]
+  im-transfer:
+    <<: *openim
+    command: [/openim/bin/openim-msgtransfer, -c, /openim/config]
+  im-cron:
+    <<: *openim
+    command: [/openim/bin/openim-crontask, -c, /openim/config]
+  im-gateway:
+    <<: *openim
+    command: [/openim/bin/openim-msggateway, -c, /openim/config]
+    ports: ["10001:10001"]
+  im-api:
+    <<: *openim
+    command: [/openim/bin/openim-api, -c, /openim/config]
+    ports: ["10002:10002"]
+    networks:
+      openim:
+      revenue:
+      live_backend:
+        aliases: [openim-server]
+
+volumes:
+  openim-mongodb:
+  openim-redis:
+  openim-etcd:
+  openim-minio:
+  openim-logs:
+networks:
+  openim:
+  revenue:
+    external: true
+    name: live-revenue-private
+  live_backend:
+    external: true
+    name: live_backend

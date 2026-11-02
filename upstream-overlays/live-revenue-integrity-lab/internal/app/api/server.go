@@ -31,11 +31,12 @@ type Server struct {
 	jwtSecret     string
 	paymentSecret string
 	internalKey   string
+	accountURL    string
 	reqCounter    uint64
 }
 
 // New creates a new API server.
-func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentSecret, internalKey string) *Server {
+func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentSecret, internalKey, accountURL string) *Server {
 	registerMetrics()
 
 	svc := service.New(db)
@@ -52,23 +53,44 @@ func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentS
 		jwtSecret:     jwtSecret,
 		paymentSecret: paymentSecret,
 		internalKey:   internalKey,
+		accountURL:    accountURL,
 	}
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/healthz", s.wrap("healthz", s.handleHealth))
 	mux.HandleFunc("/v1/internal/users", s.requireInternalKey(s.wrap("internal_user_sync", s.handleInternalUserSync)))
 	mux.HandleFunc("/v1/internal/lives", s.requireInternalKey(s.wrap("internal_live_sync", s.handleInternalLiveSync)))
+	mux.HandleFunc("/v1/internal/matches", s.requireInternalKey(s.wrap("internal_match_sync", s.handleInternalMatchSync)))
+	mux.HandleFunc("/v1/internal/media-rooms/", s.requireInternalKey(s.wrap("internal_media_room", s.handleMediaRoom)))
+	mux.HandleFunc("/v1/internal/operations/", s.requireInternalKey(s.wrap("internal_operations", s.handleInternalOperations)))
+	mux.HandleFunc("/v1/internal/finance/", s.requireInternalKey(s.wrap("internal_finance", s.handleFinanceAdmin)))
+	mux.HandleFunc("/v1/internal/platform-account", s.requireInternalKey(s.wrap("platform_account", s.handlePlatformAccount)))
+	mux.HandleFunc("/v1/creators/me/withdrawals", s.requireAuth(s.wrap("withdrawals", s.handleWithdrawals)))
+	mux.HandleFunc("/v1/users/me/refunds", s.requireAuth(s.wrap("refunds", s.handleMyRefunds)))
+	mux.HandleFunc("/v1/finance/rules", s.requireAuth(s.wrap("finance_rules", s.handleFinanceRules)))
+	mux.HandleFunc("/v1/creators/me/withdrawable", s.requireAuth(s.wrap("withdrawable", s.handleWithdrawable)))
 	mux.HandleFunc("/v1/gifts/catalog", s.wrap("gift_catalog", s.handleGiftCatalog))
+	mux.HandleFunc("/v1/internal/catalog", s.requireInternalKey(s.wrap("admin_catalog", s.handleAdminCatalog)))
+	mux.HandleFunc("/v1/internal/reviews/", s.requireInternalKey(s.wrap("admin_reviews", s.handleAdminReviews)))
+	mux.HandleFunc("/v1/users/me/creator-applications", s.requireAuth(s.wrap("creator_applications", s.handleReviews)))
+	mux.HandleFunc("/v1/users/me/reports", s.requireAuth(s.wrap("reports", s.handleReviews)))
+	mux.HandleFunc("/v1/cohosts/", s.requireAuth(s.wrap("cohosts", s.handleCohost)))
+	mux.HandleFunc("/v1/internal/admission", s.requireInternalKey(s.wrap("admission", s.handleAdmission)))
 	mux.HandleFunc("/v1/wallets/me", s.requireAuth(s.wrap("wallet_balance", s.handleWalletBalance)))
+	mux.HandleFunc("/v1/users/me/profile", s.requireAuth(s.wrap("user_profile", s.handleUserProfile)))
 	mux.HandleFunc("/v1/creators/me/earnings", s.requireAuth(s.wrap("creator_earnings", s.handleCreatorEarnings)))
 	mux.HandleFunc("/v1/users/me/level", s.requireAuth(s.wrap("user_level", s.handleUserLevel)))
 	mux.HandleFunc("/v1/rankings/creators", s.requireAuth(s.wrap("creator_rankings", s.handleCreatorRankings)))
 	mux.HandleFunc("/v1/rankings/contributors", s.requireAuth(s.wrap("contributor_rankings", s.handleContributorRankings)))
 	mux.HandleFunc("/v1/wallets/recharges", s.wrap("wallet_recharge", s.handleRecharge))
 	mux.HandleFunc("/v1/gifts", s.requireAuth(s.wrap("gift_send", s.handleGift)))
+	mux.HandleFunc("/v1/users/me/gifts", s.requireAuth(s.wrap("gift_history", s.handleGiftHistory)))
+	mux.HandleFunc("/v1/users/me/gifts/", s.requireAuth(s.wrap("gift_receipt", s.handleGiftReceipt)))
 	mux.HandleFunc("/v1/internal/comments", s.requireAuth(s.wrap("internal_comments", s.handleInternalComments)))
 	mux.HandleFunc("/v1/internal/watch-minutes", s.requireAuth(s.wrap("internal_watch_minutes", s.handleInternalWatchMinutes)))
 	mux.HandleFunc("/v1/lives/", s.requireAuth(s.wrap("lives_prefix", s.handleLivesPrefix)))
 	mux.HandleFunc("/v1/matches/", s.requireAuth(s.wrap("match_score", s.handleMatchScore)))
+	mux.HandleFunc("/v1/match-invitations", s.requireAuth(s.wrap("match_invitations", s.handleMatchInvitations)))
+	mux.HandleFunc("/v1/match-invitations/", s.requireAuth(s.wrap("match_invitation_response", s.handleMatchInvitationResponse)))
 	mux.HandleFunc("/v1/campaigns/", s.wrap("campaigns_prefix", s.handleCampaignPrefix))
 	mux.HandleFunc("/v1/settlements/", s.requireAuth(s.wrap("settlement_get", s.handleSettlementGet)))
 	return s
@@ -276,44 +298,97 @@ func (s *Server) handleContributorRankings(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleMatchScore(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) == 4 && parts[0] == "v1" && parts[1] == "matches" && parts[3] == "close" {
+		s.handleMatchClose(w, r, parts[2])
+		return
+	}
 	if r.Method != http.MethodGet {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
 		return
 	}
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) != 3 || parts[2] != "score" {
-		httpx.WriteError(w, http.StatusNotFound, "NOT_FOUND", "route not found")
-		return
-	}
-	matchID, err := strconv.ParseUint(parts[1], 10, 64)
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "BAD_PATH", "invalid match id")
-		return
-	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT creator_id, COALESCE(SUM(match_points_added),0) FROM gift_orders WHERE match_id=? AND status='ACCEPTED' GROUP BY creator_id ORDER BY creator_id`, matchID)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	defer rows.Close()
-	type score struct {
-		CreatorID uint64 `json:"creator_id"`
-		Points    int64  `json:"points"`
-	}
-	result := []score{}
-	for rows.Next() {
-		var item score
-		if err := rows.Scan(&item.CreatorID, &item.Points); err != nil {
+	if len(parts) == 4 && parts[0] == "v1" && parts[1] == "matches" && parts[3] == "score" {
+		matchID, err := strconv.ParseUint(parts[2], 10, 64)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "BAD_PATH", "invalid match id")
+			return
+		}
+		var creatorID, opponentCreatorID sql.NullInt64
+		if err := s.db.QueryRowContext(r.Context(), `SELECT creator_id,opponent_creator_id FROM live_matches WHERE match_id=?`, matchID).Scan(&creatorID, &opponentCreatorID); err != nil {
+			if err == sql.ErrNoRows {
+				httpx.WriteError(w, http.StatusNotFound, "MATCH_NOT_FOUND", "match not found")
+				return
+			}
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
-		result = append(result, item)
-	}
-	if err := rows.Err(); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		rows, err := s.db.QueryContext(r.Context(), `SELECT creator_id,COALESCE(SUM(match_points_added),0) FROM gift_orders WHERE match_id=? AND status='ACCEPTED' GROUP BY creator_id ORDER BY creator_id`, matchID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		defer rows.Close()
+		type score struct {
+			CreatorID uint64 `json:"creator_id"`
+			Points    int64  `json:"points"`
+		}
+		result := []score{{CreatorID: uint64(creatorID.Int64)}}
+		if opponentCreatorID.Valid && opponentCreatorID.Int64 != creatorID.Int64 {
+			result = append(result, score{CreatorID: uint64(opponentCreatorID.Int64)})
+		}
+		for rows.Next() {
+			var item score
+			if err := rows.Scan(&item.CreatorID, &item.Points); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+				return
+			}
+			for i := range result {
+				if result[i].CreatorID == item.CreatorID {
+					result[i].Points = item.Points
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"match_id": matchID, "scores": result})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"match_id": matchID, "scores": result})
+	if len(parts) == 3 && parts[0] == "v1" && parts[1] == "matches" {
+		matchID, err := strconv.ParseUint(parts[2], 10, 64)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "BAD_PATH", "invalid match id")
+			return
+		}
+		var result struct {
+			MatchID               uint64        `json:"match_id"`
+			LiveSessionID         uint64        `json:"live_session_id"`
+			CreatorID             uint64        `json:"creator_id"`
+			OpponentLiveSessionID sql.NullInt64 `json:"-"`
+			OpponentSessionID     uint64        `json:"opponent_live_session_id"`
+			OpponentCreatorID     sql.NullInt64 `json:"-"`
+			OpponentID            uint64        `json:"opponent_creator_id"`
+			Status                string        `json:"status"`
+		}
+		if err := s.db.QueryRowContext(r.Context(), `SELECT match_id,live_session_id,creator_id,opponent_live_session_id,opponent_creator_id,status FROM live_matches WHERE match_id=?`, matchID).Scan(&result.MatchID, &result.LiveSessionID, &result.CreatorID, &result.OpponentLiveSessionID, &result.OpponentCreatorID, &result.Status); err != nil {
+			if err == sql.ErrNoRows {
+				httpx.WriteError(w, http.StatusNotFound, "MATCH_NOT_FOUND", "match not found")
+				return
+			}
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		if result.OpponentLiveSessionID.Valid {
+			result.OpponentSessionID = uint64(result.OpponentLiveSessionID.Int64)
+		}
+		if result.OpponentCreatorID.Valid {
+			result.OpponentID = uint64(result.OpponentCreatorID.Int64)
+		}
+		httpx.WriteJSON(w, http.StatusOK, result)
+		return
+	}
+	httpx.WriteError(w, http.StatusNotFound, "NOT_FOUND", "route not found")
 }
 
 func (s *Server) requireInternalKey(next http.HandlerFunc) http.HandlerFunc {
@@ -335,8 +410,6 @@ func (s *Server) handleInternalUserSync(w http.ResponseWriter, r *http.Request) 
 	}
 	var req struct {
 		UserID           uint64 `json:"user_id"`
-		AgeYears         uint8  `json:"age_years"`
-		RegionCode       string `json:"region_code"`
 		CanGoLive        bool   `json:"can_go_live"`
 		LiveGiftsEnabled bool   `json:"live_gifts_enabled"`
 		AccountType      string `json:"account_type"`
@@ -345,20 +418,14 @@ func (s *Server) handleInternalUserSync(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusBadRequest, "BAD_JSON", "invalid user payload")
 		return
 	}
-	if req.AgeYears == 0 {
-		req.AgeYears = 18
-	}
-	if req.RegionCode == "" {
-		req.RegionCode = "US"
-	}
 	if req.AccountType == "" {
 		req.AccountType = "NORMAL"
 	}
 	_, err := s.db.ExecContext(r.Context(), `
 		INSERT INTO users (user_id, age_years, region_code, account_standing, can_go_live, live_gifts_enabled, account_type)
-		VALUES (?, ?, ?, 'GOOD', ?, ?, ?)
-		ON DUPLICATE KEY UPDATE age_years=VALUES(age_years), region_code=VALUES(region_code), can_go_live=VALUES(can_go_live), live_gifts_enabled=VALUES(live_gifts_enabled), account_type=VALUES(account_type)
-	`, req.UserID, req.AgeYears, req.RegionCode, req.CanGoLive, req.LiveGiftsEnabled, req.AccountType)
+		VALUES (?, NULL, NULL, 'GOOD', ?, ?, ?)
+		ON DUPLICATE KEY UPDATE user_id=VALUES(user_id)
+	`, req.UserID, req.CanGoLive, req.LiveGiftsEnabled, req.AccountType)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -386,23 +453,270 @@ func (s *Server) handleInternalLiveSync(w http.ResponseWriter, r *http.Request) 
 	if req.Mode == "" {
 		req.Mode = "ALL_GIFTS"
 	}
-	_, err := s.db.ExecContext(r.Context(), `
+	eligible, err := s.svc.CanStartLive(r.Context(), req.CreatorID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if !eligible {
+		httpx.WriteError(w, http.StatusForbidden, "LIVE_PROFILE_REQUIRED", "complete your real profile and check live permissions before starting")
+		return
+	}
+	_, err = s.db.ExecContext(r.Context(), `
 		INSERT INTO live_sessions (live_session_id, creator_id, campaign_id, status, started_at, closed_at)
 		VALUES (?, ?, ?, 'OPEN', UTC_TIMESTAMP(6), NULL)
 		ON DUPLICATE KEY UPDATE creator_id=VALUES(creator_id), campaign_id=VALUES(campaign_id), status='OPEN', closed_at=NULL
 	`, req.LiveSessionID, req.CreatorID, req.CampaignID)
 	if err == nil && req.MatchID != nil {
 		_, err = s.db.ExecContext(r.Context(), `
-			INSERT INTO live_matches (match_id, live_session_id, mode, specific_gift_id, status)
-			VALUES (?, ?, ?, ?, 'OPEN')
-			ON DUPLICATE KEY UPDATE live_session_id=VALUES(live_session_id), mode=VALUES(mode), specific_gift_id=VALUES(specific_gift_id), status='OPEN'
-		`, *req.MatchID, req.LiveSessionID, req.Mode, req.SpecificGiftID)
+		INSERT INTO live_matches (match_id, live_session_id, creator_id, mode, specific_gift_id, status)
+		SELECT ?, ?, creator_id, ?, ?, 'OPEN' FROM live_sessions WHERE live_session_id=?
+		ON DUPLICATE KEY UPDATE live_session_id=VALUES(live_session_id), creator_id=VALUES(creator_id), mode=VALUES(mode), specific_gift_id=VALUES(specific_gift_id), status='OPEN'
+		`, *req.MatchID, req.LiveSessionID, req.Mode, req.SpecificGiftID, req.LiveSessionID)
 	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"live_session_id": req.LiveSessionID, "match_id": req.MatchID})
+}
+
+func (s *Server) handleInternalMatchSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only POST is allowed")
+		return
+	}
+	var req struct {
+		MatchID        uint64  `json:"match_id"`
+		LiveSessionID  uint64  `json:"live_session_id"`
+		Mode           string  `json:"mode"`
+		SpecificGiftID *string `json:"specific_gift_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.MatchID == 0 || req.LiveSessionID == 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "BAD_JSON", "match_id and live_session_id are required")
+		return
+	}
+	if req.Mode == "" {
+		req.Mode = "ALL_GIFTS"
+	}
+	if req.Mode != "ALL_GIFTS" && req.Mode != "SPECIFIC_GIFT" {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_MODE", "mode must be ALL_GIFTS or SPECIFIC_GIFT")
+		return
+	}
+	var status string
+	if err := s.db.QueryRowContext(r.Context(), `SELECT status FROM live_sessions WHERE live_session_id=?`, req.LiveSessionID).Scan(&status); err != nil {
+		if err == sql.ErrNoRows {
+			httpx.WriteError(w, http.StatusNotFound, "LIVE_SESSION_NOT_FOUND", "live session not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if status != "OPEN" {
+		httpx.WriteError(w, http.StatusConflict, "LIVE_SESSION_CLOSED", "live session is closed")
+		return
+	}
+	_, err := s.db.ExecContext(r.Context(), `
+		INSERT INTO live_matches (match_id, live_session_id, creator_id, mode, specific_gift_id, status)
+		SELECT ?, ?, creator_id, ?, ?, 'OPEN' FROM live_sessions WHERE live_session_id=?
+		ON DUPLICATE KEY UPDATE live_session_id=VALUES(live_session_id), creator_id=VALUES(creator_id), mode=VALUES(mode), specific_gift_id=VALUES(specific_gift_id), status='OPEN'
+	`, req.MatchID, req.LiveSessionID, req.Mode, req.SpecificGiftID, req.LiveSessionID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"match_id": req.MatchID, "live_session_id": req.LiveSessionID, "status": "OPEN"})
+}
+
+func (s *Server) handleMatchInvitations(w http.ResponseWriter, r *http.Request) {
+	userID := authenticatedUserID(r)
+	if r.Method == http.MethodGet {
+		rows, err := s.db.QueryContext(r.Context(), `
+			SELECT invitation_id, match_id, live_session_id, creator_id, opponent_live_session_id, opponent_creator_id, mode, status, created_at
+			FROM live_match_invitations
+			WHERE opponent_creator_id=? AND status='PENDING'
+			AND EXISTS (SELECT 1 FROM live_sessions s WHERE s.live_session_id=live_match_invitations.live_session_id AND s.status='OPEN')
+			AND EXISTS (SELECT 1 FROM live_sessions s WHERE s.live_session_id=live_match_invitations.opponent_live_session_id AND s.status='OPEN')
+			ORDER BY created_at DESC LIMIT 50
+		`, userID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		defer rows.Close()
+		type invitation struct {
+			InvitationID          uint64    `json:"invitation_id"`
+			MatchID               uint64    `json:"match_id"`
+			LiveSessionID         uint64    `json:"live_session_id"`
+			CreatorID             uint64    `json:"creator_id"`
+			OpponentLiveSessionID uint64    `json:"opponent_live_session_id"`
+			OpponentCreatorID     uint64    `json:"opponent_creator_id"`
+			Mode                  string    `json:"mode"`
+			Status                string    `json:"status"`
+			CreatedAt             time.Time `json:"created_at"`
+		}
+		items := []invitation{}
+		for rows.Next() {
+			var item invitation
+			if err := rows.Scan(&item.InvitationID, &item.MatchID, &item.LiveSessionID, &item.CreatorID, &item.OpponentLiveSessionID, &item.OpponentCreatorID, &item.Mode, &item.Status, &item.CreatedAt); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+				return
+			}
+			items = append(items, item)
+		}
+		if err := rows.Err(); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"invitations": items})
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "GET or POST required")
+		return
+	}
+	var req struct {
+		LiveSessionID         uint64  `json:"live_session_id"`
+		OpponentLiveSessionID uint64  `json:"opponent_live_session_id"`
+		Mode                  string  `json:"mode"`
+		SpecificGiftID        *string `json:"specific_gift_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.LiveSessionID == 0 || req.OpponentLiveSessionID == 0 || req.LiveSessionID == req.OpponentLiveSessionID {
+		httpx.WriteError(w, http.StatusBadRequest, "BAD_JSON", "two distinct live sessions are required")
+		return
+	}
+	if req.Mode == "" {
+		req.Mode = "ALL_GIFTS"
+	}
+	if req.Mode != "ALL_GIFTS" && req.Mode != "SPECIFIC_GIFT" {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_MODE", "mode must be ALL_GIFTS or SPECIFIC_GIFT")
+		return
+	}
+	if req.Mode == "SPECIFIC_GIFT" {
+		var enabled bool
+		if req.SpecificGiftID == nil || s.db.QueryRowContext(r.Context(), `SELECT enabled FROM gift_catalog WHERE gift_id=?`, req.SpecificGiftID).Scan(&enabled) != nil || !enabled {
+			httpx.WriteError(w, http.StatusBadRequest, "INVALID_GIFT", "an enabled gift is required")
+			return
+		}
+	}
+	var creatorID, opponentCreatorID uint64
+	var ownStatus, opponentStatus string
+	if err := s.db.QueryRowContext(r.Context(), `SELECT creator_id,status FROM live_sessions WHERE live_session_id=?`, req.LiveSessionID).Scan(&creatorID, &ownStatus); err != nil || creatorID != userID || ownStatus != "OPEN" {
+		httpx.WriteError(w, http.StatusForbidden, "FORBIDDEN", "the caller must own an open live session")
+		return
+	}
+	if err := s.db.QueryRowContext(r.Context(), `SELECT creator_id,status FROM live_sessions WHERE live_session_id=?`, req.OpponentLiveSessionID).Scan(&opponentCreatorID, &opponentStatus); err != nil || opponentStatus != "OPEN" || opponentCreatorID == userID {
+		httpx.WriteError(w, http.StatusBadRequest, "OPPONENT_UNAVAILABLE", "opponent live session is unavailable")
+		return
+	}
+	baseID := uint64(time.Now().UnixMilli())*1000 + uint64(time.Now().Nanosecond()%1000)
+	_, err := s.db.ExecContext(r.Context(), `
+		INSERT INTO live_match_invitations (invitation_id,match_id,live_session_id,creator_id,opponent_live_session_id,opponent_creator_id,mode,specific_gift_id,status,created_at)
+		VALUES (?,?,?,?,?,?,?,?, 'PENDING', UTC_TIMESTAMP(6))
+	`, baseID, baseID, req.LiveSessionID, creatorID, req.OpponentLiveSessionID, opponentCreatorID, req.Mode, req.SpecificGiftID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"invitation_id": baseID, "match_id": baseID, "status": "PENDING"})
+}
+
+func (s *Server) handleMatchInvitationResponse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only POST is allowed")
+		return
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) != 4 || parts[0] != "v1" || parts[1] != "match-invitations" || parts[3] != "respond" {
+		httpx.WriteError(w, http.StatusNotFound, "NOT_FOUND", "route not found")
+		return
+	}
+	id, err := strconv.ParseUint(parts[2], 10, 64)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "BAD_PATH", "invalid invitation id")
+		return
+	}
+	var req struct {
+		Accept *bool `json:"accept"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Accept == nil {
+		httpx.WriteError(w, http.StatusBadRequest, "BAD_JSON", "accept is required")
+		return
+	}
+	tx, err := s.db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	defer tx.Rollback()
+	var matchID, liveID, creatorID, opponentLiveID, opponentID uint64
+	var mode, status string
+	var specificGift sql.NullString
+	err = tx.QueryRowContext(r.Context(), `SELECT match_id,live_session_id,creator_id,opponent_live_session_id,opponent_creator_id,mode,specific_gift_id,status FROM live_match_invitations WHERE invitation_id=? FOR UPDATE`, id).Scan(&matchID, &liveID, &creatorID, &opponentLiveID, &opponentID, &mode, &specificGift, &status)
+	if err == sql.ErrNoRows {
+		httpx.WriteError(w, http.StatusNotFound, "INVITATION_NOT_FOUND", "invitation not found")
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if opponentID != authenticatedUserID(r) {
+		httpx.WriteError(w, http.StatusForbidden, "FORBIDDEN", "only the invited creator may respond")
+		return
+	}
+	if status != "PENDING" {
+		httpx.WriteError(w, http.StatusConflict, "INVITATION_RESOLVED", "invitation is no longer pending")
+		return
+	}
+	newStatus := "REJECTED"
+	if *req.Accept {
+		// Serialize accepts per creator, even when a creator has multiple sessions.
+		creators := []uint64{creatorID, opponentID}
+		if creators[0] > creators[1] {
+			creators[0], creators[1] = creators[1], creators[0]
+		}
+		for _, creator := range creators {
+			if _, err := tx.ExecContext(r.Context(), `INSERT INTO live_match_creator_locks(creator_id) VALUES (?) ON DUPLICATE KEY UPDATE creator_id=VALUES(creator_id)`, creator); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+				return
+			}
+		}
+		lives := []uint64{liveID, opponentLiveID}
+		if lives[0] > lives[1] {
+			lives[0], lives[1] = lives[1], lives[0]
+		}
+		for _, live := range lives {
+			var liveStatus string
+			if err := tx.QueryRowContext(r.Context(), `SELECT status FROM live_sessions WHERE live_session_id=? FOR UPDATE`, live).Scan(&liveStatus); err != nil || liveStatus != "OPEN" {
+				httpx.WriteError(w, http.StatusConflict, "LIVE_SESSION_CLOSED", "a live session is unavailable")
+				return
+			}
+		}
+		var active int
+		if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM live_matches WHERE status='OPEN' AND (creator_id IN (?,?) OR opponent_creator_id IN (?,?))`, creatorID, opponentID, creatorID, opponentID).Scan(&active); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		if active != 0 {
+			httpx.WriteError(w, http.StatusConflict, "CREATOR_IN_MATCH", "a creator is already in a match")
+			return
+		}
+		if _, err := tx.ExecContext(r.Context(), `INSERT INTO live_matches (match_id,live_session_id,creator_id,opponent_live_session_id,opponent_creator_id,mode,specific_gift_id,status) VALUES (?,?,?,?,?,?,?, 'OPEN')`, matchID, liveID, creatorID, opponentLiveID, opponentID, mode, specificGift); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		newStatus = "ACCEPTED"
+	}
+	if _, err := tx.ExecContext(r.Context(), `UPDATE live_match_invitations SET status=?,responded_at=UTC_TIMESTAMP(6) WHERE invitation_id=?`, newStatus, id); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"invitation_id": id, "match_id": matchID, "status": newStatus, "live_session_id": liveID, "opponent_live_session_id": opponentLiveID, "creator_id": creatorID, "opponent_creator_id": opponentID})
 }
 
 func (s *Server) handleRecharge(w http.ResponseWriter, r *http.Request) {
@@ -479,7 +793,7 @@ func (s *Server) ensureUser(ctx context.Context, userID uint64) error {
 	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO users (user_id, age_years, region_code, account_standing, can_go_live, live_gifts_enabled, account_type)
-		VALUES (?, 18, 'US', 'GOOD', TRUE, TRUE, 'NORMAL')
+		VALUES (?, NULL, NULL, 'GOOD', TRUE, TRUE, 'NORMAL')
 		ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)
 	`, userID)
 	return err
@@ -516,6 +830,15 @@ func (s *Server) handleLivesPrefix(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case r.Method == http.MethodGet && parts[3] == "match":
+		var matchID uint64
+		err := s.db.QueryRowContext(r.Context(), `SELECT match_id FROM live_matches WHERE status='OPEN' AND (live_session_id=? OR opponent_live_session_id=?) ORDER BY match_id DESC LIMIT 1`, liveSessionID, liveSessionID).Scan(&matchID)
+		if err != nil && err != sql.ErrNoRows {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"match_id": matchID})
+		return
 	case r.Method == http.MethodPost && parts[3] == "close":
 		var creatorID uint64
 		err := s.db.QueryRowContext(r.Context(), `SELECT creator_id FROM live_sessions WHERE live_session_id = ?`, liveSessionID).Scan(&creatorID)

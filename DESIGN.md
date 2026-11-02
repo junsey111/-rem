@@ -2,24 +2,24 @@
 
 ## Direction
 
-The Android client uses a night-stage system for viewers, streamers, and operators. The shell stays native Material 3: bottom navigation on compact screens, standard chips and sheets, and safe-area aware content.
+The Android client uses a commerce-grade, content-first system for viewers, streamers, and operators. It follows the patterns that make large consumer apps easy to use: show the valuable content first, keep one primary action per surface, reveal advanced controls only in context, and make every monetary or live-state change explicit. The shell stays native Material 3: bottom navigation on compact screens, standard chips and sheets, and safe-area aware content.
 
 The visual world contributes four things:
 
-- **Palette:** ink black surfaces for a low-light viewing scene, coral for primary actions and failures, mint for live/healthy state, and amber for moderation or ranking emphasis.
+- **Palette:** an editorial off-white canvas and near-black content surfaces for strong hierarchy, coral for the single primary action and failures, mint for live/healthy state, and amber for ranking or moderation emphasis.
 - **Type:** Material 3's Roboto scale with tight titles and calm body copy for repeated scanning.
-- **Density:** compact rows and short status lines so room state, host, category, and viewer count can be compared quickly.
-- **Signature move:** every live state uses the same small pulse dot and status line, from the top bar through room cards and the operations list.
+- **Density:** generous first-glance spacing and compact comparison rows; room title and host lead, technical IDs stay out of the consumer path.
+- **Signature move:** every surface has one clear next action, while live state uses the same small pulse dot and short status line.
 
 ## Surface map
 
-- Live: service health, room count, category filters, live room list, empty/error state, and interaction tools.
-- Room sheet: HLS player, host status, wallet balance, gifts, PK/voice/video actions.
+- Live: content-first discovery, live room list, honest empty/error state, and a single prominent start-live action.
+- Live room: full-window black video canvas with safe-area-aware overlays; gifts and real-host PK selection in contextual sheets. Host exit requires confirmation.
 - Rankings: daily/monthly creator ranking.
-- Messages: OpenIM conversation list.
+- Messages: automatic connection, conversation-first list, contextual message composer, explicit connection retry.
 - Profile: user/creator levels, wallet, earnings, and shortcuts.
-- Operations: live count, user count, gift volume, moderation queue, and room management.
+- Operations: server-authorized statistics and account pages, plus live-session management and audited forced closure. Select a real open session, enter a reason, confirm the irreversible action, and retain the request identifier until the server confirms its outcome. Pending operations survive app restarts; empty/error states never substitute fake records. Ban/unban and review workflows remain unavailable.
 
 ## Content truth
 
-Room discovery is read from Billd `/live/list`. Wallet, gifts, earnings, rankings, moderation, OpenIM, and LiveKit credentials remain server-owned. The UI labels local values as demo feedback where the corresponding business endpoint is not yet wired.
+Room discovery is read from Billd `/live/list`. Wallet, gifts, earnings, rankings, moderation, OpenIM, and LiveKit credentials remain server-owned. Unavailable data stays unavailable. No demo balances, fake hosts, successful payment claims, or healthy-state indicators are substituted.

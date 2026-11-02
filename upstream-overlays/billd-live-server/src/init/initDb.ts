@@ -1,4 +1,11 @@
 import fs from 'fs';
+import '@/model/rechargeOrder.model';
+import '@/model/openimSession.model';
+import '@/model/accountAction.model';
+import '@/model/roomChat.model';
+import '@/model/liveCover.model';
+import '@/model/providerAttempt.model';
+import '@/model/identityVerification.model';
 
 import sequelize from '@/config/mysql';
 import { PROJECT_NODE_ENV } from '@/constant';

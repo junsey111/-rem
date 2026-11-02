@@ -7,20 +7,32 @@ import open_im_sdk_callback.OnAdvancedMsgListener
 import open_im_sdk_callback.OnConnListener
 import open_im_sdk_callback.SendMsgCallBack
 import org.json.JSONObject
+import org.json.JSONArray
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-data class OpenImMessage(val senderId: String, val receiverId: String, val content: String, val raw: String)
+enum class MessageConnection { CONNECTING, CONNECTED, DISCONNECTED, SESSION_EXPIRED }
 
 /** Official OpenIM SDK Core adapter. Tokens and endpoints still come from the Billd gateway. */
 class OpenImGateway(private val context: Context) {
     private var initialized = false
+    private var activeToken: String? = null
+    private val loginMutex = Mutex()
+    private val _connection = MutableStateFlow(MessageConnection.DISCONNECTED)
+    val connection = _connection.asStateFlow()
+    private val _messageVersion = MutableStateFlow(0L)
+    val messageVersion = _messageVersion.asStateFlow()
 
-    suspend fun login(credentials: OpenImCredentials): String = withContext(Dispatchers.IO) {
+    suspend fun login(credentials: OpenImCredentials): String = loginMutex.withLock { withContext(Dispatchers.IO) {
         val dataDir = java.io.File(context.filesDir, "openim")
         val logDir = java.io.File(dataDir, "logs")
         check(dataDir.mkdirs() || dataDir.isDirectory) { "无法创建 OpenIM 数据目录" }
@@ -41,9 +53,16 @@ class OpenImGateway(private val context: Context) {
             initialized = true
             Open_im_sdk.setAdvancedMsgListener(MessageListener())
         }
-        awaitBase { callback -> Open_im_sdk.login(callback, operationId, credentials.userId, credentials.token) }
+        if (Open_im_sdk.getLoginStatus(operationId) == 3L &&
+            (_connection.value == MessageConnection.SESSION_EXPIRED || activeToken != credentials.token || Open_im_sdk.getLoginUserID() != credentials.userId)) {
+            awaitBase { callback -> Open_im_sdk.logout(callback, operationId) }
+        }
+        if (Open_im_sdk.getLoginStatus(operationId) != 3L || Open_im_sdk.getLoginUserID() != credentials.userId) {
+            awaitBase { callback -> Open_im_sdk.login(callback, operationId, credentials.userId, credentials.token) }
+        }
+        activeToken = credentials.token
         "OpenIM 已登录 ${credentials.userId}"
-    }
+    } }
 
     suspend fun conversations(): String = withContext(Dispatchers.IO) {
         awaitBase { callback -> Open_im_sdk.getAllConversationList(callback, "android-${UUID.randomUUID()}") }
@@ -55,9 +74,32 @@ class OpenImGateway(private val context: Context) {
         awaitSend { callback -> Open_im_sdk.sendMessage(callback, operationId, message, recipientId, "", "", false) }
     }
 
+    suspend fun history(recipientId: String, before: String = ""): OpenImHistory = withContext(Dispatchers.IO) {
+        val conversation = JSONObject(awaitBase { callback ->
+            Open_im_sdk.getOneConversation(callback, "android-${UUID.randomUUID()}", 1, recipientId)
+        })
+        val conversationId = conversation.getString("conversationID")
+        val options = JSONObject().put("conversationID", conversationId).put("startClientMsgID", before).put("count", 30).put("viewType", 0)
+        val result = JSONObject(awaitBase { callback ->
+            Open_im_sdk.getAdvancedHistoryMessageList(callback, "android-${UUID.randomUUID()}", options.toString())
+        })
+        check(result.optInt("errCode") == 0) { result.optString("errMsg", "历史消息读取失败") }
+        val rows = result.optJSONArray("messageList") ?: JSONArray()
+        val allMessages = buildList {
+            for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { add(parseMessage(it)) }
+        }.distinctBy { it.id }.sortedWith(compareBy<OpenImMessage> { it.sentAt }.thenBy { it.id })
+        OpenImHistory(conversationId, allMessages.filter { it.status < 4 }, result.optBoolean("isEnd"), rows.optJSONObject(0)?.optString("clientMsgID").orEmpty())
+    }
+
+    suspend fun markRead(conversationId: String) = withContext(Dispatchers.IO) {
+        awaitBase { callback -> Open_im_sdk.markConversationMessageAsRead(callback, "android-${UUID.randomUUID()}", conversationId) }
+    }
+
     fun close() {
         if (initialized) Open_im_sdk.unInitSDK("android-${UUID.randomUUID()}")
         initialized = false
+        activeToken = null
+        _connection.value = MessageConnection.DISCONNECTED
     }
 
     private suspend fun awaitBase(call: (Base) -> Unit): String = suspendCancellableCoroutine { continuation ->
@@ -80,22 +122,30 @@ class OpenImGateway(private val context: Context) {
         })
     }
 
-    private class ConnectionListener : OnConnListener {
-        override fun onConnecting() = Unit
-        override fun onConnectSuccess() = Unit
-        override fun onConnectFailed(code: Int, message: String) = Unit
-        override fun onKickedOffline() = Unit
-        override fun onUserTokenExpired() = Unit
-        override fun onUserTokenInvalid(message: String) = Unit
+    private inner class ConnectionListener : OnConnListener {
+        override fun onConnecting() { _connection.value = MessageConnection.CONNECTING }
+        override fun onConnectSuccess() { _connection.value = MessageConnection.CONNECTED }
+        override fun onConnectFailed(code: Int, message: String) { _connection.value = MessageConnection.DISCONNECTED }
+        override fun onKickedOffline() { _connection.value = MessageConnection.SESSION_EXPIRED }
+        override fun onUserTokenExpired() { _connection.value = MessageConnection.SESSION_EXPIRED }
+        override fun onUserTokenInvalid(message: String) { _connection.value = MessageConnection.SESSION_EXPIRED }
     }
 
-    private class MessageListener : OnAdvancedMsgListener {
-        override fun onRecvNewMessage(message: String) = Unit
-        override fun onRecvC2CReadReceipt(message: String) = Unit
-        override fun onNewRecvMessageRevoked(message: String) = Unit
-        override fun onRecvOfflineNewMessage(message: String) = Unit
-        override fun onMsgDeleted(message: String) = Unit
-        override fun onMessageModified(message: String) = Unit
-        override fun onRecvOnlineOnlyMessage(message: String) = Unit
+    private inner class MessageListener : OnAdvancedMsgListener {
+        private fun changed() { _messageVersion.update { it + 1 } }
+        override fun onRecvNewMessage(message: String) = changed()
+        override fun onRecvC2CReadReceipt(message: String) = changed()
+        override fun onNewRecvMessageRevoked(message: String) = changed()
+        override fun onRecvOfflineNewMessage(message: String) = changed()
+        override fun onMsgDeleted(message: String) = changed()
+        override fun onMessageModified(message: String) = changed()
+        override fun onRecvOnlineOnlyMessage(message: String) = changed()
     }
+}
+
+private fun parseMessage(row: JSONObject): OpenImMessage {
+    val content = if (row.optInt("contentType") == 101) row.optJSONObject("textElem")?.optString("content")
+        ?: row.optString("content") else "[非文字消息]"
+    return OpenImMessage(row.getString("clientMsgID"), row.optString("sendID"), row.optString("recvID"), content,
+        row.optLong("sendTime").takeIf { it > 0 } ?: row.optLong("createTime"), row.optInt("status"))
 }

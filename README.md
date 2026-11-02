@@ -28,6 +28,8 @@
 - Billd Live Kotlin：已拉取到 `third_party/billd-live-kotlin` 供复用；当前是 Android Studio 模板级工程，首页是占位页，API 默认连作者线上服务，不能直接作为完整客户端。版本见 `UPSTREAM.lock`。
 - Live Revenue Integrity Lab：已拉取到 `third_party/live-revenue-integrity-lab`，作为业务账务服务。它提供充值、礼物扣币、双重记账、PK 比分、贡献榜/活动榜和直播结算对账 API，版本见 `UPSTREAM.lock`。
 
+Revenue 的受保护接口在验证 Billd JWT 后，还会用同一个 Bearer 实时请求 Billd `/user/me`；只有当前有效、未禁用的账号才能继续访问钱包、送礼、直播、PK、资料、等级、榜单和结算。退出、重新登录替换令牌、账号禁用或 Billd 权威服务不可用时，业务请求会拒绝，不会仅凭旧 JWT 继续扣款或改变状态。
+
 ## 构建 APK
 
 ```powershell
@@ -55,6 +57,10 @@ OpenIM 服务本体已通过上游 Dockerfile 构建并加入 `third_party/openi
 
 OpenIM 用户注册和 `/auth/get_user_token` 由 Billd 的 `POST /openim/session` 代理。客户端先用 Billd JWT 调用此接口，服务端按 Billd 用户 ID 注册/同步 OpenIM 用户并签发用户 token；`OPENIM_SECRET` 仅在服务端环境设置，不放入 Android 或浏览器。OpenIM 管理员 ID 默认 `imAdmin`，需与 `third_party/openim-server/config/share.yml` 中的管理员配置一致。
 
+消息会话现在通过 `openim_session` 表绑定当前 App 登录会话的 SHA-256 摘要；同一会话重复请求会先核实并复用有效消息令牌。签发前先提交待处理记录，远程签发超时或本地提交失败后仍能撤销孤立令牌。后台每轮完成后等待 5 秒，按数据库账号状态、当前令牌及期限核对；失效、禁用、删除或被替换的会话调用 OpenIM 强制下线，失败保留记录重试。新迁移 `20261102_openim_sessions.sql` 必须先执行；既有未绑定的 Android 消息令牌部署时重置一次。仅覆盖配置的 Android platform ID 与本应用记录，其他独立客户端不在本轮范围。
+
+`POST /user/logout` 只撤销请求对应的当前 App 会话，迟到请求不会清除新登录。Android 退出前持久化待同步记录，联网时调用真实退出接口；离线可先退出本机，App 运行时每 10 秒重试，下次启动继续，并在新登录前同步。App 完全关闭且离线时无法立即通知服务端，远程会话仍需等同步或原登录到期。消息撤销也受核对轮次、服务故障及排队影响，不是零延迟。设备离线退出、重连与 SDK 交互仍待实测。
+
 OpenIM 上游 Compose 使用固定的 `mongo`、`redis` 等容器名，在其独立 Compose 网络运行，并额外加入 `live_backend` 供 Billd 通过服务名访问。使用统一脚本时网络会自动创建；单独启动 OpenIM 前先执行 `docker network create live_backend`（已存在时可忽略），再运行 `docker compose --env-file .env up --build -d`（在 `third_party/openim-server` 目录执行）。模拟器 MinIO 地址默认使用 `10.0.2.2`，实体设备部署需将 `OPENIM_EXTERNAL_HOST` 改为可达的服务主机地址。LiveKit 由统一脚本等待 7880 端口；开发密钥为 `devkey/secret`，生产环境必须替换。
 
 ## App 端配置
@@ -75,9 +81,13 @@ OpenIM 上游 Compose 使用固定的 `mongo`、`redis` 等容器名，在其独
 
 `LiveKitRoomGateway` 已调用官方 SDK 的 `LiveKit.create()` 和 `Room.connect()`。礼物、充值、榜单、收益、审核和管理员操作必须接入业务 API，由服务端校验余额和权限，不能在客户端计算或保存真实账目。
 
-当前 Android 客户端已接通真实注册/登录、JWT 会话、直播列表、Revenue 钱包/礼物/等级/收益/榜单、送礼、开播/关播、LiveKit token 和 Billd Socket.IO 房间登记，并在模拟器中完成安装启动验证。VM 当前 Billd 和 SRS 可达；LiveKit 与 OpenIM 端口尚未对外可达，因此连麦和私信仍会按真实错误状态提示，不能视为已完成的线上功能。运营审核、封禁和聚合运营统计也需要后端补充对应 API。
+当前功能实现、实际运行证据及尚未验收的链路见 [后端验证记录](BACKEND_VALIDATION.md)。接口、容器或 APK 构建通过不能代替完整业务验收。
 
 ## 后端启动
+
+账务服务默认只运行版本化的结构与礼物目录迁移，不导入 `00002_seed.sql` 的演示账号、余额、直播或比赛。迁移由 Goose 记录，重复启动跳过已完成版本。历史环境中已经存在的演示记录不会自动删除，以免误删真实业务数据；须先核对记录来源与账本，再处理。
+
+数据库回归测试可使用独立 MySQL 实例：设置 `MYSQL_TEST_DSN` 后，在 `third_party/live-revenue-integrity-lab` 中运行 `go test -mod=vendor ./tests/integration -run 'TestProductionMigrations|TestRechargeAndIdempotency|TestGiftFlow|TestPKGifts|TestSettlement' -count=1`。测试会新建名称以 `live_test_` 开头的数据库，结束后删除该测试库；不要将此变量指向生产实例。未设置时，上游业务测试继续使用 Testcontainers。
 
 直播房间与媒体服务：
 
@@ -95,6 +105,10 @@ docker compose -p live-platform -f backend-compose.yml up --build
 
 业务 API 默认通过 `http://localhost:18080` 暴露（可用 `REVENUE_PORT` 覆盖），例如 `POST /v1/gifts`、`GET /v1/lives/{id}/contributors`、`GET /v1/creators/me/earnings`、`GET /v1/users/me/level`、`GET /v1/rankings/creators`、`GET /v1/rankings/contributors`、`GET /v1/matches/{id}/score` 和 `GET /v1/settlements/{id}`。Billd API 为 `http://localhost:4300`，SRS 为 `http://localhost:1985`。
 
+PK 必须先邀请并由对方接受：`POST /revenue/match-invitations`、`POST /revenue/match-invitations/{id}/respond`（明确传入 `accept` 布尔值）。`GET /revenue/lives/{id}/match` 返回当前比赛 ID（无比赛为 0）；双方主播可调用 `POST /revenue/matches/{id}/close` 结束 PK。观众只获得媒体订阅权限；结束后保留最终比分，关播会同时结束关联比赛。旧的单方面 `/revenue/matches/start` 已返回 410，客户端应使用邀请流程。
+
+PK 数据库验证：配置独立测试实例 `MYSQL_TEST_DSN` 后在 Revenue 目录运行 `go test -mod=vendor ./internal/app/api -run TestMatchLifecycleMySQL -count=1`；会创建并删除独立测试库。Billd 凭证权限验证：在其目录执行 `pnpm build` 后运行 `node --test tests/livekit-permissions.test.cjs`。这些检查不能代替双设备实际音视频验收。
+
 Billd 客户端登录入口为 `POST /user/create`（JSON：`username`、`password`、可选 `avatar`/`desc`）和 `POST /user/login`（JSON：`id`、`password`）。登录响应中的 `data` 是 JWT，后续账务接口使用 `Authorization: Bearer <JWT>`。`GET /live/list` 返回当前通过 Billd Socket.IO 开播的房间。
 
 LiveKit 房间 token 入口为 `POST /livekit/token`（JSON：`live_session_id`），需要 Billd JWT。服务端先查询账务服务中的直播会话，再签发 10 分钟 token；主播获得发布权限，观众只获得订阅权限。`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET` 只配置在服务端环境。
@@ -103,6 +117,64 @@ LiveKit 房间 token 入口为 `POST /livekit/token`（JSON：`live_session_id`�
 
 真实支付宝充值入口为 `GET /alipay/recharge?coins=100`，异步通知为 `POST /alipay/notify`；通知会先由支付宝 SDK 验签，再写入账务钱包。
 
+充值会先持久化订单，再返回手机网站支付地址。有效档位为 100/500/1000 金币（实付人民币 1/5/10 元）。本人订单列表为 `GET /alipay/orders`，单笔为 `GET /alipay/orders/{requestId}`，均需 Billd JWT。只有签名有效且匹配本系统订单、商户 app_id、精确金额及流水的通知才可入账；浏览器跳回不能证明到账。
+
+既有数据库部署前执行 Billd 的 `migrations/20261102_recharge_orders.sql`，并部署对应订单 model 与路由。初始化使用 DB_SYNC_MODE=3 时不会自动创建新表，必须执行该迁移。新模型已在 initDb 中显式注册，以便正常数据库同步模式创建。商户缺少配置时接口返回 503；需要支付宝可访问的 PUBLIC_BASE_URL 才能接收真实通知。当前 VM 未配置有效商户，尚不能完成真实支付。
+
+充值路由回归：先在 Billd 目录执行 `pnpm build`，再运行 `node --test tests/alipay-orders.test.cjs`。测试用临时 RSA 密钥验证真实 SDK 验签，订单和账务边界隔离；不能代替真实付款验收。
+
+漏通知补偿：本人查询订单时，后端会对待确认订单向支付宝主动查单并验签，成功后使用同一账务幂等键入账。部署已有订单表时还须执行一次 `migrations/20261102_recharge_reconciliation.sql`；持久化查单时间保证同一订单 30 秒内最多一条请求取得查单资格。补偿在用户查询时触发，完整 Billd 服务另有每 30 秒扫描待确认订单的后台补偿。网络故障或未支付仍显示待确认，不根据超时推断到账。设置仅用于测试的 `MYSQL_TEST_URL` 后，可运行 `node --test tests/recharge-order-mysql.test.cjs` 验证真实模型和并发领取；测试创建并删除独立数据库。
+
 ## 更新上游代码
 
+### VMware OpenIM 部署补充
+
+当前 Debian 使用根目录 `openim-local-compose.yml`，而非统一脚本中的上游整套 Compose。不要同时启动两套 OpenIM。先启动既有 Billd 与 Revenue，使 `live_backend` 和 `live-revenue-private` 网络及 Kafka 就绪，再执行：
+
+```powershell
+.\scripts\build-openim-server.ps1 -IncludeSmoke
+docker compose -p live-openim -f openim-local-compose.yml up -d
+```
+
+上述构建命令在 Windows 生成 Linux AMD64 二进制。远程部署须将 `.tools/openim-linux`、`third_party/openim-server/config` 和 Compose 文件按原目录结构复制到 Debian 后运行 Compose。这是开发部署，依赖已有 Revenue Kafka；不可仅凭容器运行判断私信可用。
+
+真实消息验证程序输出于 `.tools/openim-linux/platform-im-smoke`，通过服务端环境 `OPENIM_SECRET` 读取密钥；运行会在 OpenIM 创建明确标注的验收账号，不会创建 Billd 用户或钱包。当前 VM 已通过双向消息与重连历史验证，设备端验收仍未完成。
+
 运行 `scripts/update-upstream.ps1`，再重新构建 APK。
+
+
+### 用户资料真实性
+
+新账号不会自动填写年龄和地区。「我的」中可保存本人资料，标明未经身份核验；旧系统默认资料按未知处理。开播及收礼的服务端条件不会把未知资料当作成年，也不会因查询钱包或保存资料而恢复受限权限。自填资料不能替代正式身份、年龄核验；完整验证边界见 [BACKEND_VALIDATION.md](BACKEND_VALIDATION.md)。
+
+
+### 送礼超时与重试
+
+新版 Android 会保留待确认送礼；使用“重试并核实原送礼”先查询同一单号的服务端结果，已确认的不再发送；没有记录时仍使用原请求幂等核实，不将查不到解释为未扣币。未确认前不能发送下一笔。旧版缺少单号的请求会被拒绝，请更新 APK。「我的 → 查看送礼记录」按页显示本人已提交结果，包括成功扣币及明确拒绝。清除 App 数据、卸载或换设备后，登录仍可读取已提交记录，但无法重建没有服务端记录的本地待确认意图；设备断网和进程恢复仍需真机验收。部署须执行 Revenue 迁移 `00008_gift_history_index.sql`。详细测试边界见 [BACKEND_VALIDATION.md](BACKEND_VALIDATION.md)。
+
+
+### 运营入口与权限
+
+运营概览和账号分页仅对数据库中拥有 `SUPER_ADMIN` 角色的有效账号开放；普通用户不显示运营导航，直接请求接口也会被拒绝。新注册账号不会自动获得管理员权限。现有真实统计、账号读取，以及「直播管理与处置记录」：选择尚未结束的真实直播场次，填写原因并确认后强制下播，同时结束相关 PK，媒体随后由扫描清理。操作与审计在同一事务提交，同一单号重试不会再次执行；手机保存未确认操作，可重启后继续核实。部署先执行 Revenue 迁移 `00009_moderation_actions.sql`。账号封禁/解禁及审核仍未完成。正式环境管理员账号须明确指定，不能根据昵称或客户端参数推断。
+
+
+### 临时限流与业务状态
+
+正常轮询按有效账号计数，超额返回 429 与 Retry-After，不再按全天日志数量自动永久封禁。登录/注册另按实际连接地址限制。当前为单进程窗口，多副本部署前需要共享计数适配；不信任客户端自带转发头。业务接口的 400/409/503 等状态与结果字段会保留，新审计不再保存正文、查询值和认证凭据，详细验证见 BACKEND_VALIDATION.md。
+
+### 关播与媒体连接清理
+
+Billd 通过内部 `LIVEKIT_API_URL`（默认 `http://livekit:7880`）调用 LiveKit 控制接口，每轮扫描完成后等待 5 秒，再按 Revenue 中真实直播、PK 和开播资格核对应用房间。关闭的房间和已结束 PK 会清理；禁用、删除、过期或被替换会话的参与者会移除，过期房间目录会清理。媒体令牌绑定当前登录会话，并禁止客户端自行修改元数据。旧版缺少绑定信息的媒体连接会被移除，重新进入后获取新令牌。
+
+这是持续核对，不是即时撤销旧令牌：旧令牌在有效期内可能再次建连，后续扫描仍会移除。依赖故障、房间数量会延长处理时间，正式环境双端音视频及高负载验收尚未完成。Android 会根据 SDK 事件显示连接中断和恢复状态；运营封禁入口仍待完成，强制下播入口见上文。
+
+### 登录会话与真实账号资料
+
+密码登录在用户行事务锁内检查凭据及禁用状态，再保存新会话。令牌有效期由服务端固定为 24 小时，不接受客户端延长；每次生成独立会话，后续登录使旧会话失效。账号核对只接受 HS256、带有效签发/到期时间和当前数据库会话的令牌，账号查询故障返回 503。`GET /user/me` 只返回真实账号 ID、昵称和状态，不返回密码或令牌。Android 登录后及会话存续时读取该接口，昵称不再用「用户 + ID」替代；明确失效返回登录页，临时故障保留会话。旧版超长或缺少期限的令牌需重新登录。新增和修改密码使用 Node 原生 scrypt 加盐散列；既有明文密码仅在成功登录或修改密码时事务升级，不批量改写。Android「我的 → 修改密码」核对原密码，成功后注销旧会话并重新登录。迁移先将密码列扩至 255；任何账号升级后，回退必须保留散列认证能力，不能直接恢复明文校验旧镜像或缩短列。完整生产安全与设备验收仍未完成。
+
+
+### 本地 Web 运营后台（2026-11-02）
+
+本地管理员已创建，Web 与真实 API 已启动；账号处置、资金规则、提现退款审核、礼物目录、主播申请、举报和公屏管理的最新实现、启动方法与尚未完成项见 [ADMIN_BACKEND.md](ADMIN_BACKEND.md)。旧验收段落描述其当时状态，以此新增记录为本轮进展依据。
+
+当前新增的支付/实名接口与默认关闭策略见 [INTEGRATION_INTERFACES.md](INTEGRATION_INTERFACES.md)，本地后台操作和验收边界见 [ADMIN_BACKEND.md](ADMIN_BACKEND.md)。新增连麦、封面、主播准入和 Android 账户服务代码已保存在仓库覆盖层；虚拟机当前 SSH 超时，尚未部署本轮变更。

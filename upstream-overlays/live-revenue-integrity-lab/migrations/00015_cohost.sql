@@ -1,0 +1,24 @@
+-- +goose Up
+CREATE TABLE cohost_requests (
+ cohost_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ request_id CHAR(36) NOT NULL,
+ live_session_id BIGINT UNSIGNED NOT NULL,
+ user_id BIGINT UNSIGNED NOT NULL,
+ mode ENUM('AUDIO','VIDEO') NOT NULL,
+ status ENUM('PENDING','ACCEPTED','MUTED','REJECTED','REMOVED','LEFT') NOT NULL DEFAULT 'PENDING',
+ created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+ updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+ UNIQUE KEY cohost_request (user_id,request_id),
+ KEY cohost_room (live_session_id,status,cohost_id)
+);
+CREATE TABLE cohost_actions (
+ action_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ request_id CHAR(36) NOT NULL UNIQUE,
+ cohost_id BIGINT UNSIGNED NOT NULL,
+ operator_id BIGINT UNSIGNED NOT NULL,
+ action VARCHAR(16) NOT NULL,
+ created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+);
+-- +goose Down
+DROP TABLE cohost_actions;
+DROP TABLE cohost_requests;

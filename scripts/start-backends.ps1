@@ -22,13 +22,13 @@ function Wait-HttpEndpoint([string]$Name, [string]$Url, [int]$TimeoutSeconds = 1
   throw "$Name did not become healthy at $Url within $TimeoutSeconds seconds. Check: docker compose logs"
 }
 
-function Wait-TcpEndpoint([string]$Name, [string]$Host, [int]$Port, [int]$TimeoutSeconds = 120) {
+function Wait-TcpEndpoint([string]$Name, [string]$RemoteHost, [int]$Port, [int]$TimeoutSeconds = 120) {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   do {
-    if (Test-NetConnection -ComputerName $Host -Port $Port -InformationLevel Quiet -WarningAction SilentlyContinue) { return }
+    if (Test-NetConnection -ComputerName $RemoteHost -Port $Port -InformationLevel Quiet -WarningAction SilentlyContinue) { return }
     Start-Sleep -Seconds 3
   } while ((Get-Date) -lt $deadline)
-  throw "$Name did not open $Host`:$Port within $TimeoutSeconds seconds. Check: docker compose logs"
+  throw "$Name did not open $RemoteHost`:$Port within $TimeoutSeconds seconds. Check: docker compose logs"
 }
 
 # Billd/SRS and the revenue ledger are separate upstream compose projects so

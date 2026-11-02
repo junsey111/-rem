@@ -44,11 +44,14 @@ type GiftResponse struct {
 }
 
 type matchData struct {
-	MatchID        uint64
-	LiveSessionID  uint64
-	Mode           string
-	SpecificGiftID sql.NullString
-	Status         string
+	MatchID               uint64
+	LiveSessionID         uint64
+	OpponentLiveSessionID sql.NullInt64
+	CreatorID             uint64
+	OpponentCreatorID     sql.NullInt64
+	Mode                  string
+	SpecificGiftID        sql.NullString
+	Status                string
 }
 
 // SendGift validates gifting policy, posts the debit, and writes outbox events.
@@ -97,6 +100,7 @@ func (s *Service) SendGift(ctx context.Context, req GiftRequest) (GiftResponse, 
 		SELECT status, creator_id, campaign_id
 		FROM live_sessions
 		WHERE live_session_id = ?
+		FOR SHARE
 	`, req.LiveSessionID).Scan(&liveStatus, &liveCreatorID, &campaignID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return s.rejectGift(ctx, tx, req, bodyHash, "LIVE_SESSION_NOT_FOUND", 404)
@@ -140,17 +144,20 @@ func (s *Service) SendGift(ctx context.Context, req GiftRequest) (GiftResponse, 
 	if req.MatchID != nil {
 		match = &matchData{}
 		err = tx.QueryRowContext(ctx, `
-			SELECT match_id, live_session_id, mode, specific_gift_id, status
+			SELECT match_id, live_session_id, opponent_live_session_id, creator_id, opponent_creator_id, mode, specific_gift_id, status
 			FROM live_matches
 			WHERE match_id = ?
-		`, *req.MatchID).Scan(&match.MatchID, &match.LiveSessionID, &match.Mode, &match.SpecificGiftID, &match.Status)
+			FOR SHARE
+		`, *req.MatchID).Scan(&match.MatchID, &match.LiveSessionID, &match.OpponentLiveSessionID, &match.CreatorID, &match.OpponentCreatorID, &match.Mode, &match.SpecificGiftID, &match.Status)
 		if errors.Is(err, sql.ErrNoRows) {
 			return s.rejectGift(ctx, tx, req, bodyHash, "MATCH_CLOSED", 409)
 		}
 		if err != nil {
 			return GiftResponse{}, nil, err
 		}
-		if match.LiveSessionID != req.LiveSessionID || match.Status != "OPEN" {
+		validSession := match.LiveSessionID == req.LiveSessionID && match.CreatorID == req.CreatorID
+		validOpponent := match.OpponentLiveSessionID.Valid && match.OpponentCreatorID.Valid && uint64(match.OpponentLiveSessionID.Int64) == req.LiveSessionID && uint64(match.OpponentCreatorID.Int64) == req.CreatorID
+		if (!validSession && !validOpponent) || match.Status != "OPEN" {
 			return s.rejectGift(ctx, tx, req, bodyHash, "MATCH_CLOSED", 409)
 		}
 	}
@@ -467,18 +474,19 @@ func (s *Service) rejectGift(ctx context.Context, tx *sql.Tx, req GiftRequest, b
 
 func (s *Service) isCreatorEligible(ctx context.Context, tx *sql.Tx, creatorID uint64) (bool, error) {
 	var (
-		ageYears        uint8
-		regionCode      string
+		ageYears        sql.NullInt64
+		regionCode      sql.NullString
+		profileSource   string
 		accountStanding string
 		canGoLive       bool
 		giftsEnabled    bool
 		accountType     string
 	)
 	err := tx.QueryRowContext(ctx, `
-		SELECT age_years, region_code, account_standing, can_go_live, live_gifts_enabled, account_type
+		SELECT age_years, region_code, account_standing, (can_go_live AND NOT EXISTS(SELECT 1 FROM platform_account_state p WHERE p.user_id=users.user_id AND p.disabled=TRUE) AND (NOT EXISTS(SELECT 1 FROM creator_admission_settings WHERE singleton=1 AND require_approval=TRUE) OR EXISTS(SELECT 1 FROM review_requests q WHERE q.user_id=users.user_id AND q.kind='CREATOR' AND q.status='APPROVED'))), live_gifts_enabled, account_type, profile_source
 		FROM users
 		WHERE user_id = ?
-	`, creatorID).Scan(&ageYears, &regionCode, &accountStanding, &canGoLive, &giftsEnabled, &accountType)
+	`, creatorID).Scan(&ageYears, &regionCode, &accountStanding, &canGoLive, &giftsEnabled, &accountType, &profileSource)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -492,10 +500,7 @@ func (s *Service) isCreatorEligible(ctx context.Context, tx *sql.Tx, creatorID u
 	if accountType != "NORMAL" {
 		return false, nil
 	}
-	if strings.EqualFold(regionCode, "KR") {
-		return ageYears >= 19, nil
-	}
-	return ageYears >= 18, nil
+	return profileAgeEligible(ageYears, regionCode, profileSource), nil
 }
 
 func mapRejectCodeToAppError(code string) *AppError {

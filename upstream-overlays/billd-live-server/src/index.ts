@@ -13,6 +13,10 @@ import { apiBeforeVerify } from '@/app/verify.middleware';
 import { connectMysql } from '@/config/mysql';
 import { connectNodeMediaServer } from '@/config/stream';
 import { connectWebSocket } from '@/config/websocket';
+import { startMediaReconciliation } from '@/service/media-authority';
+import { startOpenImReconciliation } from '@/service/openim-session';
+import { startRechargeReconciliation } from '@/router/alipay.router';
+import { startAccountModeration } from '@/service/account-moderation';
 import {
   PROJECT_ENV,
   PROJECT_NAME,
@@ -84,7 +88,11 @@ function runServer() {
         const httpServer = app.listen(port, () => {
           resolve('ok');
         });
-        connectWebSocket(httpServer); // 初始化websocket
+        const io = connectWebSocket(httpServer); // 初始化websocket
+        if (io) startMediaReconciliation(io);
+        startOpenImReconciliation(httpServer);
+        startRechargeReconciliation(httpServer);
+        startAccountModeration(httpServer);
       }); // http接口服务
       connectNodeMediaServer();
       console.log(chalkSUCCESS(`项目启动成功！`));

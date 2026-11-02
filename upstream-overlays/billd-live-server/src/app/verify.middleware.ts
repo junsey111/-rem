@@ -1,8 +1,9 @@
+import { RequestRateLimiter, peerAddress } from '@/app/request-rate';
+import { requireOperations } from '@/app/auth/operations';
 import chalk from 'chalk';
 import { ParameterizedContext } from 'koa';
 
 import { authJwt } from '@/app/auth/authJwt';
-import { IP_WHITE_LIST } from '@/config/secret';
 import {
   ALLOW_HTTP_CODE,
   BLACKLIST_TYPE,
@@ -10,9 +11,7 @@ import {
   ERROR_HTTP_CODE,
 } from '@/constant';
 import blacklistController from '@/controller/blacklist.controller';
-import logController from '@/controller/log.controller';
 import { CustomError } from '@/model/customError.model';
-import { isAdmin } from '@/utils';
 import { chalkINFO } from '@/utils/chalkTip';
 
 // 前台的所有get和白名单内的接口不需要token
@@ -34,6 +33,7 @@ const frontendWhiteList = [
   '/email_user/send_cancel_bind_code', // 发送解绑邮箱验证码，这个接口是post的
   '/email_user/register', // 注册，这个接口是post的
   '/alipay/notify', // 支付宝服务端异步支付通知，由路由内验签
+  '/verification/callback', // Service adapter HMAC verified by the callback route.
 ];
 
 // 后台的所有接口都需要判断token，除了白名单内的不需要token
@@ -53,45 +53,12 @@ const backendWhiteList = [
 
 const globalWhiteList = ['/init/'];
 
-// 允许频繁请求的路径白名单
-const frequentlyWhiteList = [
-  '/admin/qiniu_data/upload_chunk',
-  '/admin/qiniu_data/progress',
-  '/article/test',
-  '/admin/article/test',
-];
-
-async function isPass(ip: string) {
-  const nowDate = +new Date();
-  let flag = true;
-  if (IP_WHITE_LIST.includes(ip)) return flag;
-  const [oneMinuteApiNum, oneHourApiNum, oneDayApiNum] = await Promise.all([
-    logController.common.getCount({
-      startTime: new Date(nowDate - 1000 * 60), // 一分钟内访问的次数
-      endTime: new Date(nowDate),
-      api_real_ip: ip,
-    }),
-    logController.common.getCount({
-      startTime: new Date(nowDate - 1000 * 60 * 60), // 一小时内访问的次数
-      endTime: new Date(nowDate),
-      api_real_ip: ip,
-    }),
-    logController.common.getCount({
-      startTime: new Date(nowDate - 1000 * 60 * 60 * 24), // 一天内访问的次数
-      endTime: new Date(nowDate),
-      api_real_ip: ip,
-    }),
-  ]);
-  oneMinuteApiNum > 100 && (flag = false);
-  oneHourApiNum > 2000 && (flag = false);
-  oneDayApiNum > 5000 && (flag = false);
-  return flag;
-}
+const rateLimiter = new RequestRateLimiter();
 
 export const apiBeforeVerify = async (ctx: ParameterizedContext, next) => {
   const url = ctx.request.path;
-  const ip = (ctx.request.headers['x-real-ip'] as string) || '127.0.0.1';
-  const admin = isAdmin(ctx);
+  const ip = peerAddress(ctx);
+  const admin = url === '/admin' || url.startsWith('/admin/');
   const consoleEnd = () => {
     console.log(
       chalkINFO(
@@ -129,23 +96,18 @@ export const apiBeforeVerify = async (ctx: ParameterizedContext, next) => {
     );
   }
 
-  // 验证是否频繁请求
-  if (frequentlyWhiteList.indexOf(url) === -1) {
-    const res = await isPass(ip);
-    if (!res) {
-      const { userInfo } = await authJwt(ctx);
-      blacklistController.common.create({
-        user_id: userInfo?.id,
-        ip,
-        type: BLACKLIST_TYPE.banIp,
-        msg: COMMON_ERR_MSG.banIp,
-      });
-      throw new CustomError(
-        `当前ip:${ip}调用api频繁,${COMMON_ERR_MSG.banIp}`,
-        ALLOW_HTTP_CODE.forbidden,
-        ERROR_HTTP_CODE.banIp
-      );
-    }
+  // Normal polling must not become a permanent ban for everyone behind one IP.
+  const authPath = url.replace(/^\/admin(?=\/)/, '');
+  const sensitive = ctx.method === 'POST' && ['/user/login', '/user/create'].includes(authPath);
+  const session = sensitive ? null : await authJwt(ctx);
+  const principal = !sensitive && session?.code === 200 && session.userInfo?.id
+    ? `user:${session.userInfo.id}` : `ip:${ip}`;
+  const category = sensitive ? authPath : 'general';
+  const limit = sensitive ? (authPath === '/user/login' ? 20 : 5) : 600;
+  const retryAfter = rateLimiter.consume(`${category}:${principal}`, limit);
+  if (retryAfter) {
+    ctx.set('Retry-After', String(retryAfter));
+    throw new CustomError(`操作较频繁，请 ${retryAfter} 秒后重试`, 429, 429);
   }
 
   let allowNext = false;
@@ -168,11 +130,7 @@ export const apiBeforeVerify = async (ctx: ParameterizedContext, next) => {
       consoleEnd();
       return;
     }
-    const { code, message } = await authJwt(ctx);
-    if (code !== ALLOW_HTTP_CODE.ok) {
-      consoleEnd();
-      throw new CustomError(message, code, code);
-    }
+    await requireOperations(ctx);
     /**
      * 这里必须await next()，因为路由匹配肯定是先匹配这个app.use的，
      * 如果这里匹配完成后直接next()了，就会返回数据了（404），也就是不会

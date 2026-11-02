@@ -14,6 +14,10 @@ Kotlin native Android, selected as the simplest route for Android media SDK inte
 
 Viewers, streamers, and platform operators.
 
+## Confirmed Experience Reference
+
+The user selected Douyin / Kuaishou: direct live discovery, immersive viewing, simple interactions, clear commercial flows, and familiar consumer-app navigation. This is a durable product preference. Refer to DESIGN_RESEARCH.md for verified public sources, evidence limits, proposed flows, and acceptance criteria. Visual polish must not introduce fake users, stream covers, balances, popularity, or completed transaction states.
+
 ## Product Purpose
 
 An Android live-streaming app for watching rooms, interacting with streamers, and operating live content.

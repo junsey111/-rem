@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS identity_verification (
+ request_id VARCHAR(36) PRIMARY KEY,
+ user_id INT UNSIGNED NOT NULL,
+ status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+ provider_reference VARCHAR(128) NULL,
+ age_years INT UNSIGNED NULL,
+ region_code VARCHAR(2) NULL,
+ created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+ KEY identity_user (user_id,created_at)
+);

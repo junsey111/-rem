@@ -4,7 +4,9 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
@@ -13,11 +15,26 @@ import (
 
 func makeTestToken(secret string, exp int64) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d,"userInfo":{"id":42}}`, exp)))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d,"iat":%d,"userInfo":{"id":42}}`, exp, time.Now().Unix())))
 	message := header + "." + payload
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(message))
 	return message + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// Contract fixture only. Real Billd + account-table state is covered by the Node/MySQL integration test.
+func testAccountAuthority(t *testing.T, secret string) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := verifyBilldJWT(r, secret)
+		if err != nil {
+			w.WriteHeader(401)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"id": id, "status": 1}})
+	}))
+	t.Cleanup(server.Close)
+	return server.URL + "/user/me"
 }
 
 func TestRequestedPeriod(t *testing.T) {

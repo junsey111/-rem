@@ -34,7 +34,7 @@ func main() {
 		_ = redisClient.Close()
 	}()
 
-	srv := apiserver.New(cfg.HTTPAddr, sqlDB, redisClient, cfg.JWTSecret, cfg.PaymentSecret, cfg.InternalKey)
+	srv := apiserver.New(cfg.HTTPAddr, sqlDB, redisClient, cfg.JWTSecret, cfg.PaymentSecret, cfg.InternalKey, cfg.BilldAccountURL)
 	go func() {
 		if err := srv.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("api serve: %v", err)

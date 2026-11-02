@@ -1,5 +1,6 @@
 services:
   mysql:
+    restart: unless-stopped
     image: mysql:8.4
     environment:
       MYSQL_DATABASE: billd_live
@@ -17,6 +18,7 @@ services:
       retries: 30
       start_period: 20s
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -42,9 +44,13 @@ services:
       ALIPAY_APP_ID: ${ALIPAY_APP_ID:-}
       ALIPAY_PRIVATE_KEY: ${ALIPAY_PRIVATE_KEY:-}
       ALIPAY_PUBLIC_KEY: ${ALIPAY_PUBLIC_KEY:-}
+      ALIPAY_DISBURSEMENTS_ENABLED: 'false'
+      ALIPAY_RECHARGE_ENABLED: 'false'
+      IDENTITY_ENABLED: 'false'
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
       LIVEKIT_URL: ${LIVEKIT_URL:-ws://192.168.254.132:17880}
+      LIVEKIT_API_URL: ${LIVEKIT_API_URL:-http://livekit:7880}
       OPENIM_API_URL: ${OPENIM_API_URL:-http://openim-server:10002}
       OPENIM_PUBLIC_API_URL: ${OPENIM_PUBLIC_API_URL:-http://10.0.2.2:10002}
       OPENIM_SECRET: ${OPENIM_SECRET:-openIM123}
@@ -66,6 +72,7 @@ services:
     ports:
       - "${BILLD_PORT:-4300}:4300"
   srs:
+    restart: unless-stopped
     image: ossrs/srs:6
     command: ./objs/srs -c conf/docker.conf
     ports:
