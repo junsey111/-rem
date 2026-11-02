@@ -83,6 +83,10 @@ func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentS
 	mux.HandleFunc("/v1/rankings/contributors", s.requireAuth(s.wrap("contributor_rankings", s.handleContributorRankings)))
 	mux.HandleFunc("/v1/wallets/recharges", s.wrap("wallet_recharge", s.handleRecharge))
 	mux.HandleFunc("/v1/gifts", s.requireAuth(s.wrap("gift_send", s.handleGift)))
+	mux.HandleFunc("/v1/dm/gifts", s.requireAuth(s.wrap("dm_gifts", s.handleDmGifts)))
+	mux.HandleFunc("/v1/dm/gifts/", s.requireAuth(s.wrap("dm_gift_read", s.handleDmGiftRead)))
+	mux.HandleFunc("/v1/dm/video-unlocks", s.requireAuth(s.wrap("dm_video_unlock", s.handleDmVideoUnlock)))
+	mux.HandleFunc("/v1/dm/videos/", s.requireAuth(s.wrap("dm_video_access", s.handleDmVideoAccess)))
 	mux.HandleFunc("/v1/users/me/gifts", s.requireAuth(s.wrap("gift_history", s.handleGiftHistory)))
 	mux.HandleFunc("/v1/users/me/gifts/", s.requireAuth(s.wrap("gift_receipt", s.handleGiftReceipt)))
 	mux.HandleFunc("/v1/internal/comments", s.requireAuth(s.wrap("internal_comments", s.handleInternalComments)))
@@ -186,13 +190,19 @@ func (s *Server) handleCreatorEarnings(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "INVALID_PERIOD", "period must be daily or monthly")
 		return
 	}
+	userID := authenticatedUserID(r)
 	var diamonds, gifts int64
-	err := s.db.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(diamond_reward),0), COUNT(*) FROM gift_orders WHERE creator_id=? AND status='ACCEPTED' AND created_at>=?`, authenticatedUserID(r), start).Scan(&diamonds, &gifts)
+	err := s.db.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(diamond_reward),0), COUNT(*) FROM gift_orders WHERE creator_id=? AND status='ACCEPTED' AND created_at>=?`, userID, start).Scan(&diamonds, &gifts)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"creator_id": authenticatedUserID(r), "period": period, "diamonds": diamonds, "gifts": gifts})
+	_, dmDiamonds, dmGifts, err := s.dmPointTotals(r.Context(), userID, &start)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"creator_id": userID, "period": period, "diamonds": diamonds + dmDiamonds, "gifts": gifts + dmGifts})
 }
 
 func (s *Server) handleUserLevel(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +222,13 @@ func (s *Server) handleUserLevel(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
+	dmSpent, dmEarned, _, err := s.dmPointTotals(r.Context(), userID, nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	spent += dmSpent
+	earned += dmEarned
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user_id":        userID,
 		"viewer_points":  spent,
