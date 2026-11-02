@@ -323,8 +323,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var hostProfile by remember { mutableStateOf<LiveRoom?>(null) }
     var showReferral by remember { mutableStateOf(false) }
     var customerServiceNotice by remember { mutableStateOf<String?>(null) }
-    var customerServiceChat by remember { mutableStateOf(false) }
-    var chatOpenRequest by remember { mutableIntStateOf(0) }
     var showCohost by remember { mutableStateOf(false) }
     var cohostMode by remember { mutableStateOf<String?>(null) }
     var operationsPage by remember { mutableIntStateOf(1) }
@@ -379,6 +377,15 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var historyLoading by remember { mutableStateOf(false) }
     var historyRefresh by remember { mutableIntStateOf(0) }
     var chatVisible by remember { mutableStateOf(false) }
+    var chatOpenSignal by remember { mutableIntStateOf(0) }
+    val dmGiftOutbox = remember(session.id) { DmGiftOutbox(context, session.id) }
+    val dmVideoOutbox = remember(session.id) { DmVideoOutbox(context, session.id) }
+    val dmUnlockIds = remember(session.id) { DmUnlockIds(context, session.id) }
+    var pendingDmGift by remember(session.id) { mutableStateOf(dmGiftOutbox.load()) }
+    var pendingDmVideo by remember(session.id) { mutableStateOf(dmVideoOutbox.load()) }
+    var supportContact by remember { mutableStateOf<ChatRecipient?>(null) }
+    var playableVideos by remember { mutableStateOf(mapOf<String, Boolean>()) }
+    var playingVideo by remember { mutableStateOf<java.io.File?>(null) }
     var rechargeBusy by remember { mutableStateOf(false) }
     var profile by remember { mutableStateOf<UserProfile?>(null) }
     var profileBusy by remember { mutableStateOf(false) }
@@ -485,6 +492,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                 openImConversations = parseOpenImConversations(openImGateway.conversations())
             }
             openImStatus = "消息已连接"
+            supportContact = try { api.openImSupport(session.token) } catch (error: CancellationException) { throw error } catch (_: Exception) { null }
         } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
             openImReady = false
             openImStatus = "连接超时，请重试"
@@ -511,6 +519,145 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             openImStatus = "消息已连接"
         }
     }
+    LaunchedEffect(history, openImReady, session.token) {
+        if (!openImReady) return@LaunchedEffect
+        val ids = history?.messages.orEmpty().mapNotNull { message ->
+            (chatBody(message) as? ChatBody.Video)?.videoId
+        }.distinct()
+        if (ids.isEmpty()) return@LaunchedEffect
+        val next = playableVideos.toMutableMap()
+        for (id in ids) {
+            val info = try { api.dmVideo(session.token, id) } catch (error: CancellationException) { throw error } catch (_: Exception) { null }
+            if (info != null) next[id] = info.optBoolean("playable")
+        }
+        playableVideos = next
+    }
+
+    val deliverCustom: suspend (String, String, String, String) -> Unit = { recipient, data, extension, description ->
+        openImGateway.sendCustom(recipient, data, extension, description)
+        historyRefresh++
+        runCatching { openImGateway.conversations() }.onSuccess { openImConversations = parseOpenImConversations(it) }
+    }
+    val sendDmGift: (String) -> Unit = fun(giftId) {
+        val recipient = openImRecipient.trim()
+        val pending = pendingDmGift
+        if (recipient.isBlank() || openImBusy) return
+        if (pending != null && (pending.recipientId != recipient || (pending.phase == "settle" && pending.giftId != giftId))) {
+            openImStatus = "请先完成上一笔私信礼物"
+            return
+        }
+        scope.launch {
+            openImBusy = true
+            try {
+                val requestId = pending?.requestId ?: java.util.UUID.randomUUID().toString()
+                var current = pending ?: DmGiftOutbox.Pending("settle", recipient, requestId, giftId).also {
+                    dmGiftOutbox.save(it)
+                    pendingDmGift = it
+                }
+                if (current.phase != "deliver") {
+                    val data = api.sendDmGift(session.token, recipient, giftId, requestId)
+                    val delivery = giftDelivery(data, requestId) ?: error("结算回执无法识别，未发送礼物消息")
+                    if (delivery.balance != null) wallet = Wallet(delivery.balance) else runCatching { wallet = api.wallet(session.token) }
+                    current = DmGiftOutbox.Pending("deliver", recipient, requestId, giftId, delivery.data, delivery.description, delivery.extension)
+                    dmGiftOutbox.save(current)
+                    pendingDmGift = current
+                }
+                deliverCustom(recipient, current.imData, current.extension, current.description)
+                dmGiftOutbox.clear()
+                pendingDmGift = null
+                openImStatus = "礼物消息已发送"
+            } catch (error: SettlementUnavailableException) {
+                runCatching { dmGiftOutbox.clear() }.onSuccess { pendingDmGift = null }
+                openImStatus = error.message ?: "私信送礼结算尚未接通，本次未扣币，也未发送礼物消息"
+            } catch (error: GiftRejectedException) {
+                runCatching { dmGiftOutbox.clear() }.onSuccess { pendingDmGift = null }
+                openImStatus = error.message ?: "本次未扣币"
+            } catch (error: CancellationException) { throw error
+            } catch (error: Exception) {
+                openImStatus = error.message ?: "礼物结果未确认，请重试同一笔，不要重新赠送"
+            } finally { openImBusy = false }
+        }
+    }
+    val sendDmVideo: (String, Int, ByteArray, Int) -> Unit = fun(title, price, bytes, duration) {
+        val recipient = openImRecipient.trim()
+        val pending = pendingDmVideo
+        if (recipient.isBlank() || openImBusy) return
+        if (pending != null && pending.recipientId != recipient) {
+            openImStatus = "请先完成上一条视频消息"
+            return
+        }
+        scope.launch {
+            openImBusy = true
+            try {
+                val requestId = pending?.requestId ?: java.util.UUID.randomUUID().toString()
+                var current = pending ?: DmVideoOutbox.Pending("upload", recipient, requestId).also {
+                    dmVideoOutbox.save(it)
+                    pendingDmVideo = it
+                }
+                if (current.phase != "deliver") {
+                    val data = api.uploadDmVideo(session.token, recipient, requestId, title, price, duration, bytes)
+                    val delivery = videoDelivery(data, requestId) ?: error("视频回执无法识别，未发送视频消息")
+                    current = DmVideoOutbox.Pending("deliver", recipient, requestId, delivery.data, delivery.description, delivery.extension)
+                    dmVideoOutbox.save(current)
+                    pendingDmVideo = current
+                }
+                deliverCustom(recipient, current.imData, current.extension, current.description)
+                dmVideoOutbox.clear()
+                pendingDmVideo = null
+                openImStatus = if (price == 0) "免费视频已发送" else "付费视频已发送，对方解锁后才扣费"
+            } catch (error: CancellationException) { throw error
+            } catch (error: Exception) {
+                openImStatus = error.message ?: "视频消息未完成，请用同一单号重试"
+            } finally { openImBusy = false }
+        }
+    }
+    val unlockDmVideo: (String) -> Unit = { videoId ->
+        if (!openImBusy) scope.launch {
+            openImBusy = true
+            try {
+                val data = api.unlockDmVideo(session.token, videoId, dmUnlockIds.idFor(videoId))
+                if (data.has("new_balance") && !data.isNull("new_balance")) wallet = Wallet(data.getLong("new_balance"))
+                else runCatching { wallet = api.wallet(session.token) }
+                playableVideos = playableVideos + (videoId to true)
+                openImStatus = "视频已解锁"
+            } catch (error: SettlementUnavailableException) {
+                openImStatus = error.message ?: "付费视频解锁结算尚未接通，本次未扣币"
+            } catch (error: GiftRejectedException) {
+                openImStatus = error.message ?: "本次未扣币"
+            } catch (error: CancellationException) { throw error
+            } catch (error: Exception) {
+                openImStatus = error.message ?: "解锁结果未确认，请用同一单号重试"
+            } finally { openImBusy = false }
+        }
+    }
+    val playDmVideo: (String) -> Unit = { videoId ->
+        if (!openImBusy) scope.launch {
+            openImBusy = true
+            try {
+                val dir = java.io.File(context.cacheDir, "dm-video").apply { mkdirs() }
+                val dest = java.io.File(dir, "$videoId.mp4")
+                api.downloadDmVideo(session.token, videoId, dest)
+                playingVideo = dest
+            } catch (error: CancellationException) { throw error
+            } catch (error: Exception) { openImStatus = error.message ?: "暂时无法播放"
+            } finally { openImBusy = false }
+        }
+    }
+    val verifyDmGift: (ChatBody.Gift) -> Unit = { gift ->
+        if (!openImBusy) scope.launch {
+            openImBusy = true
+            try {
+                val data = api.verifyDmGift(session.token, gift.requestId)
+                val charged = data.optLong("charged_coins")
+                openImStatus = if (charged == gift.chargedCoins) "结算已确认扣费 $charged 金币" else "结算记录为 $charged 金币，与这条消息不一致"
+            } catch (error: SettlementUnavailableException) {
+                openImStatus = error.message ?: "私信送礼核对尚未接通"
+            } catch (error: CancellationException) { throw error
+            } catch (error: Exception) { openImStatus = error.message ?: "暂时无法核对回执"
+            } finally { openImBusy = false }
+        }
+    }
+
     LaunchedEffect(messageVersion, openImReady) {
         if (openImReady) runCatching { withTimeout(10_000) { openImGateway.conversations() } }
             .onSuccess { openImConversations = parseOpenImConversations(it) }
@@ -734,29 +881,30 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
-    val csUserId = customerServiceUserId(BuildConfig.CS_OPENIM_USER_ID)
-    fun openCustomerService() {
-        val id = csUserId
-        if (id == null || id == session.id.toString()) {
-            customerServiceNotice = if (id == null) {
-                "客服暂未开通。平台还没有配置客服的 OpenIM 账号。这里不会另外登录消息服务。"
-            } else {
-                "客服账号配置成了当前登录账号，无法发起会话。"
-            }
+    fun openSupportChat() {
+        if (openImBusy) {
+            notify("正在连接消息服务")
             return
         }
-        openImRecipient = id
-        openImRecipientName = null
-        openImMessage = ""
-        if (historyRecipient != id) {
-            history = null
-            historyRecipient = id
+        scope.launch {
+            openImBusy = true
+            try {
+                val target = openSupportConversation(api, openImGateway, session.token)
+                openImRecipient = target.userId
+                openImRecipientName = target.name
+                supportContact = ChatRecipient(target.userId, target.name)
+                selectedTab = 2
+                chatOpenSignal++
+            } catch (error: CancellationException) { throw error
+            } catch (error: PlatformHttpException) {
+                if (error.statusCode == 404) supportContact = null
+                customerServiceNotice = if (error.statusCode == 404) {
+                    "客服暂未开通。平台还没有配置客服账号，这里不会另外登录消息服务。"
+                } else error.message ?: "客服暂时无法连接"
+            } catch (error: Exception) {
+                customerServiceNotice = error.message ?: "客服暂时无法连接"
+            } finally { openImBusy = false }
         }
-        customerServiceChat = true
-        selectedTab = 2
-        chatOpenRequest++
-        // Reuse the existing Billd /openim/session issuance and OpenImGateway.login.
-        if (!openImReady && !openImBusy) messageConnectionAttempt++
     }
 
     val respondInvitation: (MatchInvitation, Boolean) -> Unit = { invitation, accept ->
@@ -865,15 +1013,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                     message = openImMessage,
                     busy = openImBusy,
                     ready = openImReady,
-                    onRecipientId = {
-                        openImRecipient = it.filter(Char::isDigit)
-                        openImRecipientName = null
-                        customerServiceChat = false
-                    },
-                    onCustomerService = { openCustomerService() },
-                    openChatRequest = chatOpenRequest,
-                    onChatRequestConsumed = { chatOpenRequest = 0 },
-                    composerTitle = if (customerServiceChat && csUserId != null && openImRecipient == csUserId) "联系客服" else null,
+                    onRecipientId = { openImRecipient = it.filter(Char::isDigit); openImRecipientName = null },
                     onMessage = { openImMessage = it },
                     onRefresh = {
                         scope.launch {
@@ -903,6 +1043,21 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                             }
                         }
                     },
+                    support = supportContact,
+                    gifts = gifts,
+                    balance = wallet?.balance,
+                    playable = playableVideos,
+                    pendingGift = pendingDmGift?.takeIf { it.recipientId == openImRecipient },
+                    pendingVideoPhase = pendingDmVideo?.takeIf { it.recipientId == openImRecipient }?.phase,
+                    chatOpenSignal = chatOpenSignal,
+                    onOpenChat = { id, name -> openImRecipient = id; openImRecipientName = name },
+                    onOpenSupport = { openSupportChat() },
+                    onSendGift = { gift -> sendDmGift(gift.id) },
+                    onRetryGift = { pendingDmGift?.let { sendDmGift(it.giftId) } },
+                    onSendVideo = sendDmVideo,
+                    onUnlock = unlockDmVideo,
+                    onPlay = playDmVideo,
+                    onVerifyGift = verifyDmGift,
                 )
                 3 -> ProfileScreen(
                     session = session,
@@ -930,7 +1085,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                     onCoverUpload = { showCoverUpload = true },
                     onIdentity = { showIdentity = true },
                     onReferral = { showReferral = true },
-                    onCustomerService = { openCustomerService() },
+                    onCustomerService = { openSupportChat() },
                     onLogout = onLogout,
                     onRefresh = { refreshKey++ },
                     onTopUp = { amount ->
@@ -962,6 +1117,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     if(activeRoom==null)showBusiness?.let { BusinessSheet(session,api,it,onDismiss={showBusiness=null}) }
     if (showModeration && canManageOperations) ModerationPanel(session, onDismiss = { showModeration = false; operationsRefresh++ })
 
+    playingVideo?.let { file -> DmVideoPlayerDialog(file) { playingVideo = null } }
     if (showGiftHistory) GiftHistorySheet(
         history = giftHistory, loading = giftHistoryLoading, error = giftHistoryError,
         onDismiss = { showGiftHistory = false }, onRefresh = { loadGiftHistory(false) }, onOlder = { loadGiftHistory(true) },
@@ -996,7 +1152,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                             openImMessage = ""
                             history = null
                             historyRecipient = recipient.userId
-                            chatVisible = true
+                            chatOpenSignal++
                             leaveRoom()
                             selectedTab = 2
                         } catch (error: CancellationException) { throw error }
@@ -1423,35 +1579,62 @@ private fun MessagesScreen(
     onRefresh: () -> Unit,
     onConnect: () -> Unit,
     onSend: () -> Unit,
-    onCustomerService: () -> Unit,
-    openChatRequest: Int,
-    onChatRequestConsumed: () -> Unit,
-    composerTitle: String?,
+    support: ChatRecipient?,
+    gifts: List<Gift>,
+    balance: Long?,
+    playable: Map<String, Boolean>,
+    pendingGift: DmGiftOutbox.Pending?,
+    pendingVideoPhase: String?,
+    chatOpenSignal: Int,
+    onOpenChat: (String, String?) -> Unit,
+    onOpenSupport: () -> Unit,
+    onSendGift: (Gift) -> Unit,
+    onRetryGift: () -> Unit,
+    onSendVideo: (String, Int, ByteArray, Int) -> Unit,
+    onUnlock: (String) -> Unit,
+    onPlay: (String) -> Unit,
+    onVerifyGift: (ChatBody.Gift) -> Unit,
 ) {
     var composeOpen by remember { mutableStateOf(false) }
     var enteringAccount by remember { mutableStateOf(false) }
-    LaunchedEffect(openChatRequest) {
-        if (openChatRequest > 0) {
+    var giftSheet by remember { mutableStateOf(false) }
+    var videoSheet by remember { mutableStateOf(false) }
+    LaunchedEffect(composeOpen) { onChatVisibility(composeOpen) }
+    LaunchedEffect(chatOpenSignal) {
+        if (chatOpenSignal > 0 && recipientId.isNotBlank()) {
             enteringAccount = false
             composeOpen = true
-            onChatRequestConsumed()
         }
     }
-    LaunchedEffect(composeOpen) { onChatVisibility(composeOpen) }
     DisposableEffect(Unit) { onDispose { onChatVisibility(false) } }
+    val listed = conversations.filter { it.userId != support?.userId }
     val recipient = conversations.firstOrNull { it.userId == recipientId }
     LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("消息", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                TextButton(onClick = onCustomerService) { Text("客服") }
                 TextButton(onClick = { onRecipientId(""); enteringAccount = true; composeOpen = true }, enabled = ready && !busy) { Text("新消息") }
             }
             Text(status, style = MaterialTheme.typography.bodySmall, color = Fog)
             if (!ready) TextButton(onClick = onConnect, enabled = !busy) { Text(if (busy) "正在连接…" else "重新连接") }
             else TextButton(onClick = onRefresh, enabled = !busy) { Text("刷新会话") }
         }
-        if (conversations.isEmpty()) {
+        support?.let { contact ->
+            item {
+                val preview = conversations.firstOrNull { it.userId == contact.userId }?.latestMessage
+                Row(Modifier.fillMaxWidth().clickable(enabled = ready && !busy) {
+                    onOpenSupport()
+                }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(contact.name, contact.userId.hashCode())
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text(contact.name, fontWeight = FontWeight.SemiBold)
+                        Text(preview?.ifBlank { "平台客服" } ?: "平台客服", style = MaterialTheme.typography.bodyMedium, color = Fog, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                HorizontalDivider(color = NightLine)
+            }
+        }
+        if (listed.isEmpty() && support == null) {
             item {
                 Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Default.ChatBubbleOutline, contentDescription = null, tint = Fog, modifier = Modifier.size(36.dp))
@@ -1460,10 +1643,10 @@ private fun MessagesScreen(
                 }
             }
         }
-        items(conversations, key = { it.userId }) { conversation ->
+        items(listed, key = { it.userId }) { conversation ->
             Row(
                 Modifier.fillMaxWidth().clickable {
-                    onRecipientId(conversation.userId)
+                    onOpenChat(conversation.userId, conversation.name)
                     enteringAccount = false
                     composeOpen = true
                 }.padding(vertical = 12.dp),
@@ -1481,10 +1664,7 @@ private fun MessagesScreen(
     }
     if (composeOpen) ModalBottomSheet(onDismissRequest = { composeOpen = false }) {
         Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(composerTitle ?: (recipientName ?: recipient?.name)?.let { "发给 $it" } ?: "新消息", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            if (composerTitle != null && recipientId.isNotBlank()) {
-                Text("OpenIM 账号 $recipientId。连接和发送沿用当前消息登录。", style = MaterialTheme.typography.bodySmall, color = Fog)
-            }
+            Text((recipientName ?: recipient?.name)?.let { "发给 $it" } ?: "新消息", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             if (enteringAccount) OutlinedTextField(
                 value = recipientId, onValueChange = onRecipientId, label = { Text("对方账号 ID") },
                 supportingText = { Text("可在对方的「我的」页面查看账号。") },
@@ -1502,7 +1682,8 @@ private fun MessagesScreen(
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = if (chat.senderId == ownUserId) Arrangement.End else Arrangement.Start) {
                             Surface(color = if (chat.senderId == ownUserId) NightSurfaceRaised else NightSurface, shape = RoundedCornerShape(12.dp)) {
                                 Column(Modifier.padding(12.dp)) {
-                                    Text(chat.content)
+                                    val videoId = (chatBody(chat) as? ChatBody.Video)?.videoId
+                                    DmMessageBubble(chat, videoId?.let { playable[it] }, busy, onUnlock, onPlay, onVerifyGift)
                                     if (chat.senderId == ownUserId) Text(when (chat.status) {
                                         1 -> "发送中"
                                         2 -> "已发送"
@@ -1518,9 +1699,26 @@ private fun MessagesScreen(
                 }
             }
             Text(status, style = MaterialTheme.typography.bodySmall, color = Fog)
-            OutlinedTextField(value = message, onValueChange = onMessage, label = { Text("说点什么…") }, enabled = ready && !busy, maxLines = 5, modifier = Modifier.fillMaxWidth())
-            Button(onClick = onSend, enabled = ready && !busy && recipientId.isNotBlank() && message.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-                Text(if (busy) "正在发送…" else "发送")
+            pendingGift?.let {
+                Text(if (it.phase == "deliver") "礼物已由结算确认，消息还没送达" else "上一笔私信礼物还没确认，请重试同一单", color = Coral, style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onRetryGift, enabled = ready && !busy) { Text("重试这笔礼物") }
+            }
+            if (giftSheet) DmGiftSheet(gifts, balance, busy, onDismiss = { giftSheet = false }) { gift ->
+                giftSheet = false
+                onSendGift(gift)
+            } else if (videoSheet) DmVideoSheet(busy, pendingVideoPhase == "upload", onDismiss = { videoSheet = false }) { title, price, bytes, duration ->
+                videoSheet = false
+                onSendVideo(title, price, bytes, duration)
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { giftSheet = true }, enabled = ready && !busy && recipientId.isNotBlank() && pendingGift == null) { Text("礼物") }
+                    if (pendingVideoPhase == "deliver") TextButton(onClick = { onSendVideo("", 0, ByteArray(0), 1) }, enabled = ready && !busy) { Text("重试发送视频") }
+                    else TextButton(onClick = { videoSheet = true }, enabled = ready && !busy && recipientId.isNotBlank()) { Text(if (pendingVideoPhase == "upload") "重试上传" else "视频") }
+                }
+                OutlinedTextField(value = message, onValueChange = onMessage, label = { Text("说点什么…") }, enabled = ready && !busy, maxLines = 5, modifier = Modifier.fillMaxWidth())
+                Button(onClick = onSend, enabled = ready && !busy && recipientId.isNotBlank() && message.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+                    Text(if (busy) "正在发送…" else "发送")
+                }
             }
         }
     }
@@ -1769,10 +1967,7 @@ private fun parseOpenImConversations(raw: String): List<OpenImConversation> = ru
             val userId = row.optString("userID").ifBlank { row.optString("groupID") }
             if (userId.isBlank()) continue
             val latest = row.optString("latestMsg")
-            val message = runCatching { org.json.JSONObject(latest) }.getOrNull()
-            val text = message?.optJSONObject("textElem")?.optString("content")
-                ?: message?.optString("content")
-                ?: latest
+            val text = previewLatest(latest).ifBlank { "暂无消息" }
             add(OpenImConversation(
                 userId = userId,
                 name = row.optString("showName").ifBlank { "用户 $userId" },

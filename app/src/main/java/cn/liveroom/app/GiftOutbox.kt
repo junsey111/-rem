@@ -17,6 +17,7 @@ data class PendingGift(val payload: String, val giftName: String, val coins: Int
 }
 
 class GiftRejectedException(message: String) : IllegalStateException(message)
+class SettlementUnavailableException(message: String) : IllegalStateException(message)
 
 /** One unresolved payment intent per account and backend, retained across restarts. */
 class GiftOutbox(context: Context, userId: Long) {

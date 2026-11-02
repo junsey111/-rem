@@ -29,6 +29,19 @@
 - 回调锁定原申请、核对用户，最终结果不可变，相同结果重复回调幂等。启动认证不等于认证通过。
 - 当前是外部适配器契约，不是某一家实名厂商的直接实现。认证结果尚不自动覆盖 Revenue 自报年龄资料，也未打开强制 KYC；实际厂商与启用策略确定后再联调。
 
+## 私信礼物、视频消息与客服
+
+这些接口不写钱包余额。扣币只发生在 Revenue 接受请求之后。
+
+- `GET /openim/support`：当前登录用户。返回 `{user_id, name}` 并在 OpenIM 注册该联系人，不签发对方令牌，不创建 Billd 用户。`OPENIM_SUPPORT_USER_ID` 为空或格式不符时 404，App 不显示客服入口。Android 客服按钮统一调用 `openSupportConversation(api, gateway, token)`（`SupportChat.kt`）。它请求这条接口，再用当前已登录的 `OpenImGateway.ensureDirectConversation` 打开单聊，不第二次登录，也不发送预设回复。资料页或邀请页只调用这个函数，然后把返回的 `userId` 交给现有私信界面。
+- `POST /openim/dm-gifts`：JSON `{request_id: UUIDv4, recipient_id, gift_id, quantity}`。转发 Revenue `POST /v1/dm/gifts`，`viewer_id` 取自登录用户，`sent_at_ms` 固定为 0。成功时 `im_custom` 才是可发送的礼物消息。路由不存在返回 501，`settlement=UNAVAILABLE`。余额不足等明确拒绝带 `gift_outcome=REJECTED`。回执不完整返回 503，客户端必须用同一单号重试。
+- `GET /openim/dm-gifts/:requestId`：转发 Revenue 核对。纯文本 404 视为接口未接通；带业务码的 404 视为没有这笔结算。
+- `POST /openim/dm-videos`：`application/octet-stream`，请求头 `X-Dm-Video` 为 UTF-8 JSON 的 base64：`{request_id, recipient_id, title, price_coins, duration_sec}`。仅接受 MP4/WebM，最大 12MB。价格为 0 是免费视频。消息体只有 `video_id`、标题、价格、时长和 `paywalled`，没有文件地址。
+- `GET /openim/dm-videos/:videoId`：参与者查看 `playable`。`GET .../media` 在不可播放时 402，不返回字节。
+- `POST /openim/dm-videos/:videoId/unlock`：JSON `{request_id}`。转发 `POST /v1/dm/video-unlocks`。成功后写入的 `openim_dm_video_unlock` 只缓存 Revenue 已接受的回执；Revenue 明确返回未解锁时删除该缓存并不播放。接口未接通且没有已接受回执时 501，不扣币。
+
+Revenue 需要同时提供扣费接口和 `GET /v1/dm/videos/:id/access`（`{unlocked: boolean}`）。缺任一口时，付费视频保持锁定。迁移文件为 `migrations/20261102_openim_dm_video.sql`。
+
 ## 本地与部署
 
 本地后台：http://localhost:8000/ 。本地凭据位于 Git 忽略的 `.local/admin-local.json`。本地 API 为 24300，Revenue 为 24808，仅监听回环地址。

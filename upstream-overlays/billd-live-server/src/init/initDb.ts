@@ -1,6 +1,7 @@
 import fs from 'fs';
 import '@/model/rechargeOrder.model';
 import '@/model/openimSession.model';
+import '@/model/openimDmVideo.model';
 import '@/model/accountAction.model';
 import '@/model/roomChat.model';
 import '@/model/liveCover.model';

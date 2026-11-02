@@ -47,6 +47,18 @@ async function registerUser(user: any, headers: any) {
   if (registered?.errCode !== 1102) responseData(registered);
 }
 
+/** Register a contact without issuing or resetting that user's token. */
+export async function registerOpenImContact(userId: string, nickname: string, faceURL = '') {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(userId)) throw new CustomError('消息联系人无效', 400, 400);
+  const name = nickname.trim().slice(0, 32) || '用户';
+  try {
+    await registerUser({ id: userId, username: name, avatar: faceURL }, await adminHeaders());
+  } catch (error) {
+    if (error instanceof CustomError) throw error;
+    throw new CustomError('消息服务暂时不可用，请稍后重试', 503, 503);
+  }
+}
+
 /** Resolve only a live authorized host. This does not issue or reset recipient credentials. */
 export async function resolveLiveRecipient(roomId: string, senderId: number) {
   if (!/^[1-9][0-9]{0,15}$/.test(roomId)) throw new CustomError('直播间无效，请刷新后重试', 400, 400);

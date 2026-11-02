@@ -44,8 +44,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
-private val OpenImAccountId = Regex("[1-9][0-9]{0,18}")
-
 /**
  * Creator level is only returned by `/revenue/level` for the signed-in account.
  * Another host's level, fans, earnings, and bio are not on any current route.
@@ -55,10 +53,6 @@ internal fun hostLevelLabel(hostId: Long, viewerId: Long, viewerLevel: UserLevel
     viewerLevel == null -> "等级信息暂不可用"
     else -> "主播等级 Lv.${viewerLevel.creatorLevel}"
 }
-
-/** Blank or non-account values mean no customer-service OpenIM user has been configured. */
-internal fun customerServiceUserId(configured: String): String? =
-    configured.trim().takeIf { OpenImAccountId.matches(it) }
 
 @Composable
 fun HostIntroductionPage(
@@ -154,7 +148,7 @@ fun ReferralUnavailableSheet(onDismiss: () -> Unit) {
     }
 }
 
-/** Shown only when no usable customer-service OpenIM account is configured. Does not log in. */
+/** Shown when GET /openim/support says customer service is not configured. Does not log in. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CustomerServiceUnavailableSheet(message: String, onDismiss: () -> Unit) {
