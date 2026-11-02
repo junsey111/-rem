@@ -33,7 +33,24 @@ The VMware check on 2026-11-01 confirms Billd on `4300` and LiveKit on `17880` (
 - `:app:assembleDebug` succeeds with VMware endpoint properties, and the APK installs and launches on the connected Android emulator.
 - Billd registration/login, wallet, levels, earnings, rankings, live start/close, and LiveKit credential issuance were previously exercised against the VMware backend with a temporary account.
 - LiveKit's VMware HTTP endpoint responds successfully. A full camera/microphone publish and subscriber playback session has not been verified in this run.
-- OpenIM, Alipay settlement, moderation, PK/co-host and Android SRS broadcast/playback remain unverified or unavailable as noted above. Do not treat these as production-ready.
+- OpenIM, Alipay settlement, moderation, and PK/co-host remain unverified or unavailable as noted above. Ordinary host RTMP ingest is implemented and covered by unit tests for the URL and camera-ownership decision; a device session that publishes to SRS and plays the HLS URL was not run here. Do not treat these as production-ready.
+
+## Ordinary host ingest
+
+When the host opens or joins their own ordinary live, the app publishes the camera and microphone to SRS with RootEncoder (`RtmpCamera2`) over RTMP:
+
+```text
+rtmp://<host>:<srsRtmpPort>/live/{liveSessionId}
+```
+
+`<host>` is the same `backendHost` as the other service URLs. `srsRtmpPort` defaults to `1935` (override with `-PsrsRtmpPort=`). `BuildConfig.SRS_RTMP_URL` / `UpstreamServices.srsIngestUrl` is that origin only — no app path and no credentials. `{liveSessionId}` is the Revenue live session id (Billd room id). `ossrs/srs:6` with `conf/docker.conf` enables HLS from that RTMP app/stream, so viewers play `{SRS_PLAYBACK_URL}/live/{liveSessionId}.m3u8`.
+
+The device camera is opened by only one publisher at a time:
+
+- Ordinary live (no active PK, no accepted or muted co-host seat): SRS RTMP owns the camera and microphone. LiveKit still connects so a match or co-host can start, but it does not publish local camera or microphone.
+- Active PK, or an accepted/muted co-host seat: RTMP ingest stops and releases the camera, then `LiveKitRoomGateway.publishCameraAndMicrophone()` runs as before. When that session ends, RTMP ingest resumes.
+
+PK subscribers and accepted co-hosts stay on LiveKit. Ordinary viewers do not see a picture until this RTMP publish is active.
 
 ## Ordinary viewer playback
 
@@ -45,7 +62,7 @@ Non-interactive viewers play HLS with Media3 ExoPlayer from `BuildConfig.SRS_PLA
 
 `liveSessionId` is the Billd `/live/list` `roomId`, which is the Revenue live session id. `ossrs/srs:6` `conf/docker.conf` enables HLS on the default vhost and serves `[app]/[stream].m3u8`. This client assumes app `live` and stream `{liveSessionId}`. `/live/list` does not return a play URL. A missing base URL or a non-http(s) origin does not invent a stream; playback errors stay on screen.
 
-Host camera publish, an active PK, and an accepted co-host seat still use LiveKit. Ordinary viewers do not join LiveKit. The media path must publish that session to SRS (for example `rtmp://<host>:1935/live/{liveSessionId}`) or the viewer sees “暂无画面” / a playback error. HTTP-FLV (`.flv` on the same app/stream) is what SRS http_remux serves; this player does not use it.
+Ordinary viewers do not join LiveKit. The host camera for that same `live/{liveSessionId}` is the RTMP ingest above, not LiveKit. LiveKit publishes the host camera only after RTMP has stopped, for an active PK or an accepted/muted co-host seat. HTTP-FLV (`.flv` on the same app/stream) is what SRS http_remux serves; this player does not use it.
 
 ## Local service choices
 

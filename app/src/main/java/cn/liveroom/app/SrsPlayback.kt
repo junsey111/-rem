@@ -38,6 +38,34 @@ internal fun srsPlaybackUrl(playbackBase: String, roomId: String): String? {
 internal fun viewerUsesSrsPlayback(isHost: Boolean, matchId: Long?, cohostMode: String?): Boolean =
     !isHost && matchId == null && cohostMode == null
 
+/**
+ * Who owns the camera for this room.
+ * [HOST_RTMP] connects LiveKit but does not publish the camera; RTMP does.
+ * [HOST_LIVEKIT] is PK or a co-host seat: RTMP has stopped, then LiveKit publishes.
+ */
+internal enum class LiveMediaRoute {
+    IDLE, PENDING, VIEWER_HLS, VIEWER_PK, VIEWER_COHOST, HOST_RTMP, HOST_LIVEKIT,
+}
+
+internal fun liveMediaRoute(
+    hasRoom: Boolean,
+    isHost: Boolean,
+    matchId: Long?,
+    viewerCohostKnown: Boolean,
+    viewerCohostMode: String?,
+    hostCohostSeat: Boolean,
+): LiveMediaRoute = when {
+    !hasRoom -> LiveMediaRoute.IDLE
+    isHost && hostPublishesOrdinarySrs(true, matchId, hostCohostSeat) -> LiveMediaRoute.HOST_RTMP
+    isHost -> LiveMediaRoute.HOST_LIVEKIT
+    matchId != null -> LiveMediaRoute.VIEWER_PK
+    !viewerCohostKnown -> LiveMediaRoute.PENDING
+    viewerCohostMode != null -> LiveMediaRoute.VIEWER_COHOST
+    else -> LiveMediaRoute.VIEWER_HLS
+}
+
+internal fun liveKitPublishesHostCamera(route: LiveMediaRoute): Boolean = route == LiveMediaRoute.HOST_LIVEKIT
+
 internal fun srsPlaybackStatus(errorCode: Int?, playbackState: Int): String = when {
     errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
         errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ->

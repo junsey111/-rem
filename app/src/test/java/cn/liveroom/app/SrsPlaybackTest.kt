@@ -37,4 +37,17 @@ class SrsPlaybackTest {
         assertEquals(false, viewerUsesSrsPlayback(isHost = false, matchId = null, cohostMode = "VIDEO"))
         assertEquals(false, viewerUsesSrsPlayback(isHost = false, matchId = null, cohostMode = "AUDIO"))
     }
+
+    @Test fun ordinaryHostDoesNotLiveKitPublishTheCamera() {
+        val ordinary = liveMediaRoute(true, isHost = true, matchId = null, viewerCohostKnown = false, viewerCohostMode = null, hostCohostSeat = false)
+        assertEquals(LiveMediaRoute.HOST_RTMP, ordinary)
+        assertEquals(false, liveKitPublishesHostCamera(ordinary))
+        assertEquals(LiveMediaRoute.HOST_LIVEKIT, liveMediaRoute(true, true, 8L, false, null, false))
+        assertEquals(true, liveKitPublishesHostCamera(LiveMediaRoute.HOST_LIVEKIT))
+        assertEquals(LiveMediaRoute.HOST_LIVEKIT, liveMediaRoute(true, true, null, false, null, hostCohostSeat = true))
+        assertEquals(LiveMediaRoute.VIEWER_HLS, liveMediaRoute(true, false, null, viewerCohostKnown = true, viewerCohostMode = null, hostCohostSeat = false))
+        assertEquals(LiveMediaRoute.VIEWER_PK, liveMediaRoute(true, false, 8L, true, "VIDEO", false))
+        assertEquals(LiveMediaRoute.VIEWER_COHOST, liveMediaRoute(true, false, null, true, "AUDIO", false))
+        assertEquals(LiveMediaRoute.PENDING, liveMediaRoute(true, false, null, viewerCohostKnown = false, viewerCohostMode = null, hostCohostSeat = false))
+    }
 }
