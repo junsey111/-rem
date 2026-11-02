@@ -124,31 +124,7 @@ private fun HostCover(coverPath: String?) {
     }
 }
 
-/**
- * Invite-for-coins has no Billd or Revenue route. Campaign leaderboards are not referrals.
- * A later API would need, at minimum:
- * GET /revenue/referrals/me -> enabled, code, invited_count, rewarded_coins
- * POST /revenue/referrals/redeem with an idempotent request_id and a code
- * Coin balance may change only after that response. This sheet must not invent a code or a credit.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ReferralUnavailableSheet(onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("拉新送币", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("邀请奖励暂未开通。")
-            Text(
-                "当前服务没有邀请码、邀请关系或送币接口。这里不会生成邀请码，也不会增加金币。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            TextButton(onClick = onDismiss, contentPadding = PaddingValues(0.dp)) { Text("知道了") }
-        }
-    }
-}
-
-/** Shown when GET /openim/support says customer service is not configured. Does not log in. */
+/** Shown when an already visible support chat cannot be opened. A missing support account stays hidden. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CustomerServiceUnavailableSheet(message: String, onDismiss: () -> Unit) {

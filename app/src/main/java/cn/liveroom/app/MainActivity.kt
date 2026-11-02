@@ -322,6 +322,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var showBusiness by remember { mutableStateOf<String?>(null) }
     var hostProfile by remember { mutableStateOf<LiveRoom?>(null) }
     var showReferral by remember { mutableStateOf(false) }
+    var referralRequestId by remember(session.id) { mutableStateOf<String?>(null) }
     var customerServiceNotice by remember { mutableStateOf<String?>(null) }
     var showCohost by remember { mutableStateOf(false) }
     var cohostMode by remember { mutableStateOf<String?>(null) }
@@ -481,6 +482,12 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     }
 
 
+    LaunchedEffect(session.token) {
+        supportContact = try { api.openImSupport(session.token) }
+        catch (error: CancellationException) { throw error }
+        catch (_: Exception) { null }
+    }
+
     LaunchedEffect(session.token, messageConnectionAttempt) {
         openImBusy = true
         openImStatus = "正在连接消息服务"
@@ -492,7 +499,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                 openImConversations = parseOpenImConversations(openImGateway.conversations())
             }
             openImStatus = "消息已连接"
-            supportContact = try { api.openImSupport(session.token) } catch (error: CancellationException) { throw error } catch (_: Exception) { null }
         } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
             openImReady = false
             openImStatus = "连接超时，请重试"
@@ -898,9 +904,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             } catch (error: CancellationException) { throw error
             } catch (error: PlatformHttpException) {
                 if (error.statusCode == 404) supportContact = null
-                customerServiceNotice = if (error.statusCode == 404) {
-                    "客服暂未开通。平台还没有配置客服账号，这里不会另外登录消息服务。"
-                } else error.message ?: "客服暂时无法连接"
+                else customerServiceNotice = error.message ?: "客服暂时无法连接"
             } catch (error: Exception) {
                 customerServiceNotice = error.message ?: "客服暂时无法连接"
             } finally { openImBusy = false }
@@ -1085,6 +1089,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                     onCoverUpload = { showCoverUpload = true },
                     onIdentity = { showIdentity = true },
                     onReferral = { showReferral = true },
+                    customerServiceAvailable = supportContact != null,
                     onCustomerService = { openSupportChat() },
                     onLogout = onLogout,
                     onRefresh = { refreshKey++ },
@@ -1209,7 +1214,14 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             }
         }
     }
-    if (showReferral) ReferralUnavailableSheet(onDismiss = { showReferral = false })
+    if (showReferral) ReferralSheet(
+        token = session.token,
+        api = api,
+        pendingRequestId = referralRequestId,
+        onPendingRequestId = { referralRequestId = it },
+        onInviteeBalance = { wallet = Wallet(it) },
+        onDismiss = { showReferral = false },
+    )
     customerServiceNotice?.let { message ->
         CustomerServiceUnavailableSheet(message, onDismiss = { customerServiceNotice = null })
     }
@@ -1743,6 +1755,7 @@ private fun ProfileScreen(
     onCoverUpload: () -> Unit,
     onIdentity: () -> Unit,
     onReferral: () -> Unit,
+    customerServiceAvailable: Boolean,
     onCustomerService: () -> Unit,
     onGiftHistory: () -> Unit,
     onRefresh: () -> Unit,
@@ -1845,7 +1858,7 @@ private fun ProfileScreen(
         item { TextButton(onClick=onCoverUpload){Text("设置直播封面")}}
         item { TextButton(onClick=onIdentity){Text("实名认证")}}
         item { OutlinedButton(onClick = onReferral, modifier = Modifier.fillMaxWidth()) { Text("拉新送币") } }
-        item { OutlinedButton(onClick = onCustomerService, modifier = Modifier.fillMaxWidth()) { Text("联系客服") } }
+        if (customerServiceAvailable) item { OutlinedButton(onClick = onCustomerService, modifier = Modifier.fillMaxWidth()) { Text("联系客服") } }
         item { TextButton(onClick = onLogout) { Text("退出登录") } }
         item {
             level?.let { Text("累计消费 ${it.viewerPoints} 积分 · 主播积分 ${it.creatorPoints}", style = MaterialTheme.typography.bodySmall, color = Fog) }

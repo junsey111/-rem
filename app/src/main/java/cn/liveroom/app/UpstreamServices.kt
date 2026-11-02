@@ -38,7 +38,7 @@ data class MatchScore(val matchId: Long, val creatorId: Long, val points: Long)
 data class RechargeOrder(val id: String, val coins: Int, val amountFen: Int, val status: String)
 data class GiftReceipt(val id: String, val requestId: String, val creatorId: Long, val liveSessionId: Long, val matchId: Long, val giftId: String, val giftName: String, val quantity: Int, val chargedCoins: Long, val status: String, val rejectCode: String, val createdAt: String)
 data class GiftHistory(val orders: List<GiftReceipt>, val nextCursor: String)
-class PlatformHttpException(val statusCode: Int, message: String) : IllegalStateException(message)
+class PlatformHttpException(val statusCode: Int, message: String, val errorCode: String? = null) : IllegalStateException(message)
 class ModerationRejectedException(message: String) : IllegalStateException(message)
 
 data class UserProfile(val age: Int?, val region: String?, val source: String)
@@ -181,6 +181,16 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
             viewerPoints = data.optLong("viewer_points"),
             creatorPoints = data.optLong("creator_points"),
         )
+    }
+
+    suspend fun referralProfile(token: String): ReferralProfile = withContext(Dispatchers.IO) {
+        parseReferralProfile(request("/revenue/referrals/me", token = token))
+    }
+
+    suspend fun redeemReferral(token: String, requestId: String, code: String): ReferralReceipt = withContext(Dispatchers.IO) {
+        parseReferralReceipt(request("/revenue/referrals/redeem", "POST", token, JSONObject()
+            .put("request_id", requestId)
+            .put("code", code.trim())))
     }
 
     suspend fun earnings(token: String, period: String): Earnings = withContext(Dispatchers.IO) {
@@ -451,10 +461,12 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
             val root = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
             if (status !in 200..299) {
                 val message = root.optString("message").ifBlank { root.optString("msg") }.ifBlank { "HTTP $status" }
+                val errorCode = (root.opt("code") as? String)?.ifBlank { null }
+                    ?: (root.opt("errorCode") as? String)?.ifBlank { null }
                 if (root.optString("gift_outcome") == "REJECTED") throw GiftRejectedException(message)
                 if (root.optString("settlement") == "UNAVAILABLE") throw SettlementUnavailableException(message)
                 if (status in listOf(400, 404) && root.optString("moderation_outcome") == "REJECTED") throw ModerationRejectedException(message)
-                throw PlatformHttpException(status, message)
+                throw PlatformHttpException(status, message, errorCode)
             }
             return root.opt("data")?.takeUnless { it == JSONObject.NULL } ?: root
         } finally {
