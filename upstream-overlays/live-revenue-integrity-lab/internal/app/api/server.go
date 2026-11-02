@@ -32,6 +32,7 @@ type Server struct {
 	paymentSecret string
 	internalKey   string
 	accountURL    string
+	referrals     service.ReferralPolicy
 	reqCounter    uint64
 }
 
@@ -54,6 +55,7 @@ func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentS
 		paymentSecret: paymentSecret,
 		internalKey:   internalKey,
 		accountURL:    accountURL,
+		referrals:     service.LoadReferralPolicy(),
 	}
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/healthz", s.wrap("healthz", s.handleHealth))
@@ -79,6 +81,8 @@ func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentS
 	mux.HandleFunc("/v1/users/me/profile", s.requireAuth(s.wrap("user_profile", s.handleUserProfile)))
 	mux.HandleFunc("/v1/creators/me/earnings", s.requireAuth(s.wrap("creator_earnings", s.handleCreatorEarnings)))
 	mux.HandleFunc("/v1/users/me/level", s.requireAuth(s.wrap("user_level", s.handleUserLevel)))
+	mux.HandleFunc("/v1/referrals/me", s.requireAuth(s.wrap("referral_me", s.handleReferralMe)))
+	mux.HandleFunc("/v1/referrals/redeem", s.requireAuth(s.wrap("referral_redeem", s.handleReferralRedeem)))
 	mux.HandleFunc("/v1/rankings/creators", s.requireAuth(s.wrap("creator_rankings", s.handleCreatorRankings)))
 	mux.HandleFunc("/v1/rankings/contributors", s.requireAuth(s.wrap("contributor_rankings", s.handleContributorRankings)))
 	mux.HandleFunc("/v1/wallets/recharges", s.wrap("wallet_recharge", s.handleRecharge))
