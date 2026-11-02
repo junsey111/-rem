@@ -7,6 +7,7 @@ import successHandler from '@/app/handler/success-handle';
 import { INTERNAL_SERVICE_KEY, REVENUE_API_URL } from '@/config/secret';
 import { ALLOW_HTTP_CODE } from '@/constant';
 import { CustomError } from '@/model/customError.model';
+import { publishAcceptedGift } from '@/service/gift-broadcast';
 import axios from '@/utils/request';
 
 const revenueRouter = new Router({ prefix: '/revenue' });
@@ -180,6 +181,20 @@ revenueRouter.post('/gifts/send', async (ctx, next) => {
       sent_at_ms: 0,
     }, token);
     successHandler({ ctx, data: result });
+    const acceptedBody = result?.accepted === true ? result : result?.data;
+    if (acceptedBody?.accepted === true) {
+      try {
+        publishAcceptedGift({
+          roomId: body.live_session_id,
+          requestId: body.request_id,
+          giftId: body.gift_id,
+          viewerId: user.id,
+          quantity: body.quantity || 1,
+        });
+      } catch {
+        // The debit is already committed. A missed animation must not turn it into an error.
+      }
+    }
   } catch (error) {
     const refusals = {
       CREATOR_NOT_ELIGIBLE: '主播当前无法接收礼物，本次未扣币',

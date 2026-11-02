@@ -81,6 +81,19 @@ OpenIM 上游 Compose 使用固定的 `mongo`、`redis` 等容器名，在其独
 
 `LiveKitRoomGateway` 已调用官方 SDK 的 `LiveKit.create()` 和 `Room.connect()`。礼物、充值、榜单、收益、审核和管理员操作必须接入业务 API，由服务端校验余额和权限，不能在客户端计算或保存真实账目。
 
+全屏大礼物使用 [YYEVA-Android](https://github.com/yylive/YYEVA-Android) `1.1.73`（`EvaAnimViewV3`，Apache-2.0；协议说明见 [YYEVA](https://github.com/yylive/YYEVA)）。`GiftOutbox` 只保留未确认的支付意图，保存或失败时不播特效。目录字段与 `GET /revenue/gifts` 一致：`effect_type` 为小写 `none`、`yyeva`、`svga`、`lottie`，另有 `effect_url`、`effect_video_mode`、`effect_md5`、`icon_url`。只有 `yyeva` 且 `effect_url` 指向自有 AE 插件导出的混合 `.mp4` 才会进单路全屏队列。不要把上游 demo 素材当作生产资源。给一条已有礼物挂上测试文件示例：
+
+```sql
+UPDATE gift_catalog
+SET effect_type = 'yyeva',
+    effect_url = 'https://your-host/effects/castle.mp4',
+    effect_video_mode = '2',
+    effect_md5 = ''
+WHERE gift_id = 'CASTLE';
+```
+
+`effect_video_mode` 留空时由 MP4 内嵌配置决定；`1` 到 `5` 交给播放器。小礼物 `lottie` / `svga` 本次不播放。
+
 当前功能实现、实际运行证据及尚未验收的链路见 [后端验证记录](BACKEND_VALIDATION.md)。接口、容器或 APK 构建通过不能代替完整业务验收。
 
 ## 后端启动
