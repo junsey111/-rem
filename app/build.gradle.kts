@@ -15,6 +15,9 @@ android {
     val livekitPort = providers.gradleProperty("livekitPort").orElse("7880").get()
     val openImApiPort = providers.gradleProperty("openImApiPort").orElse("10002").get()
     val openImWsPort = providers.gradleProperty("openImWsPort").orElse("10001").get()
+    // OpenIM user id of the customer-service account. Empty until the platform assigns one.
+    val csOpenImUserId = providers.gradleProperty("csOpenImUserId").orElse("").get()
+        .takeIf { it.matches(Regex("[1-9][0-9]{0,18}")) }.orEmpty()
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
@@ -33,6 +36,7 @@ android {
         buildConfigField("String", "LIVEKIT_URL", "\"ws://$backendHost:$livekitPort\"")
         buildConfigField("String", "OPENIM_API_URL", "\"http://$backendHost:$openImApiPort\"")
         buildConfigField("String", "OPENIM_WS_URL", "\"ws://$backendHost:$openImWsPort\"")
+        buildConfigField("String", "CS_OPENIM_USER_ID", "\"$csOpenImUserId\"")
     }
 
     buildFeatures {
