@@ -1,6 +1,15 @@
 package cn.liveroom.app
 
-data class OpenImMessage(val id: String, val senderId: String, val receiverId: String, val content: String, val sentAt: Long, val status: Int)
+data class OpenImMessage(
+    val id: String,
+    val senderId: String,
+    val receiverId: String,
+    val content: String,
+    val sentAt: Long,
+    val status: Int,
+    val contentType: Int = 101,
+    val customData: String? = null,
+)
 
 data class OpenImHistory(
     val conversationId: String,

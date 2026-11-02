@@ -316,4 +316,12 @@ Billd 最终完整顺序回归：15 项中 14 通过、0 失败、0 取消，1 �
 
 本地管理 API 已重启为最新版本，后台 http://localhost:8000/ 。没有连接 Android 设备或可用 AVD。VM 192.168.254.132 在 SSH banner exchange 阶段超时，本轮没有部署，无法验证完整 Kafka/OpenIM/LiveKit/结算链路。保留此前业务规则边界，不将接口实现、契约替身测试或 APK 编译等同于全功能上线。
 
+## 2026-11-02：私信礼物、视频消息与客服入口
+
+Billd 增加 `POST /openim/dm-gifts`、`GET /openim/dm-gifts/:requestId`、视频上传/元数据/播放/解锁，以及 `GET /openim/support`。礼物和解锁只转发 Revenue；本仓库的 Revenue 服务还没有 `/v1/dm/gifts`、`/v1/dm/video-unlocks`、`/v1/dm/videos/:id/access`。契约测试确认：这些路径返回框架 404 时 Billd 映射为 501 且不生成礼物消息；明确的余额不足仍是拒绝；回执缺字段或金额与标价不一致时不开放播放。`openim_dm_video_unlock` 只保存 Revenue 已接受的回执，不是余额表。播放在 Revenue 明确返回未解锁时拒绝，即使本地有旧回执。
+
+Android 聊天可以发送并渲染 `contentType=110` 的 `dm_gift` / `dm_video`。礼物消息必须来自 Billd 的 `im_custom`；带 `media_url` 或 `storage_name` 的载荷不会被发出。付费视频气泡在 `playable=false` 时只提供解锁，播放地址不进消息体。客服入口只在 `OPENIM_SUPPORT_USER_ID` 有值且 `GET /openim/support` 成功时出现。
+
+本轮没有启动 MySQL，没有把新路由打进完整 Billd 进程，没有连接 OpenIM、Revenue 或 Android 设备。因此不能把契约测试当成私信送礼扣币或真机收发已经验收。Revenue 仍需实现上述三个路径后，才能用同一 `request_id` 做实扣和重放验证。
+
 退款补充：00017 增加生成列唯一约束，允许 REJECTED 后重新申请，同一充值只允许一笔未驳回单；原请求重试仍返回原驳回状态，不复活旧申请。真实 MySQL 并发重申请、旧请求重放、释放金币及借贷平衡测试通过，见 .tools/final-refund-reapplication-tests.out。

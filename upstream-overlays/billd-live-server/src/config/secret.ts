@@ -27,6 +27,14 @@ export const OPENIM_SECRET = process.env.OPENIM_SECRET || '';
 export const OPENIM_ADMIN_USER_ID = process.env.OPENIM_ADMIN_USER_ID || 'imAdmin';
 export const OPENIM_PLATFORM_ID = numberEnv('OPENIM_PLATFORM_ID', 1);
 export const OPENIM_WS_URL = process.env.OPENIM_WS_URL || 'ws://10.0.2.2:10001';
+// Empty means the support entry stays hidden. Do not invent an account here.
+export const OPENIM_SUPPORT_USER_ID = process.env.OPENIM_SUPPORT_USER_ID || '';
+export const OPENIM_SUPPORT_NICKNAME = process.env.OPENIM_SUPPORT_NICKNAME || '客服';
+export const OPENIM_DM_MEDIA_DIR = process.env.OPENIM_DM_MEDIA_DIR || '';
+// Revenue teammate owns these ledgers. 404/501 from the paths below stays a stub.
+export const REVENUE_DM_GIFTS_PATH = process.env.REVENUE_DM_GIFTS_PATH || '/v1/dm/gifts';
+export const REVENUE_DM_VIDEO_UNLOCK_PATH = process.env.REVENUE_DM_VIDEO_UNLOCK_PATH || '/v1/dm/video-unlocks';
+export const REVENUE_DM_VIDEO_ACCESS_PATH = process.env.REVENUE_DM_VIDEO_ACCESS_PATH || '/v1/dm/videos';
 export const GAODE_WEB_IP_URL = process.env.GAODE_WEB_IP_URL || '';
 export const GAODE_WEB_IP_KEY = process.env.GAODE_WEB_IP_KEY || '';
 export const QQ_EMAIL_USER = process.env.QQ_EMAIL_USER || '';

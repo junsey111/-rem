@@ -59,6 +59,8 @@ OpenIM 用户注册和 `/auth/get_user_token` 由 Billd 的 `POST /openim/sessio
 
 消息会话现在通过 `openim_session` 表绑定当前 App 登录会话的 SHA-256 摘要；同一会话重复请求会先核实并复用有效消息令牌。签发前先提交待处理记录，远程签发超时或本地提交失败后仍能撤销孤立令牌。后台每轮完成后等待 5 秒，按数据库账号状态、当前令牌及期限核对；失效、禁用、删除或被替换的会话调用 OpenIM 强制下线，失败保留记录重试。新迁移 `20261102_openim_sessions.sql` 必须先执行；既有未绑定的 Android 消息令牌部署时重置一次。仅覆盖配置的 Android platform ID 与本应用记录，其他独立客户端不在本轮范围。
 
+私信里的礼物和视频是 OpenIM 自定义消息（`dm_gift`、`dm_video`），不是第二套钱包。Android 先调用 Billd，再把服务端返回的 `im_custom` 原样发给对方。`POST /openim/dm-gifts` 转发到 Revenue `POST /v1/dm/gifts`（可用 `REVENUE_DM_GIFTS_PATH` 改路径）；对方尚未提供该接口时返回 501，`settlement=UNAVAILABLE`，不发礼物消息，也不在 Billd 记账。付费视频解锁同样转发 `POST /v1/dm/video-unlocks`，播放权限优先看 `GET /v1/dm/videos/:id/access`。免费视频不走结算。视频文件只存在 Billd 磁盘，消息体里没有播放地址。`GET /openim/support` 使用 `OPENIM_SUPPORT_USER_ID`；留空则 App 不显示客服入口，也不会放一套预设回复。各入口按钮调用 `openSupportConversation`，复用当前 OpenIM 登录。`OPENIM_SECRET` 仍然只在服务端。
+
 `POST /user/logout` 只撤销请求对应的当前 App 会话，迟到请求不会清除新登录。Android 退出前持久化待同步记录，联网时调用真实退出接口；离线可先退出本机，App 运行时每 10 秒重试，下次启动继续，并在新登录前同步。App 完全关闭且离线时无法立即通知服务端，远程会话仍需等同步或原登录到期。消息撤销也受核对轮次、服务故障及排队影响，不是零延迟。设备离线退出、重连与 SDK 交互仍待实测。
 
 OpenIM 上游 Compose 使用固定的 `mongo`、`redis` 等容器名，在其独立 Compose 网络运行，并额外加入 `live_backend` 供 Billd 通过服务名访问。使用统一脚本时网络会自动创建；单独启动 OpenIM 前先执行 `docker network create live_backend`（已存在时可忽略），再运行 `docker compose --env-file .env up --build -d`（在 `third_party/openim-server` 目录执行）。模拟器 MinIO 地址默认使用 `10.0.2.2`，实体设备部署需将 `OPENIM_EXTERNAL_HOST` 改为可达的服务主机地址。LiveKit 由统一脚本等待 7880 端口；开发密钥为 `devkey/secret`，生产环境必须替换。
