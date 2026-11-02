@@ -84,6 +84,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -339,6 +340,9 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var activeRoom by remember { mutableStateOf<LiveRoom?>(null) }
     var activeRoomStatus by remember { mutableStateOf("正在连接媒体服务") }
     var roomGateway by remember { mutableStateOf<LiveKitRoomGateway?>(null) }
+    var srsIngest by remember { mutableStateOf<SrsIngestPublisher?>(null) }
+    val cameraHandoff = remember { Mutex() }
+    var hostCohostLiveKit by remember { mutableStateOf(false) }
     var roomRegistration by remember { mutableStateOf<BilldRoomRegistration?>(null) }
     var activeMatchId by remember { mutableStateOf<Long?>(null) }
     var matchScores by remember { mutableStateOf(emptyList<MatchScore>()) }
@@ -582,7 +586,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
-    LaunchedEffect(activeRoom?.stream, session.token, activeMatchId, cohostMode) {
+    LaunchedEffect(activeRoom?.stream, session.token, activeMatchId, cohostMode, hostCohostLiveKit) {
         val room = activeRoom ?: return@LaunchedEffect
         roomFeedback = null
         val liveSessionId = room.stream.toLongOrNull()
@@ -590,39 +594,91 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             activeRoomStatus = "暂时无法加入此直播间，请返回刷新"
             return@LaunchedEffect
         }
+        val isHost = room.creatorId == session.id
+        // Ordinary host video is the SRS RTMP publish. LiveKit camera starts only for PK / co-host.
+        val ordinarySrs = hostPublishesOrdinarySrs(isHost, activeMatchId, hostCohostLiveKit)
         val gateway = LiveKitRoomGateway(context)
         roomGateway = gateway
-        activeRoomStatus = "正在连接直播"
+        if (!ordinarySrs) activeRoomStatus = "正在连接直播"
         try {
             withTimeout(20_000) {
                 val credentials = api.liveKitToken(session.token, liveSessionId, activeMatchId)
                 gateway.join(credentials.url, credentials.token)
-                if (room.creatorId == session.id) gateway.publishCameraAndMicrophone()
-                else if (cohostMode != null) gateway.publishCohost(cohostMode == "VIDEO")
+                if (isHost && !ordinarySrs) cameraHandoff.withLock { gateway.publishCameraAndMicrophone() }
+                else if (!isHost && cohostMode != null) gateway.publishCohost(cohostMode == "VIDEO")
             }
-            activeRoomStatus = if (room.creatorId == session.id) "正在直播" else "已加入直播间"
+            if (!ordinarySrs) activeRoomStatus = if (isHost) "正在直播" else "已加入直播间"
             awaitCancellation()
         } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
-            activeRoomStatus = "连接超时，请退出后重试"
+            if (!ordinarySrs) activeRoomStatus = "连接超时，请退出后重试"
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            activeRoomStatus = "直播连接失败，请退出后重试"
+            if (!ordinarySrs) activeRoomStatus = "直播连接失败，请退出后重试"
         } finally {
             gateway.leave()
             if (roomGateway === gateway) roomGateway = null
         }
     }
 
+    LaunchedEffect(activeRoom?.stream, session.id, activeMatchId, hostCohostLiveKit) {
+        val room = activeRoom ?: return@LaunchedEffect
+        if (!hostPublishesOrdinarySrs(room.creatorId == session.id, activeMatchId, hostCohostLiveKit)) return@LaunchedEffect
+        val url = srsIngestUrl(BuildConfig.SRS_RTMP_URL, room.stream)
+        if (url == null) {
+            activeRoomStatus = "推流地址不可用，观众将看不到画面"
+            return@LaunchedEffect
+        }
+        cameraHandoff.withLock {
+            val publisher = SrsIngestPublisher(context)
+            srsIngest = publisher
+            try {
+                activeRoomStatus = "正在连接直播"
+                publisher.onDropped = { activeRoomStatus = "推流已断开，观众暂时看不到画面" }
+                withTimeout(15_000) { publisher.start(url) }
+                activeRoomStatus = "正在直播"
+                awaitCancellation()
+            } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
+                activeRoomStatus = "推流失败，观众暂时看不到画面"
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                activeRoomStatus = "推流失败，观众暂时看不到画面"
+            } finally {
+                publisher.onDropped = null
+                publisher.stop()
+                if (srsIngest === publisher) srsIngest = null
+            }
+        }
+    }
+
+    val ordinaryHostIngest by rememberUpdatedState(
+        activeRoom?.let { hostPublishesOrdinarySrs(it.creatorId == session.id, activeMatchId, hostCohostLiveKit) } == true,
+    )
     LaunchedEffect(roomGateway) {
         val gateway = roomGateway ?: return@LaunchedEffect
         gateway.connection.collect { state ->
+            if (ordinaryHostIngest) return@collect
             when (state) {
                 MediaConnectionState.CONNECTED -> activeRoomStatus = if (activeRoom?.creatorId == session.id) "正在直播" else "已加入直播间"
                 MediaConnectionState.RECONNECTING -> activeRoomStatus = "连接中断，正在尝试恢复"
                 MediaConnectionState.DISCONNECTED -> activeRoomStatus = "直播连接已断开，请返回后重新进入"
                 MediaConnectionState.IDLE -> Unit
             }
+        }
+    }
+
+    LaunchedEffect(activeRoom?.stream, session.token, session.id, activeMatchId) {
+        hostCohostLiveKit = false
+        val room = activeRoom ?: return@LaunchedEffect
+        if (room.creatorId != session.id || activeMatchId != null) return@LaunchedEffect
+        val liveId = room.stream.toLongOrNull() ?: return@LaunchedEffect
+        while (true) {
+            try {
+                hostCohostLiveKit = api.cohosts(session.token, liveId).any { cohostSeatNeedsLiveKit(it.status) }
+            } catch (error: CancellationException) { throw error
+            } catch (_: Exception) { }
+            kotlinx.coroutines.delay(3_000)
         }
     }
 
@@ -934,6 +990,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             RoomSheet(
                 room = room,
                 gateway = roomGateway,
+                ingest = srsIngest,
                 status = activeRoomStatus,
                 feedback = roomFeedback,
                 wallet = wallet,
@@ -1115,11 +1172,35 @@ private fun RoomTile(room: LiveRoom, onClick: () -> Unit) {
     }
 }
 
+@Composable
+private fun SrsHostStage(ingest: SrsIngestPublisher, gateway: LiveKitRoomGateway?, room: LiveRoom) {
+    Box(Modifier.fillMaxSize()) {
+        SrsHostPreview(ingest, Modifier.fillMaxSize())
+        if (gateway == null) return@Box
+        val videoIds by gateway.videoIdentities.collectAsState()
+        val remotes = videoIds.mapNotNull { it.toLongOrNull() }.filter { it != room.creatorId }
+        if (remotes.isEmpty()) return@Box
+        Row(Modifier.align(Alignment.CenterEnd).padding(end = 12.dp).width(140.dp).height(200.dp)) {
+            remotes.take(2).forEach { participantId ->
+                androidx.compose.runtime.key(gateway, participantId) {
+                    AndroidView(
+                        factory = { context -> gateway.createVideoRenderer(context, participantId.toString()) },
+                        update = { gateway.attachVideoRenderer(it) },
+                        onRelease = { gateway.releaseVideoRenderer(it); it.release() },
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    )
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RoomSheet(
     room: LiveRoom,
     gateway: LiveKitRoomGateway?,
+    ingest: SrsIngestPublisher?,
     status: String,
     feedback: String?,
     wallet: Wallet?,
@@ -1151,7 +1232,9 @@ private fun RoomSheet(
     val requestClose = { if (isHost) confirmClose = true else onClose() }
     androidx.activity.compose.BackHandler { requestClose() }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (gateway != null) {
+        if (ingest != null && isHost && matchId == null) {
+            SrsHostStage(ingest, gateway, room)
+        } else if (gateway != null) {
             val videoIds by gateway.videoIdentities.collectAsState()
             val opponentId = scores.firstOrNull { it.creatorId != room.creatorId }?.creatorId
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {

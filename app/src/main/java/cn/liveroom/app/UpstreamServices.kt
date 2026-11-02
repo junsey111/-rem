@@ -19,6 +19,7 @@ data class UpstreamServices(
     val billdApiUrl: String = BuildConfig.BILLD_API_URL,
     val srsUrl: String = BuildConfig.SRS_URL,
     val srsPlaybackUrl: String = BuildConfig.SRS_PLAYBACK_URL,
+    val srsIngestUrl: String = BuildConfig.SRS_RTMP_URL,
     val liveKitUrl: String = BuildConfig.LIVEKIT_URL,
     val openImApiUrl: String = BuildConfig.OPENIM_API_URL,
     val openImWsUrl: String = BuildConfig.OPENIM_WS_URL,
