@@ -322,6 +322,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var showBusiness by remember { mutableStateOf<String?>(null) }
     var showCohost by remember { mutableStateOf(false) }
     var cohostMode by remember { mutableStateOf<String?>(null) }
+    var cohostKnown by remember { mutableStateOf(false) }
     var operationsPage by remember { mutableIntStateOf(1) }
     var operationsRefresh by remember { mutableIntStateOf(0) }
     var operationsLoading by remember { mutableStateOf(false) }
@@ -582,12 +583,34 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
-    LaunchedEffect(activeRoom?.stream, session.token, activeMatchId, cohostMode) {
+    val playbackRoute = when {
+        activeRoom == null -> "none"
+        activeRoom?.creatorId == session.id -> "livekit-host"
+        activeMatchId != null -> "livekit-pk"
+        !cohostKnown -> "pending"
+        cohostMode != null -> "livekit-cohost:$cohostMode"
+        else -> "srs"
+    }
+    LaunchedEffect(activeRoom?.stream, session.token, playbackRoute) {
         val room = activeRoom ?: return@LaunchedEffect
         roomFeedback = null
         val liveSessionId = room.stream.toLongOrNull()
         if (liveSessionId == null) {
             activeRoomStatus = "暂时无法加入此直播间，请返回刷新"
+            return@LaunchedEffect
+        }
+        if (playbackRoute == "pending") {
+            activeRoomStatus = "正在连接直播"
+            return@LaunchedEffect
+        }
+        val ordinaryViewer = playbackRoute == "srs"
+        if (ordinaryViewer) {
+            roomGateway = null
+            activeRoomStatus = if (srsPlaybackUrl(BuildConfig.SRS_PLAYBACK_URL, room.stream) == null) {
+                "播放地址不可用，请返回刷新"
+            } else {
+                "正在连接直播"
+            }
             return@LaunchedEffect
         }
         val gateway = LiveKitRoomGateway(context)
@@ -598,7 +621,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                 val credentials = api.liveKitToken(session.token, liveSessionId, activeMatchId)
                 gateway.join(credentials.url, credentials.token)
                 if (room.creatorId == session.id) gateway.publishCameraAndMicrophone()
-                else if (cohostMode != null) gateway.publishCohost(cohostMode == "VIDEO")
+                else if (activeMatchId == null && cohostMode != null) gateway.publishCohost(cohostMode == "VIDEO")
             }
             activeRoomStatus = if (room.creatorId == session.id) "正在直播" else "已加入直播间"
             awaitCancellation()
@@ -628,12 +651,14 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
 
     LaunchedEffect(activeRoom?.stream, session.token, activeMatchId) {
         cohostMode = null
+        cohostKnown = false
         val room = activeRoom ?: return@LaunchedEffect
         if (room.creatorId == session.id) return@LaunchedEffect
         val liveId = room.stream.toLongOrNull() ?: return@LaunchedEffect
         while (true) {
             try { cohostMode = if (activeMatchId == null) api.cohosts(session.token,liveId).firstOrNull { it.userId==session.id && it.status=="ACCEPTED" }?.mode else null }
             catch(e:CancellationException){throw e}catch(_:Exception){cohostMode=null}
+            cohostKnown = true
             kotlinx.coroutines.delay(3000)
         }
     }
@@ -934,6 +959,10 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             RoomSheet(
                 room = room,
                 gateway = roomGateway,
+                playbackUrl = if (cohostKnown && viewerUsesSrsPlayback(room.creatorId == session.id, activeMatchId, cohostMode)) {
+                    srsPlaybackUrl(BuildConfig.SRS_PLAYBACK_URL, room.stream)
+                } else null,
+                onPlaybackStatus = { activeRoomStatus = it },
                 status = activeRoomStatus,
                 feedback = roomFeedback,
                 wallet = wallet,
@@ -1120,6 +1149,8 @@ private fun RoomTile(room: LiveRoom, onClick: () -> Unit) {
 private fun RoomSheet(
     room: LiveRoom,
     gateway: LiveKitRoomGateway?,
+    playbackUrl: String?,
+    onPlaybackStatus: (String) -> Unit,
     status: String,
     feedback: String?,
     wallet: Wallet?,
@@ -1151,7 +1182,9 @@ private fun RoomSheet(
     val requestClose = { if (isHost) confirmClose = true else onClose() }
     androidx.activity.compose.BackHandler { requestClose() }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (gateway != null) {
+        if (playbackUrl != null) {
+            SrsPlaybackView(playbackUrl, onPlaybackStatus, Modifier.fillMaxSize())
+        } else if (gateway != null) {
             val videoIds by gateway.videoIdentities.collectAsState()
             val opponentId = scores.firstOrNull { it.creatorId != room.creatorId }?.creatorId
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {

@@ -30,7 +30,7 @@ Run `scripts/build-openim-aar.ps1`; it copies the generated `open_im_sdk.aar` to
 
 ## Runtime wiring
 
-- `SRS_URL` is the broadcaster RTMP/WebRTC ingest and viewer playback configuration.
+- `SRS_URL` is the SRS HTTP API. Ordinary viewer HLS is `{SRS_PLAYBACK_URL}/live/{liveSessionId}.m3u8`.
 - `LIVEKIT_URL` and a short-lived token are used for PK/voice/video rooms.
 - `OPENIM_API_URL`, `OPENIM_WS_URL`, and a user token are used for private messages.
 - Coins, gifts, ranks, revenue, and admin actions belong in the application API and must be authorized server-side.
