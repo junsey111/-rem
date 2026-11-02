@@ -32,6 +32,18 @@ data class UserLevel(val viewerLevel: Int, val creatorLevel: Int, val viewerPoin
 data class Earnings(val diamonds: Long, val gifts: Long)
 data class RankingEntry(val userId: Long, val value: Long, val gifts: Long)
 data class LiveKitCredentials(val url: String, val token: String)
+data class DmCallCredentials(
+    val callId: String,
+    val room: String,
+    val mode: String,
+    val callerId: String,
+    val peerId: String,
+    val url: String,
+    val token: String,
+    val expiresIn: Int,
+    val signalTransport: String,
+    val signalText: String,
+)
 data class OpenImCredentials(val userId: String, val token: String, val apiUrl: String, val wsUrl: String)
 data class ChatRecipient(val userId: String, val name: String)
 data class MatchScore(val matchId: Long, val creatorId: Long, val points: Long)
@@ -288,6 +300,40 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         LiveKitCredentials(data.optString("url"), data.optString("token")).also {
             check(it.url.isNotBlank() && it.token.isNotBlank()) { "LiveKit token 响应不完整" }
         }
+    }
+
+    suspend fun startDmCall(token: String, peerId: Long, mode: String): DmCallCredentials = withContext(Dispatchers.IO) {
+        parseDmCall(request("/livekit/calls", "POST", token, JSONObject().put("peer_id", peerId).put("mode", mode)))
+    }
+
+    suspend fun joinDmCall(token: String, callId: String): DmCallCredentials = withContext(Dispatchers.IO) {
+        parseDmCall(request("/livekit/calls/join", "POST", token, JSONObject().put("call_id", callId)))
+    }
+
+    suspend fun endDmCall(token: String, callId: String) = withContext(Dispatchers.IO) {
+        request("/livekit/calls/end", "POST", token, JSONObject().put("call_id", callId))
+    }
+
+    private fun parseDmCall(data: JSONObject): DmCallCredentials {
+        val serverUrl = data.optString("url")
+        val mediaToken = data.optString("token")
+        val callId = data.optString("call_id")
+        val mode = data.optString("mode")
+        check(serverUrl.isNotBlank() && mediaToken.isNotBlank() && callId.isNotBlank() && (mode == "video" || mode == "voice")) {
+            "通话凭证不完整"
+        }
+        return DmCallCredentials(
+            callId = callId,
+            room = data.optString("room"),
+            mode = mode,
+            callerId = data.optString("caller_id"),
+            peerId = data.optString("peer_id"),
+            url = resolveDmCallUrl(serverUrl, BuildConfig.LIVEKIT_URL),
+            token = mediaToken,
+            expiresIn = data.optInt("expires_in"),
+            signalTransport = data.optString("signal_transport"),
+            signalText = data.optString("signal_text"),
+        )
     }
 
     suspend fun rechargeUrl(token: String, coins: Int): String = withContext(Dispatchers.IO) {

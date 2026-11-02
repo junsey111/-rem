@@ -4,13 +4,16 @@ import Router from 'koa-router';
 
 import { authJwt } from '@/app/auth/authJwt';
 import successHandler from '@/app/handler/success-handle';
+import { RequestRateLimiter } from '@/app/request-rate';
 import { LIVEKIT_API_KEY, LIVEKIT_API_SECRET, REVENUE_API_URL } from '@/config/secret';
 import { ALLOW_HTTP_CODE } from '@/constant';
 import { CustomError } from '@/model/customError.model';
 import axios from '@/utils/request';
 import { mediaAuthority, mediaSessionHash } from '@/service/media-authority';
+import { DmCallError, endDmCall, joinDmCall, openDmCall } from '@/service/dm-call';
 
 const liveKitRouter = new Router({ prefix: '/livekit' });
+const callRate = new RequestRateLimiter();
 
 liveKitRouter.use(async (_ctx, next) => {
   try { await next(); }
@@ -88,6 +91,114 @@ liveKitRouter.post('/token', async (ctx, next) => {
     expiresIn: '10m',
   });
   successHandler({ ctx, data: { url: process.env.LIVEKIT_URL || 'ws://10.0.2.2:7880', token } });
+  await next();
+});
+
+function liveKitPublicUrl(): string {
+  return process.env.LIVEKIT_URL || 'ws://10.0.2.2:7880';
+}
+
+function bearerToken(ctx): string {
+  const header = ctx.headers.authorization || '';
+  return header.startsWith('Bearer ') ? header.slice(7) : '';
+}
+
+async function authedCaller(ctx) {
+  const { code, userInfo, message } = await authJwt(ctx);
+  if (code !== ALLOW_HTTP_CODE.ok || !userInfo?.id) {
+    throw new CustomError(message || '未登录！', code, code);
+  }
+  const retry = callRate.consume(String(userInfo.id), 30);
+  if (retry) {
+    ctx.set('Retry-After', String(retry));
+    throw new CustomError('通话请求较频繁，请稍后重试', 429, 429);
+  }
+  return userInfo;
+}
+
+function rethrowCall(error: unknown): never {
+  if (error instanceof DmCallError) throw new CustomError(error.message, error.status, error.status);
+  throw error;
+}
+
+async function loadCallPeer(id: string): Promise<{ id: string; disabled: boolean } | null> {
+  try {
+    // Lazy require so live-token tests do not open MySQL just by loading this router.
+    // eslint-disable-next-line global-require
+    const imported = require('@/model/user.model');
+    const userModel = typeof imported?.default?.findByPk === 'function' ? imported.default : imported;
+    const user = await userModel.findByPk(id, { attributes: ['id', 'status'] });
+    if (!user) return null;
+    return { id: String(user.id), disabled: Number(user.status) === 2 };
+  } catch (error) {
+    if (error instanceof CustomError || error instanceof DmCallError) throw error;
+    throw new CustomError('账号服务暂时不可用，请稍后重试', 503, 503);
+  }
+}
+
+// 1v1 私信通话。房间名 dm-<hex> 不进入直播/PK 媒体扫描。双方都可发布，密钥只留在服务端。
+liveKitRouter.post('/calls', async (ctx, next) => {
+  const userInfo = await authedCaller(ctx);
+  const peerId = String(ctx.request.body?.peer_id ?? '').trim();
+  const mode = String(ctx.request.body?.mode ?? '').trim();
+  if (!/^[1-9][0-9]{0,9}$/.test(peerId)) {
+    throw new CustomError('peer_id 无效', ALLOW_HTTP_CODE.paramsError, ALLOW_HTTP_CODE.paramsError);
+  }
+  const peer = peerId === String(userInfo.id)
+    ? { id: peerId, disabled: false }
+    : await loadCallPeer(peerId);
+  try {
+    successHandler({
+      ctx,
+      data: await openDmCall({
+        callerId: String(userInfo.id),
+        peer,
+        mode,
+        loginToken: bearerToken(ctx),
+        url: liveKitPublicUrl(),
+        apiKey: LIVEKIT_API_KEY,
+        apiSecret: LIVEKIT_API_SECRET,
+      }),
+    });
+  } catch (error) {
+    rethrowCall(error);
+  }
+  await next();
+});
+
+liveKitRouter.post('/calls/join', async (ctx, next) => {
+  const userInfo = await authedCaller(ctx);
+  try {
+    successHandler({
+      ctx,
+      data: await joinDmCall({
+        userId: String(userInfo.id),
+        callId: String(ctx.request.body?.call_id ?? '').trim(),
+        loginToken: bearerToken(ctx),
+        url: liveKitPublicUrl(),
+        apiKey: LIVEKIT_API_KEY,
+        apiSecret: LIVEKIT_API_SECRET,
+      }),
+    });
+  } catch (error) {
+    rethrowCall(error);
+  }
+  await next();
+});
+
+liveKitRouter.post('/calls/end', async (ctx, next) => {
+  const userInfo = await authedCaller(ctx);
+  try {
+    successHandler({
+      ctx,
+      data: await endDmCall({
+        userId: String(userInfo.id),
+        callId: String(ctx.request.body?.call_id ?? '').trim(),
+      }),
+    });
+  } catch (error) {
+    rethrowCall(error);
+  }
   await next();
 });
 

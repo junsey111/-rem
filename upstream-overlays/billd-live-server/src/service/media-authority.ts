@@ -10,8 +10,7 @@ import {
 import axios from '@/utils/request';
 import userModel from '@/model/user.model';
 import liveModel from '@/model/live.model';
-
-const managedRoom = /^(?:pk-)?[1-9][0-9]{0,19}$/;
+import { managedMediaRoom as managedRoom } from '@/service/media-room-name';
 export const mediaSessionHash = (token: string) =>
   crypto.createHash('sha256').update(token).digest('hex');
 

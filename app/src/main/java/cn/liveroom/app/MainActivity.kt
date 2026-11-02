@@ -125,6 +125,7 @@ private data class LiveRoom(
 )
 
 private data class OpenImConversation(val userId: String, val name: String, val latestMessage: String)
+private data class PendingDmCall(val peerId: String, val peerName: String?, val requestedMode: String, val callId: String?)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -365,6 +366,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var openImMessage by remember { mutableStateOf("") }
     var openImBusy by remember { mutableStateOf(false) }
     var openImReady by remember { mutableStateOf(false) }
+    var activeCall by remember { mutableStateOf<PendingDmCall?>(null) }
     val messageVersion by openImGateway.messageVersion.collectAsState()
     val messageConnection by openImGateway.connection.collectAsState()
     var history by remember { mutableStateOf<OpenImHistory?>(null) }
@@ -745,6 +747,28 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
+    fun beginCall(peerId: String, peerName: String?, requestedMode: String, callId: String?) {
+        if (activeCall != null) {
+            notify("请先挂断当前通话")
+            return
+        }
+        if (activeRoom != null) {
+            notify("请先离开直播间，再发起通话")
+            return
+        }
+        if (callId == null) {
+            if (peerId.isBlank() || peerId == session.id.toString() || peerId.toLongOrNull() == null) {
+                notify("请先选择对方账号")
+                return
+            }
+            if (requestedMode != "video" && requestedMode != "voice") return
+        } else if (!callId.matches(Regex("[0-9a-f]{32}"))) {
+            notify("通话号无效")
+            return
+        }
+        activeCall = PendingDmCall(peerId, peerName, requestedMode, callId)
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize().background(NightInk),
         containerColor = NightInk,
@@ -845,6 +869,12 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                         }
                     },
                     onConnect = { messageConnectionAttempt++ },
+                    onVideoCall = { beginCall(openImRecipient, openImRecipientName, "video", null) },
+                    onVoiceCall = { beginCall(openImRecipient, openImRecipientName, "voice", null) },
+                    onJoinCall = { beginCall(openImRecipient, openImRecipientName, "", it) },
+                    onAcceptCall = { invite ->
+                        beginCall(invite.fromUserId.toString(), openImRecipientName ?: "用户 ${invite.fromUserId}", invite.mode, invite.callId)
+                    },
                     onSend = {
                         val recipient = openImRecipient.trim()
                         val content = openImMessage.trim()
@@ -914,6 +944,29 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
+    activeCall?.let { call ->
+        DmCallSheet(
+            session = session,
+            api = api,
+            peerId = call.peerId,
+            peerName = call.peerName,
+            requestedMode = call.requestedMode,
+            callId = call.callId,
+            onSignal = { creds ->
+                // OpenIM hook: one C2C text on the existing conversation. Swap this send for a custom
+                // call message later; the media path still works if the callee joins with call_id.
+                if (!openImReady) false
+                else if (creds.signalTransport.isNotBlank() && creds.signalTransport != DM_CALL_SIGNAL_TRANSPORT) false
+                else {
+                    val peer = if (creds.callerId == session.id.toString()) creds.peerId else creds.callerId
+                    val text = creds.signalText.takeIf { parseDmCallInvite(it) != null }
+                        ?: dmCallInviteText(creds.callId, creds.mode, session.id)
+                    runCatching { openImGateway.sendText(peer, text) }.isSuccess
+                }
+            },
+            onDismiss = { activeCall = null },
+        )
+    }
     if (showPasswordChange) PasswordSheet(session.token, onDismiss = { showPasswordChange = false }, onChanged = onLogout)
     if (showCoverUpload) CoverUploadSheet(session,api,onDismiss={showCoverUpload=false;refreshKey++})
     if (showIdentity) IdentitySheet(session,api,onDismiss={showIdentity=false})
@@ -1346,6 +1399,10 @@ private fun MessagesScreen(
     onMessage: (String) -> Unit,
     onRefresh: () -> Unit,
     onConnect: () -> Unit,
+    onVideoCall: () -> Unit,
+    onVoiceCall: () -> Unit,
+    onJoinCall: (String) -> Unit,
+    onAcceptCall: (DmCallInvite) -> Unit,
     onSend: () -> Unit,
 ) {
     var composeOpen by remember { mutableStateOf(false) }
@@ -1394,6 +1451,14 @@ private fun MessagesScreen(
     if (composeOpen) ModalBottomSheet(onDismissRequest = { composeOpen = false }) {
         Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text((recipientName ?: recipient?.name)?.let { "发给 $it" } ?: "新消息", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            if (recipientId != ownUserId) DmCallActions(
+                canStart = recipientId.isNotBlank() && recipientId.toLongOrNull() != null,
+                incoming = history?.let { latestIncomingDmCall(it.messages, ownUserId) },
+                onVideo = onVideoCall,
+                onVoice = onVoiceCall,
+                onJoin = onJoinCall,
+                onAccept = onAcceptCall,
+            )
             if (enteringAccount) OutlinedTextField(
                 value = recipientId, onValueChange = onRecipientId, label = { Text("对方账号 ID") },
                 supportingText = { Text("可在对方的「我的」页面查看账号。") },
