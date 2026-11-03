@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -103,9 +104,13 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
 
 private val NightInk = Color(0xFFF7F8FA)
 private val NightSurface = Color.White
@@ -123,6 +128,14 @@ private data class LiveRoom(
     val creatorId: Long,
     val stream: String,
     val coverPath: String? = null,
+)
+
+private data class WatchGateUi(
+    val phase: WatchPhase,
+    val shownRemaining: Int,
+    val priceCoins: Long?,
+    val error: String?,
+    val busy: Boolean,
 )
 
 private data class OpenImConversation(val userId: String, val name: String, val latestMessage: String)
@@ -385,6 +398,12 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var rechargeOrders by remember { mutableStateOf(emptyList<RechargeOrder>()) }
     var rechargeOrdersError by remember { mutableStateOf<String?>(null) }
     var roomFeedback by remember { mutableStateOf<String?>(null) }
+    var playbackStream by remember(activeRoom?.stream) { mutableStateOf<String?>(null) }
+    var viewerGate by remember(activeRoom?.stream) {
+        mutableStateOf(if (activeRoom != null && activeRoom?.creatorId != session.id) WatchGateUi(WatchPhase.CHECKING, 0, null, null, false) else null)
+    }
+    val unlockStore = remember(session.id) { WatchUnlockStore(context, session.id) }
+    val watchCommands = remember(activeRoom?.stream) { Channel<WatchCommand>(capacity = 8) }
     val snackbar = remember { SnackbarHostState() }
     val notify: (String) -> Unit = { message ->
         if (activeRoom != null) roomFeedback = message
@@ -587,6 +606,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
+<<<<<<< HEAD
     val mediaRoute = liveMediaRoute(
         hasRoom = activeRoom != null,
         isHost = activeRoom?.creatorId == session.id,
@@ -596,8 +616,214 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         hostCohostSeat = hostCohostLiveKit,
     )
     LaunchedEffect(activeRoom?.stream, session.token, mediaRoute, cohostMode) {
+=======
+    LaunchedEffect(activeRoom?.stream, session.token) {
+        playbackStream = null
+        viewerGate = WatchGateUi(WatchPhase.CHECKING, 0, null, null, false)
+        val room = activeRoom
+        if (room == null) {
+            viewerGate = null
+            return@LaunchedEffect
+        }
+        if (room.creatorId == session.id) {
+            playbackStream = room.stream
+            viewerGate = null
+            return@LaunchedEffect
+        }
+        val liveId = room.stream.toLongOrNull()
+        if (liveId == null) {
+            viewerGate = WatchGateUi(WatchPhase.UNAVAILABLE, 0, null, "暂时无法确认是否需要付费观看", false)
+            return@LaunchedEffect
+        }
+        val watch = WatchSession { UUID.randomUUID().toString() }
+        var errorText: String? = null
+        var anchor = SystemClock.elapsedRealtime()
+        var consumed = 0
+        var lastDeliverFailed = false
+        var nextRetryAt = 0L
+        fun publish(busy: Boolean = false) {
+            val phase = watch.phase
+            playbackStream = if (phase.allowsPlayback() && activeRoom?.stream == room.stream) room.stream else null
+            viewerGate = WatchGateUi(phase, watch.shownRemaining, watch.access?.unlockPriceCoins, errorText, busy)
+            if (!phase.allowsPlayback()) {
+                activeRoomStatus = when (phase) {
+                    WatchPhase.PAYWALL -> "免费试看已结束"
+                    WatchPhase.SYNCING -> "正在核对观看时长"
+                    WatchPhase.CHECKING -> "正在确认观看权限"
+                    WatchPhase.UNAVAILABLE -> errorText ?: "无法确认付费观看状态"
+                    else -> activeRoomStatus
+                }
+            }
+        }
+        fun applyAccess(access: WatchAccess) {
+            watch.onAccess(access)
+            if (watch.phase == WatchPhase.OPEN) runCatching { unlockStore.clear(liveId) }
+            if (watch.phase == WatchPhase.PREVIEW) {
+                anchor = SystemClock.elapsedRealtime()
+                consumed = 0
+            }
+            lastDeliverFailed = false
+            errorText = null
+        }
+        suspend fun unlockNow() {
+            publish(busy = true)
+            try {
+                val existing = unlockStore.load(liveId)
+                val requestId = existing ?: UUID.randomUUID().toString()
+                if (existing == null) unlockStore.save(liveId, requestId)
+                val updated = try {
+                    api.watchUnlock(session.token, liveId, requestId)
+                } catch (error: PlatformHttpException) {
+                    throw error
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    // A 200 with an unusable body is not success. Re-read access before playing.
+                    api.watchAccess(session.token, liveId)
+                }
+                if (updated.status == WatchStatus.UNLOCKED || updated.status == WatchStatus.FREE) {
+                    runCatching { unlockStore.clear(liveId) }
+                    runCatching { wallet = api.wallet(session.token) }.onFailure { wallet = null }
+                    applyAccess(updated)
+                } else {
+                    watch.onAccess(updated)
+                    if (watch.phase == WatchPhase.PREVIEW) {
+                        anchor = SystemClock.elapsedRealtime()
+                        consumed = 0
+                    }
+                    errorText = if (watch.phase == WatchPhase.PAYWALL) "服务端尚未确认解锁，未继续播放" else null
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: PlatformHttpException) {
+                errorText = if (error.statusCode == 404) "解锁接口暂不可用，未确认扣款" else error.message ?: "解锁未完成，未继续播放"
+            } catch (error: IllegalStateException) {
+                errorText = error.message ?: "无法保存解锁请求，未继续播放"
+            } catch (_: Exception) {
+                errorText = "解锁结果未确认，请重试。重试使用同一单号，不会重复扣款。"
+            } finally {
+                publish()
+            }
+        }
+        suspend fun deliver(batch: HeartbeatBatch, startedAt: Long) {
+            val updated = api.watchHeartbeat(session.token, liveId, batch.requestId, batch.deltaSeconds)
+            watch.acknowledge(batch)
+            if (updated.status != WatchStatus.PREVIEW) watch.dropPending()
+            if (updated.status != WatchStatus.PREVIEW || !watch.hasUnsent()) {
+                applyAccess(updated)
+                if (watch.phase == WatchPhase.PREVIEW) anchor = startedAt
+            }
+            lastDeliverFailed = false
+            errorText = null
+        }
+        publish()
+        while (isActive && activeRoom?.stream == room.stream) {
+            when (watch.phase) {
+                WatchPhase.CHECKING, WatchPhase.UNAVAILABLE -> {
+                    if (watch.phase == WatchPhase.UNAVAILABLE) {
+                        if (watchCommands.receive() != WatchCommand.Retry) continue
+                    }
+                    errorText = null
+                    watch.resetToChecking()
+                    publish()
+                    try {
+                        applyAccess(api.watchAccess(session.token, liveId))
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: PlatformHttpException) {
+                        watch.onUnavailable()
+                        errorText = if (error.statusCode == 404) "付费观看暂不可用，请稍后重试" else error.message ?: "无法确认付费观看状态"
+                    } catch (_: Exception) {
+                        watch.onUnavailable()
+                        errorText = "无法确认付费观看状态，请稍后重试"
+                    }
+                    publish()
+                }
+                WatchPhase.PREVIEW -> {
+                    if (withTimeoutOrNull(1_000) { watchCommands.receive() } == WatchCommand.Retry) {
+                        watch.resetToChecking()
+                        continue
+                    }
+                    if (watch.phase != WatchPhase.PREVIEW) continue
+                    val elapsed = ((SystemClock.elapsedRealtime() - anchor) / 1000L).toInt()
+                    val ticks = previewTicksDue(elapsed, consumed, watch.shownRemaining)
+                    var created: HeartbeatBatch? = null
+                    repeat(ticks) {
+                        if (watch.phase == WatchPhase.PREVIEW) watch.onWatchedSecond()?.let { created = it }
+                    }
+                    consumed += ticks
+                    publish()
+                    val now = SystemClock.elapsedRealtime()
+                    val batch = created ?: watch.currentBatch()?.takeIf { lastDeliverFailed && now >= nextRetryAt }
+                    if (batch != null) {
+                        val started = SystemClock.elapsedRealtime()
+                        try {
+                            deliver(batch, started)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: PlatformHttpException) {
+                            lastDeliverFailed = true
+                            nextRetryAt = SystemClock.elapsedRealtime() + 3_000
+                            errorText = if (error.statusCode == 404) "观看时长接口暂不可用，画面已暂停" else "观看时长未能同步，画面已暂停"
+                        } catch (_: Exception) {
+                            lastDeliverFailed = true
+                            nextRetryAt = SystemClock.elapsedRealtime() + 3_000
+                            errorText = "观看时长未能同步，画面已暂停"
+                        }
+                        publish()
+                    }
+                }
+                WatchPhase.SYNCING -> {
+                    if (lastDeliverFailed) {
+                        val wait = (nextRetryAt - SystemClock.elapsedRealtime()).coerceAtLeast(1L)
+                        when (withTimeoutOrNull(wait) { watchCommands.receive() }) {
+                            WatchCommand.Unlock -> {
+                                unlockNow()
+                                continue
+                            }
+                            WatchCommand.Retry -> nextRetryAt = 0L
+                            null -> Unit
+                        }
+                        if (watch.phase != WatchPhase.SYNCING) continue
+                    }
+                    val batch = watch.currentBatch() ?: watch.pollNew(force = true)
+                    if (batch == null) {
+                        watch.resetToChecking()
+                        continue
+                    }
+                    val started = SystemClock.elapsedRealtime()
+                    try {
+                        deliver(batch, started)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: PlatformHttpException) {
+                        lastDeliverFailed = true
+                        nextRetryAt = SystemClock.elapsedRealtime() + 3_000
+                        errorText = if (error.statusCode == 404) "观看时长接口暂不可用，画面已暂停" else "观看时长未能同步，画面已暂停"
+                    } catch (_: Exception) {
+                        lastDeliverFailed = true
+                        nextRetryAt = SystemClock.elapsedRealtime() + 3_000
+                        errorText = "观看时长未能同步，画面已暂停"
+                    }
+                    publish()
+                }
+                WatchPhase.PAYWALL -> {
+                    when (watchCommands.receive()) {
+                        WatchCommand.Retry -> watch.resetToChecking()
+                        WatchCommand.Unlock -> unlockNow()
+                    }
+                }
+                WatchPhase.OPEN -> awaitCancellation()
+            }
+        }
+    }
+
+    LaunchedEffect(activeRoom?.stream, session.token, activeMatchId, cohostMode, playbackStream) {
+>>>>>>> origin/pr/2
         val room = activeRoom ?: return@LaunchedEffect
         roomFeedback = null
+        // LiveKit starts only after watch-access allows this room. A future SRS player must use the same gate.
+        if (playbackStream != room.stream) return@LaunchedEffect
         val liveSessionId = room.stream.toLongOrNull()
         if (liveSessionId == null) {
             activeRoomStatus = "暂时无法加入此直播间，请返回刷新"
@@ -643,6 +869,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
+<<<<<<< HEAD
     LaunchedEffect(activeRoom?.stream, session.id, activeMatchId, hostCohostLiveKit) {
         val room = activeRoom ?: return@LaunchedEffect
         if (!hostPublishesOrdinarySrs(room.creatorId == session.id, activeMatchId, hostCohostLiveKit)) return@LaunchedEffect
@@ -678,7 +905,11 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         activeRoom?.let { hostPublishesOrdinarySrs(it.creatorId == session.id, activeMatchId, hostCohostLiveKit) } == true,
     )
     LaunchedEffect(roomGateway) {
+=======
+    LaunchedEffect(roomGateway, playbackStream) {
+>>>>>>> origin/pr/2
         val gateway = roomGateway ?: return@LaunchedEffect
+        if (playbackStream == null) return@LaunchedEffect
         gateway.connection.collect { state ->
             if (ordinaryHostIngest) return@collect
             when (state) {
@@ -1014,11 +1245,17 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             RoomSheet(
                 room = room,
                 gateway = roomGateway,
+<<<<<<< HEAD
                 playbackUrl = if (mediaRoute == LiveMediaRoute.VIEWER_HLS) {
                     srsPlaybackUrl(BuildConfig.SRS_PLAYBACK_URL, room.stream)
                 } else null,
                 onPlaybackStatus = { activeRoomStatus = it },
                 ingest = srsIngest,
+=======
+                watchGate = if (room.creatorId == session.id) null else viewerGate ?: WatchGateUi(WatchPhase.CHECKING, 0, null, null, false),
+                onUnlock = { watchCommands.trySend(WatchCommand.Unlock) },
+                onRetryWatch = { watchCommands.trySend(WatchCommand.Retry) },
+>>>>>>> origin/pr/2
                 status = activeRoomStatus,
                 feedback = roomFeedback,
                 wallet = wallet,
@@ -1201,6 +1438,7 @@ private fun RoomTile(room: LiveRoom, onClick: () -> Unit) {
 }
 
 @Composable
+<<<<<<< HEAD
 private fun SrsHostStage(ingest: SrsIngestPublisher, gateway: LiveKitRoomGateway?, room: LiveRoom) {
     Box(Modifier.fillMaxSize()) {
         SrsHostPreview(ingest, Modifier.fillMaxSize())
@@ -1218,6 +1456,52 @@ private fun SrsHostStage(ingest: SrsIngestPublisher, gateway: LiveKitRoomGateway
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     )
                 }
+=======
+private fun WatchBlockedOverlay(gate: WatchGateUi, wallet: Wallet?, onUnlock: () -> Unit, onRetry: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.82f)).padding(top = 72.dp), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            when (gate.phase) {
+                WatchPhase.CHECKING -> {
+                    CircularProgressIndicator(color = Color.White)
+                    Text("正在确认观看权限", color = Color.White)
+                }
+                WatchPhase.SYNCING -> {
+                    val price = gate.priceCoins
+                    val short = price != null && wallet != null && wallet.balance < price
+                    Text(if (gate.error == null) "正在核对观看时长" else "免费试看已结束", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(gate.error ?: "画面已暂停。服务器确认后才会继续播放或要求解锁。", color = Color(0xFFDDDEE2))
+                    if (price != null) Text("解锁价格 $price 金币", color = Color.White)
+                    if (gate.error != null && short) Text("余额不足，请到「我的」充值后再解锁", color = Color(0xFFFFB4AB))
+                    if (gate.error != null) {
+                        Button(onClick = onUnlock, enabled = !gate.busy && !short, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (gate.busy) "正在解锁…" else if (price != null && price > 0) "支付 $price 金币解锁" else "解锁继续观看")
+                        }
+                        TextButton(onClick = onRetry, enabled = !gate.busy) { Text("重试核对") }
+                    }
+                }
+                WatchPhase.UNAVAILABLE -> {
+                    Text("暂时无法确认是否需要付费", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(gate.error ?: "请稍后重试", color = Color(0xFFDDDEE2))
+                    Button(onClick = onRetry, enabled = !gate.busy, modifier = Modifier.fillMaxWidth()) { Text("重试") }
+                }
+                WatchPhase.PAYWALL -> {
+                    val price = gate.priceCoins
+                    val short = price != null && wallet != null && wallet.balance < price
+                    Text("免费试看已结束", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    if (price != null) Text("解锁价格 $price 金币", color = Color.White) else Text("解锁后才能继续观看", color = Color(0xFFDDDEE2))
+                    Text(wallet?.let { "余额 ${it.balance} 金币" } ?: "余额暂不可用，解锁结果以服务器为准", color = Color(0xFFDDDEE2), style = MaterialTheme.typography.bodySmall)
+                    if (short) Text("余额不足，请到「我的」充值后再解锁", color = Color(0xFFFFB4AB))
+                    gate.error?.let { Text(it, color = Color(0xFFFFB4AB)) }
+                    Button(onClick = onUnlock, enabled = !gate.busy && !short, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (gate.busy) "正在解锁…" else if (price != null && price > 0) "支付 $price 金币解锁" else "解锁继续观看")
+                    }
+                }
+                WatchPhase.PREVIEW, WatchPhase.OPEN -> Unit
+>>>>>>> origin/pr/2
             }
         }
     }
@@ -1228,9 +1512,15 @@ private fun SrsHostStage(ingest: SrsIngestPublisher, gateway: LiveKitRoomGateway
 private fun RoomSheet(
     room: LiveRoom,
     gateway: LiveKitRoomGateway?,
+<<<<<<< HEAD
     playbackUrl: String?,
     onPlaybackStatus: (String) -> Unit,
     ingest: SrsIngestPublisher?,
+=======
+    watchGate: WatchGateUi?,
+    onUnlock: () -> Unit,
+    onRetryWatch: () -> Unit,
+>>>>>>> origin/pr/2
     status: String,
     feedback: String?,
     wallet: Wallet?,
@@ -1260,13 +1550,19 @@ private fun RoomSheet(
     var confirmEndMatch by remember { mutableStateOf(false) }
     val selectedGift = gifts.firstOrNull { it.id == selectedGiftId }
     val requestClose = { if (isHost) confirmClose = true else onClose() }
+    val gate = watchGate
+    val watchBlocked = gate != null && !gate.phase.allowsPlayback()
     androidx.activity.compose.BackHandler { requestClose() }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
+<<<<<<< HEAD
         if (playbackUrl != null) {
             SrsPlaybackView(playbackUrl, onPlaybackStatus, Modifier.fillMaxSize())
         } else if (ingest != null && isHost && matchId == null) {
             SrsHostStage(ingest, gateway, room)
         } else if (gateway != null) {
+=======
+        if (gateway != null && !watchBlocked) {
+>>>>>>> origin/pr/2
             val videoIds by gateway.videoIdentities.collectAsState()
             val opponentId = scores.firstOrNull { it.creatorId != room.creatorId }?.creatorId
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
@@ -1285,6 +1581,7 @@ private fun RoomSheet(
                 }
             }
         }
+        if (gate != null && watchBlocked) WatchBlockedOverlay(gate, wallet, onUnlock, onRetryWatch)
         Column(
             Modifier.align(Alignment.TopCenter).fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)))
@@ -1301,6 +1598,15 @@ private fun RoomSheet(
                     Icon(Icons.Default.Close, contentDescription = if (isHost) "结束直播" else "离开直播间", tint = Color.White)
                 }
             }
+            if (watchGate?.phase == WatchPhase.PREVIEW) {
+                Text(
+                    "免费试看还剩 ${watchGate.shownRemaining} 秒",
+                    color = Color(0xFFFFC46B),
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(start = 8.dp, top = 8.dp),
+                )
+                watchGate.error?.let { Text(it, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 8.dp, top = 4.dp)) }
+            }
             if (matchId != null) {
                 Text("PK 进行中", color = Color.White, modifier = Modifier.padding(8.dp))
                 scores.forEach { score ->
@@ -1308,7 +1614,7 @@ private fun RoomSheet(
                 }
             }
         }
-        Column(
+        if (!watchBlocked) Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))))
                 .windowInsetsPadding(WindowInsets.safeDrawing).padding(20.dp),

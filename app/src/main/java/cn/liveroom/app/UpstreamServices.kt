@@ -284,6 +284,23 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         request("/revenue/lives/$liveSessionId/close", "POST", token, JSONObject())
     }
 
+    suspend fun watchAccess(token: String, liveId: Long): WatchAccess = withContext(Dispatchers.IO) {
+        parseWatchAccess(request("/revenue/lives/$liveId/watch-access", token = token))
+    }
+
+    suspend fun watchHeartbeat(token: String, liveId: Long, requestId: String, deltaSeconds: Int): WatchAccess = withContext(Dispatchers.IO) {
+        require(requestId.isNotBlank()) { "观看心跳单号无效" }
+        require(deltaSeconds in 1..30) { "观看心跳时长无效" }
+        parseWatchAccess(request("/revenue/lives/$liveId/watch-heartbeat", "POST", token,
+            JSONObject().put("request_id", requestId).put("delta_seconds", deltaSeconds)))
+    }
+
+    suspend fun watchUnlock(token: String, liveId: Long, requestId: String): WatchAccess = withContext(Dispatchers.IO) {
+        require(requestId.isNotBlank()) { "解锁单号无效" }
+        parseWatchAccess(request("/revenue/lives/$liveId/watch-unlock", "POST", token,
+            JSONObject().put("request_id", requestId)))
+    }
+
     suspend fun liveKitToken(token: String, liveSessionId: Long, matchId: Long? = null): LiveKitCredentials = withContext(Dispatchers.IO) {
         val data = request("/livekit/token", "POST", token, JSONObject().put("live_session_id", liveSessionId).apply { if (matchId != null) put("match_id", matchId) })
         LiveKitCredentials(data.optString("url"), data.optString("token")).also {
