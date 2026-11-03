@@ -86,6 +86,13 @@
         {{ error }}
       </p>
       <p
+        v-if="notice"
+        role="status"
+        class="save-notice"
+      >
+        {{ notice }}
+      </p>
+      <p
         v-if="loading"
         role="status"
       >
@@ -232,6 +239,138 @@
             </tbody>
           </table>
         </div>
+      </section>
+      <section
+        v-else-if="active === 'referrals'"
+        class="page"
+      >
+        <form
+          class="settings"
+          @submit.prevent="saveReferrals"
+        >
+          <h2>邀请奖励规则</h2>
+          <p>
+            当前保存状态：{{
+              referral.configured ? '已配置' : '使用服务默认规则'
+            }}
+            · 版本 {{ referral.version }}
+          </p>
+          <label class="toggle"
+            ><input
+              v-model="referral.enabled"
+              type="checkbox"
+            />启用邀请奖励</label
+          >
+          <div class="form-grid">
+            <label
+              >邀请人奖励（金币）<input
+                v-model.number="referral.inviter_coins"
+                type="number"
+                min="0"
+                max="100000"
+                step="1"
+                required
+            /></label>
+            <label
+              >受邀人奖励（金币）<input
+                v-model.number="referral.invitee_coins"
+                type="number"
+                min="0"
+                max="100000"
+                step="1"
+                required
+            /></label>
+          </div>
+          <p>
+            保存后立即影响新的邀请兑换。已到账奖励保留原值；保存规则不会发放金币。
+          </p>
+          <label
+            >修改原因<input
+              v-model="referral.reason"
+              required
+              maxlength="200"
+          /></label>
+          <button
+            class="primary"
+            :disabled="saving || loading || !referralLoaded || !!pendingCommand"
+          >
+            保存邀请规则
+          </button>
+        </form>
+      </section>
+      <section
+        v-else-if="active === 'business-actions'"
+        class="page"
+      >
+        <p>
+          记录邀请奖励与直播收费的设置变更，保留操作人、原因和保存时的规则。
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>操作时间 / 单号</th>
+                <th>设置对象</th>
+                <th>保存结果</th>
+                <th>操作人 / 原因</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="row in rows"
+                :key="row.action_id"
+              >
+                <td>
+                  {{ formatDate(row.created_at)
+                  }}<small>{{ row.request_id }}</small>
+                </td>
+                <td>
+                  {{
+                    row.kind === 'REFERRALS'
+                      ? '邀请奖励'
+                      : '直播收费 · ' + row.target_id
+                  }}
+                </td>
+                <td>
+                  <template v-if="row.kind === 'REFERRALS'"
+                    >{{ row.settings.enabled ? '已启用' : '已关闭'
+                    }}<small
+                      >邀请人 {{ row.settings.inviter_coins }} / 受邀人
+                      {{ row.settings.invitee_coins }} 金币</small
+                    ></template
+                  ><template v-else
+                    >{{ row.settings.unlock_price_coins }} 金币</template
+                  ><small>版本 {{ row.settings.version }}</small>
+                </td>
+                <td>
+                  {{ row.operator_id }}<small>{{ row.reason }}</small>
+                </td>
+              </tr>
+              <tr v-if="!rows.length">
+                <td
+                  colspan="4"
+                  class="empty"
+                >
+                  {{
+                    error
+                      ? '加载失败，请刷新'
+                      : loading
+                      ? '正在加载…'
+                      : '暂无设置变更'
+                  }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <button
+          v-if="nextCursor"
+          class="outline"
+          :disabled="loading"
+          @click="loadMore"
+        >
+          加载更多
+        </button>
       </section>
       <section
         v-else-if="active === 'creators' || active === 'reports'"
@@ -542,6 +681,46 @@
         v-else-if="active === 'lives'"
         class="page"
       >
+        <form
+          v-if="priceEditor"
+          class="settings"
+          @submit.prevent="saveWatchPrice"
+        >
+          <h2>直播 {{ priceEditor.live_session_id }} · 收费设置</h2>
+          <p>
+            版本 {{ priceEditor.version }}。0
+            金币表示免费；修改不会撤销已购买的观看权益。
+          </p>
+          <label
+            >解锁价格（金币）<input
+              v-model.number="priceEditor.unlock_price_coins"
+              type="number"
+              min="0"
+              max="1000000"
+              step="1"
+              required
+          /></label>
+          <label
+            >修改原因<input
+              v-model="priceEditor.reason"
+              required
+              maxlength="200"
+          /></label>
+          <button
+            class="primary"
+            :disabled="saving || loading || !!pendingCommand"
+          >
+            保存直播价格
+          </button>
+          <button
+            type="button"
+            class="ghost"
+            :disabled="saving"
+            @click="priceEditor = null"
+          >
+            取消
+          </button>
+        </form>
         <div class="section-heading">
           <div>
             <h2>直播管理</h2>
@@ -567,6 +746,13 @@
                 <td>{{ live.creator_id }}</td>
                 <td>{{ formatDate(live.started_at) }}</td>
                 <td>
+                  <button
+                    class="outline"
+                    :disabled="loading || saving || !!pendingCommand"
+                    @click="editWatchPrice(live.live_session_id)"
+                  >
+                    收费设置
+                  </button>
                   <button
                     class="danger-link"
                     @click="closeLive(live.live_session_id)"
@@ -1024,6 +1210,17 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import axios from 'axios';
 const apiBase = '/backend';
+const notice = ref('');
+const referralLoaded = ref(false);
+const referral = reactive({
+  version: 0,
+  configured: false,
+  enabled: false,
+  inviter_coins: 0,
+  invitee_coins: 0,
+  reason: '',
+});
+const priceEditor = ref<any>(null);
 const admission = reactive({ version: 0, require_approval: false, reason: '' });
 const integrations = reactive({
   payments: { enabled: false },
@@ -1046,6 +1243,8 @@ const nav = [
   { key: 'lives', label: '直播管理' },
   { key: 'orders', label: '充值订单' },
   { key: 'gifts', label: '礼物目录' },
+  { key: 'referrals', label: '邀请奖励' },
+  { key: 'business-actions', label: '业务设置记录' },
   { key: 'creators', label: '主播审核' },
   { key: 'reports', label: '举报处理' },
   { key: 'chat', label: '公屏管理' },
@@ -1185,7 +1384,18 @@ async function refresh() {
   nextCursor.value = '';
   const view = active.value;
   try {
-    if (view === 'integrations') {
+    if (view === 'referrals') {
+      referralLoaded.value = false;
+      const result = await request('/operations/referrals/settings');
+      if (active.value !== view) return;
+      Object.assign(referral, result);
+      referralLoaded.value = true;
+    } else if (view === 'business-actions') {
+      const result = await request('/operations/business-actions');
+      if (active.value !== view) return;
+      rows.value = result.actions;
+      nextCursor.value = result.next_before_id;
+    } else if (view === 'integrations') {
       Object.assign(integrations, await request('/operations/integrations'));
     } else if (view === 'overview') {
       const [summary, rooms] = await Promise.all([
@@ -1268,7 +1478,8 @@ async function loadMore() {
       { params: { before_id: nextCursor.value } }
     );
     if (view === 'lives') lives.value.push(...result.lives);
-    else if (view === 'actions') rows.value.push(...result.actions);
+    else if (view === 'actions' || view === 'business-actions')
+      rows.value.push(...result.actions);
     else if (view === 'creators' || view === 'reports')
       rows.value.push(...result.reviews);
     else financeRows.value.push(...result[view]);
@@ -1385,6 +1596,7 @@ async function sendCommand() {
   if (!pendingCommand.value || saving.value) return;
   saving.value = true;
   error.value = '';
+  notice.value = '';
   try {
     const command = pendingCommand.value;
     await request(command.path, { method: command.method, data: command.data });
@@ -1393,6 +1605,9 @@ async function sendCommand() {
     review.value = null;
     settings.reason = '';
     giftEditor.value = null;
+    referral.reason = '';
+    priceEditor.value = null;
+    notice.value = '操作已保存';
     await refresh();
   } catch (e: any) {
     showError(e);
@@ -1417,6 +1632,45 @@ async function saveSettings() {
       expected_version: settings.version,
       reason: settings.reason,
       rules: JSON.parse(JSON.stringify(settings.rules)),
+    },
+  });
+}
+async function saveReferrals() {
+  await commitCommand({
+    path: '/operations/referrals/settings',
+    method: 'PUT',
+    data: {
+      request_id: crypto.randomUUID(),
+      expected_version: referral.version,
+      enabled: referral.enabled,
+      inviter_coins: referral.inviter_coins,
+      invitee_coins: referral.invitee_coins,
+      reason: referral.reason,
+    },
+  });
+}
+async function editWatchPrice(id: string) {
+  loading.value = true;
+  error.value = '';
+  try {
+    const result = await request(`/operations/lives/${id}/watch-price`);
+    if (active.value === 'lives') priceEditor.value = { ...result, reason: '' };
+  } catch (e) {
+    showError(e);
+  } finally {
+    loading.value = false;
+  }
+}
+async function saveWatchPrice() {
+  const p = priceEditor.value;
+  await commitCommand({
+    path: `/operations/lives/${p.live_session_id}/watch-price`,
+    method: 'PUT',
+    data: {
+      request_id: crypto.randomUUID(),
+      expected_version: p.version,
+      unlock_price_coins: p.unlock_price_coins,
+      reason: p.reason,
     },
   });
 }
@@ -1455,6 +1709,8 @@ async function saveGift() {
   });
 }
 watch(active, () => {
+  notice.value = '';
+  priceEditor.value = null;
   review.value = null;
   financeRows.value = [];
   rows.value = [];
@@ -1475,6 +1731,12 @@ onMounted(async () => {
 });
 </script>
 <style lang="scss" scoped>
+.save-notice {
+  color: #146c43;
+  background: #edf8f1;
+  padding: 12px 16px;
+  border-radius: 6px;
+}
 .admin-shell {
   min-height: 100vh;
   background: #f6f8fb;

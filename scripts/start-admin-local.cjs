@@ -66,7 +66,7 @@ process.once('SIGTERM',()=>{stop().finally(()=>process.exit());});
   app.use(dependency('@/app/app.middleware').catchErrorMiddle);
   app.use(dependency('koa-bodyparser')({jsonLimit:'32kb'}));
   app.use(dependency('@/app/verify.middleware').apiBeforeVerify);
-  for(const file of ['user','revenue','operations','finance','account-moderation','room-chat','cohost','cover','live','provider','identity']){
+  for(const file of ['user','revenue','operations','business-settings','finance','account-moderation','room-chat','cohost','cover','live','provider','identity']){
     const router=dependency(`@/router/${file}.router`).default;app.use(router.routes()).use(router.allowedMethods());
   }
   server=app.listen(24300,'127.0.0.1');

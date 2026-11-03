@@ -26,9 +26,9 @@ const (
 // ReferralPolicy is the process config for invite rewards.
 // Coins outside 0..100000 disable the feature so a bad deploy cannot mint them.
 type ReferralPolicy struct {
-	Enabled      bool
-	InviterCoins int64
-	InviteeCoins int64
+	Enabled      bool  `json:"enabled"`
+	InviterCoins int64 `json:"inviter_coins"`
+	InviteeCoins int64 `json:"invitee_coins"`
 }
 
 func (p ReferralPolicy) usable() bool {
@@ -123,6 +123,11 @@ var errReferralBusy = errors.New("referral redeem busy")
 // ReferralProfile returns the caller's invite code when the feature is on.
 // rewarded_coins is what this user earned as an inviter, not as an invitee.
 func (s *Service) ReferralProfile(ctx context.Context, userID uint64, policy ReferralPolicy) (ReferralProfile, error) {
+	settings, err := s.ReadReferralSettings(ctx, policy)
+	if err != nil {
+		return ReferralProfile{}, err
+	}
+	policy = settings.ReferralPolicy
 	if userID == 0 || !policy.usable() {
 		return ReferralProfile{Enabled: false}, nil
 	}
@@ -235,6 +240,16 @@ func (s *Service) redeemReferralOnce(ctx context.Context, inviteeID uint64, requ
 			return ReferralRedeemResponse{}, nil, err
 		}
 		return referralResponse(stored, "replayed"), nil, nil
+	}
+	// Shared row lock lets redemptions run together but serializes an operator's
+	// policy change with committed rewards. Replays above keep their old receipt.
+	var configured bool
+	var storedPolicy ReferralPolicy
+	if err = tx.QueryRowContext(ctx, `SELECT configured,enabled,inviter_coins,invitee_coins FROM referral_settings WHERE singleton=1 FOR SHARE`).Scan(&configured, &storedPolicy.Enabled, &storedPolicy.InviterCoins, &storedPolicy.InviteeCoins); err != nil {
+		return ReferralRedeemResponse{}, nil, err
+	}
+	if configured {
+		policy = storedPolicy
 	}
 	if !policy.usable() {
 		return ReferralRedeemResponse{}, &AppError{HTTPStatus: 403, Code: "REFERRALS_DISABLED", Message: "referral rewards are disabled"}, nil
@@ -434,4 +449,20 @@ func nullableTxID(id uint64) any {
 		return nil
 	}
 	return id
+}
+
+// Env policy remains a migration fallback until an operator explicitly saves rules.
+type ReferralSettings struct {
+	Version    uint64 `json:"version"`
+	Configured bool   `json:"configured"`
+	ReferralPolicy
+}
+
+func (s *Service) ReadReferralSettings(ctx context.Context, fallback ReferralPolicy) (ReferralSettings, error) {
+	var settings ReferralSettings
+	err := s.db.QueryRowContext(ctx, `SELECT version,configured,enabled,inviter_coins,invitee_coins FROM referral_settings WHERE singleton=1`).Scan(&settings.Version, &settings.Configured, &settings.Enabled, &settings.InviterCoins, &settings.InviteeCoins)
+	if !settings.Configured {
+		settings.ReferralPolicy = fallback
+	}
+	return settings, err
 }

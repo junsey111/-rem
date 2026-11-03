@@ -7,6 +7,7 @@ import type { RouteRecordRaw } from 'vue-router';
 // 默认路由
 export const defaultRoutes: RouteRecordRaw[] = [
   { path: '/', component: () => import('@/views/admin/index.vue') },
+  { path: '/admin', component: () => import('@/views/admin/index.vue') },
   { path: '/console', component: () => import('@/views/admin/index.vue') },
   { path: '/admin/users', component: () => import('@/views/admin/index.vue') },
   {

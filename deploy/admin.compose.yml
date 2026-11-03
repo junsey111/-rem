@@ -1,0 +1,11 @@
+services:
+  admin-web:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    volumes:
+      - ./third_party/billd-live/dist:/usr/share/nginx/html:ro
+      - ./deploy/admin-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${ADMIN_WEB_PORT:-18090}:8080"
+    depends_on:
+      - billd-live-server

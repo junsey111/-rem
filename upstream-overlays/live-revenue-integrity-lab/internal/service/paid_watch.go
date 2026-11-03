@@ -154,8 +154,8 @@ func (s *Service) SetWatchPrice(ctx context.Context, userID, liveID uint64, pric
 		return &AppError{HTTPStatus: 409, Code: "LIVE_SESSION_CLOSED", Message: "直播已结束，不能修改观看价格"}
 	}
 	if _, err = tx.ExecContext(ctx, `
-		INSERT INTO live_watch_prices (live_session_id, unlock_price_coins) VALUES (?, ?)
-		ON DUPLICATE KEY UPDATE unlock_price_coins=VALUES(unlock_price_coins)
+		INSERT INTO live_watch_prices (live_session_id, unlock_price_coins, version) VALUES (?, ?, 1)
+		ON DUPLICATE KEY UPDATE unlock_price_coins=VALUES(unlock_price_coins),version=version+1
 	`, liveID, price); err != nil {
 		return err
 	}

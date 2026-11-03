@@ -77,6 +77,7 @@ func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentS
 	mux.HandleFunc("/v1/users/me/creator-applications", s.requireAuth(s.wrap("creator_applications", s.handleReviews)))
 	mux.HandleFunc("/v1/users/me/reports", s.requireAuth(s.wrap("reports", s.handleReviews)))
 	mux.HandleFunc("/v1/cohosts/", s.requireAuth(s.wrap("cohosts", s.handleCohost)))
+	mux.HandleFunc("/v1/internal/business/", s.requireInternalKey(s.wrap("business_settings", s.handleBusinessSettings)))
 	mux.HandleFunc("/v1/internal/admission", s.requireInternalKey(s.wrap("admission", s.handleAdmission)))
 	mux.HandleFunc("/v1/wallets/me", s.requireAuth(s.wrap("wallet_balance", s.handleWalletBalance)))
 	mux.HandleFunc("/v1/users/me/profile", s.requireAuth(s.wrap("user_profile", s.handleUserProfile)))
