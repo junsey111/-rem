@@ -344,6 +344,96 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         }finally{connection.disconnect()}
     }
 
+    suspend fun openImSupport(token: String): ChatRecipient = withContext(Dispatchers.IO) {
+        val data = request(SUPPORT_CHAT_PATH, token = token)
+        ChatRecipient(data.getString("user_id"), data.getString("name"))
+    }
+
+    suspend fun sendDmGift(token: String, recipientId: String, giftId: String, requestId: String): JSONObject = withContext(Dispatchers.IO) {
+        request("/openim/dm-gifts", "POST", token, JSONObject()
+            .put("request_id", requestId).put("recipient_id", recipientId).put("gift_id", giftId).put("quantity", 1))
+    }
+
+    suspend fun verifyDmGift(token: String, requestId: String): JSONObject = withContext(Dispatchers.IO) {
+        request("/openim/dm-gifts/${URLEncoder.encode(requestId, "UTF-8")}", token = token)
+    }
+
+    suspend fun uploadDmVideo(token: String, recipientId: String, requestId: String, title: String, priceCoins: Int, durationSec: Int, bytes: ByteArray): JSONObject = withContext(Dispatchers.IO) {
+        require(bytes.size in 1..(12 * 1024 * 1024)) { "视频不能超过 12MB" }
+        val meta = JSONObject().put("request_id", requestId).put("recipient_id", recipientId).put("title", title)
+            .put("price_coins", priceCoins).put("duration_sec", durationSec)
+        val connection = URL("${baseUrl.trimEnd('/')}/openim/dm-videos").openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "POST"
+            connection.connectTimeout = 8_000
+            connection.readTimeout = 30_000
+            connection.doOutput = true
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.setRequestProperty("Content-Type", "application/octet-stream")
+            connection.setRequestProperty("X-Dm-Video", android.util.Base64.encodeToString(meta.toString().toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP))
+            connection.outputStream.use { it.write(bytes) }
+            val status = connection.responseCode
+            val raw = (if (status in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val root = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+            if (status !in 200..299) {
+                val message = root.optString("message").ifBlank { "上传失败" }
+                if (root.optString("settlement") == "UNAVAILABLE") throw SettlementUnavailableException(message)
+                throw PlatformHttpException(status, message)
+            }
+            root.getJSONObject("data")
+        } finally { connection.disconnect() }
+    }
+
+    suspend fun dmVideo(token: String, videoId: String): JSONObject = withContext(Dispatchers.IO) {
+        request("/openim/dm-videos/${URLEncoder.encode(videoId, "UTF-8")}", token = token)
+    }
+
+    suspend fun unlockDmVideo(token: String, videoId: String, requestId: String): JSONObject = withContext(Dispatchers.IO) {
+        request("/openim/dm-videos/${URLEncoder.encode(videoId, "UTF-8")}/unlock", "POST", token, JSONObject().put("request_id", requestId))
+    }
+
+    suspend fun downloadDmVideo(token: String, videoId: String, dest: java.io.File) = withContext(Dispatchers.IO) {
+        require(videoId.matches(Regex("^[0-9a-fA-F-]{36}$"))) { "视频不存在" }
+        val connection = URL("${baseUrl.trimEnd('/')}/openim/dm-videos/${URLEncoder.encode(videoId, "UTF-8")}/media").openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 8_000
+            connection.readTimeout = 30_000
+            connection.instanceFollowRedirects = false
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                val raw = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                val root = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+                val message = root.optString("message").ifBlank { "暂时无法播放" }
+                if (root.optString("settlement") == "LOCKED") throw PlatformHttpException(status, message)
+                if (root.optString("settlement") == "UNAVAILABLE") throw SettlementUnavailableException(message)
+                throw PlatformHttpException(status, message)
+            }
+            val type = connection.contentType.orEmpty()
+            require(type.startsWith("video/")) { "视频格式无法播放" }
+            dest.parentFile?.mkdirs()
+            val partial = java.io.File(dest.parentFile, dest.name + ".partial")
+            connection.inputStream.use { input ->
+                partial.outputStream().use { output ->
+                    val buffer = ByteArray(8192)
+                    var total = 0
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        total += n
+                        require(total <= 12 * 1024 * 1024) { "视频不能超过 12MB" }
+                        output.write(buffer, 0, n)
+                    }
+                }
+            }
+            if (!partial.renameTo(dest)) {
+                partial.copyTo(dest, overwrite = true)
+                partial.delete()
+            }
+        } finally { connection.disconnect() }
+    }
+
     suspend fun openImSession(token: String): OpenImCredentials = withContext(Dispatchers.IO) {
         val data = request("/openim/session", "POST", token, JSONObject())
         OpenImCredentials(
@@ -380,6 +470,7 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
             if (status !in 200..299) {
                 val message = root.optString("message").ifBlank { root.optString("msg") }.ifBlank { "HTTP $status" }
                 if (root.optString("gift_outcome") == "REJECTED") throw GiftRejectedException(message)
+                if (root.optString("settlement") == "UNAVAILABLE") throw SettlementUnavailableException(message)
                 if (status in listOf(400, 404) && root.optString("moderation_outcome") == "REJECTED") throw ModerationRejectedException(message)
                 throw PlatformHttpException(status, message)
             }

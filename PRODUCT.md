@@ -26,6 +26,8 @@ An Android live-streaming app for watching rooms, interacting with streamers, an
 
 The supplied handwritten brief calls for streamer and room management, user/streamer levels, gifts and recharge, streamer revenue, daily/monthly rankings, operations management, single- and dual-host PK, video/voice interaction, and private messages. Individual handwritten items that cannot be read confidently remain undecided.
 
+Private messages cover text, a gift receipt, and a free or paid video attachment. Gift charges and paid-video unlocks belong to the Revenue ledger behind Billd. The app shows those custom messages and does not keep its own balance. Live 1:1 calls stay with the media stack. Customer service is a conversation with the configured support account when that account is set.
+
 The app is expected to use open-source media and messaging components. Production credentials, payment processing, and deployment endpoints have not been supplied.
 
 ## Evidence on Hand

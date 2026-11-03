@@ -57,6 +57,14 @@ services:
       OPENIM_ADMIN_USER_ID: ${OPENIM_ADMIN_USER_ID:-imAdmin}
       OPENIM_PLATFORM_ID: ${OPENIM_PLATFORM_ID:-1}
       OPENIM_WS_URL: ${OPENIM_WS_URL:-ws://10.0.2.2:10001}
+      OPENIM_SUPPORT_USER_ID: ${OPENIM_SUPPORT_USER_ID:-}
+      OPENIM_SUPPORT_NICKNAME: ${OPENIM_SUPPORT_NICKNAME:-客服}
+      OPENIM_DM_MEDIA_DIR: /var/lib/billd/openim-dm-video
+      REVENUE_DM_GIFTS_PATH: ${REVENUE_DM_GIFTS_PATH:-/v1/dm/gifts}
+      REVENUE_DM_VIDEO_UNLOCK_PATH: ${REVENUE_DM_VIDEO_UNLOCK_PATH:-/v1/dm/video-unlocks}
+      REVENUE_DM_VIDEO_ACCESS_PATH: ${REVENUE_DM_VIDEO_ACCESS_PATH:-/v1/dm/videos}
+    volumes:
+      - billd-dm-video:/var/lib/billd/openim-dm-video
     depends_on:
       mysql:
         condition: service_healthy
@@ -95,6 +103,7 @@ services:
           - livekit
 volumes:
   billd-mysql:
+  billd-dm-video:
 networks:
   default:
     name: live_backend

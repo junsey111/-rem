@@ -74,11 +74,25 @@ class OpenImGateway(private val context: Context) {
         awaitSend { callback -> Open_im_sdk.sendMessage(callback, operationId, message, recipientId, "", "", false) }
     }
 
-    suspend fun history(recipientId: String, before: String = ""): OpenImHistory = withContext(Dispatchers.IO) {
+    /** operationID, data, extension, description — same order as the SDK binding used for text. */
+    suspend fun sendCustom(recipientId: String, data: String, extension: String, description: String): String = withContext(Dispatchers.IO) {
+        val operationId = "android-${UUID.randomUUID()}"
+        val message = Open_im_sdk.createCustomMessage(operationId, data, extension, description)
+        awaitSend { callback -> Open_im_sdk.sendMessage(callback, operationId, message, recipientId, "", "", false) }
+    }
+
+    /** C2C conversation for an existing OpenIM user. Does not log in or send a message. */
+    suspend fun ensureDirectConversation(recipientId: String): String = withContext(Dispatchers.IO) {
+        check(recipientId.isNotBlank()) { "对方账号无效" }
+        check(_connection.value == MessageConnection.CONNECTED) { "消息暂未连接，请稍后重试" }
         val conversation = JSONObject(awaitBase { callback ->
             Open_im_sdk.getOneConversation(callback, "android-${UUID.randomUUID()}", 1, recipientId)
         })
-        val conversationId = conversation.getString("conversationID")
+        conversation.getString("conversationID")
+    }
+
+    suspend fun history(recipientId: String, before: String = ""): OpenImHistory = withContext(Dispatchers.IO) {
+        val conversationId = ensureDirectConversation(recipientId)
         val options = JSONObject().put("conversationID", conversationId).put("startClientMsgID", before).put("count", 30).put("viewType", 0)
         val result = JSONObject(awaitBase { callback ->
             Open_im_sdk.getAdvancedHistoryMessageList(callback, "android-${UUID.randomUUID()}", options.toString())
@@ -86,7 +100,7 @@ class OpenImGateway(private val context: Context) {
         check(result.optInt("errCode") == 0) { result.optString("errMsg", "历史消息读取失败") }
         val rows = result.optJSONArray("messageList") ?: JSONArray()
         val allMessages = buildList {
-            for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { add(parseMessage(it)) }
+            for (index in 0 until rows.length()) rows.optJSONObject(index)?.let { add(parseOpenImMessage(it)) }
         }.distinctBy { it.id }.sortedWith(compareBy<OpenImMessage> { it.sentAt }.thenBy { it.id })
         OpenImHistory(conversationId, allMessages.filter { it.status < 4 }, result.optBoolean("isEnd"), rows.optJSONObject(0)?.optString("clientMsgID").orEmpty())
     }
@@ -141,11 +155,4 @@ class OpenImGateway(private val context: Context) {
         override fun onMessageModified(message: String) = changed()
         override fun onRecvOnlineOnlyMessage(message: String) = changed()
     }
-}
-
-private fun parseMessage(row: JSONObject): OpenImMessage {
-    val content = if (row.optInt("contentType") == 101) row.optJSONObject("textElem")?.optString("content")
-        ?: row.optString("content") else "[非文字消息]"
-    return OpenImMessage(row.getString("clientMsgID"), row.optString("sendID"), row.optString("recvID"), content,
-        row.optLong("sendTime").takeIf { it > 0 } ?: row.optLong("createTime"), row.optInt("status"))
 }
