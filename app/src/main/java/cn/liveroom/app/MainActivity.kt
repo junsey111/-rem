@@ -139,6 +139,7 @@ private data class WatchGateUi(
 )
 
 private data class OpenImConversation(val userId: String, val name: String, val latestMessage: String)
+private data class PendingDmCall(val peerId: String, val peerName: String?, val requestedMode: String, val callId: String?)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -383,6 +384,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var openImMessage by remember { mutableStateOf("") }
     var openImBusy by remember { mutableStateOf(false) }
     var openImReady by remember { mutableStateOf(false) }
+    var activeCall by remember { mutableStateOf<PendingDmCall?>(null) }
     val messageVersion by openImGateway.messageVersion.collectAsState()
     val messageConnection by openImGateway.connection.collectAsState()
     var history by remember { mutableStateOf<OpenImHistory?>(null) }
@@ -755,7 +757,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
-<<<<<<< HEAD
     val mediaRoute = liveMediaRoute(
         hasRoom = activeRoom != null,
         isHost = activeRoom?.creatorId == session.id,
@@ -764,8 +765,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         viewerCohostMode = cohostMode,
         hostCohostSeat = hostCohostLiveKit,
     )
-    LaunchedEffect(activeRoom?.stream, session.token, mediaRoute, cohostMode) {
-=======
     LaunchedEffect(activeRoom?.stream, session.token) {
         playbackStream = null
         viewerGate = WatchGateUi(WatchPhase.CHECKING, 0, null, null, false)
@@ -967,8 +966,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
-    LaunchedEffect(activeRoom?.stream, session.token, activeMatchId, cohostMode, playbackStream) {
->>>>>>> origin/pr/2
+    LaunchedEffect(activeRoom?.stream, session.token, mediaRoute, cohostMode, playbackStream) {
         val room = activeRoom ?: return@LaunchedEffect
         roomFeedback = null
         // LiveKit starts only after watch-access allows this room. A future SRS player must use the same gate.
@@ -1018,7 +1016,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
-<<<<<<< HEAD
     LaunchedEffect(activeRoom?.stream, session.id, activeMatchId, hostCohostLiveKit) {
         val room = activeRoom ?: return@LaunchedEffect
         if (!hostPublishesOrdinarySrs(room.creatorId == session.id, activeMatchId, hostCohostLiveKit)) return@LaunchedEffect
@@ -1053,10 +1050,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     val ordinaryHostIngest by rememberUpdatedState(
         activeRoom?.let { hostPublishesOrdinarySrs(it.creatorId == session.id, activeMatchId, hostCohostLiveKit) } == true,
     )
-    LaunchedEffect(roomGateway) {
-=======
     LaunchedEffect(roomGateway, playbackStream) {
->>>>>>> origin/pr/2
         val gateway = roomGateway ?: return@LaunchedEffect
         if (playbackStream == null) return@LaunchedEffect
         gateway.connection.collect { state ->
@@ -1205,6 +1199,28 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
+    fun beginCall(peerId: String, peerName: String?, requestedMode: String, callId: String?) {
+        if (activeCall != null) {
+            notify("请先挂断当前通话")
+            return
+        }
+        if (activeRoom != null) {
+            notify("请先离开直播间，再发起通话")
+            return
+        }
+        if (callId == null) {
+            if (peerId.isBlank() || peerId == session.id.toString() || peerId.toLongOrNull() == null) {
+                notify("请先选择对方账号")
+                return
+            }
+            if (requestedMode != "video" && requestedMode != "voice") return
+        } else if (!callId.matches(Regex("[0-9a-f]{32}"))) {
+            notify("通话号无效")
+            return
+        }
+        activeCall = PendingDmCall(peerId, peerName, requestedMode, callId)
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize().background(NightInk),
         containerColor = NightInk,
@@ -1305,6 +1321,12 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                         }
                     },
                     onConnect = { messageConnectionAttempt++ },
+                    onVideoCall = { beginCall(openImRecipient, openImRecipientName, "video", null) },
+                    onVoiceCall = { beginCall(openImRecipient, openImRecipientName, "voice", null) },
+                    onJoinCall = { beginCall(openImRecipient, openImRecipientName, "", it) },
+                    onAcceptCall = { invite ->
+                        beginCall(invite.fromUserId.toString(), openImRecipientName ?: "用户 ${invite.fromUserId}", invite.mode, invite.callId)
+                    },
                     onSend = {
                         val recipient = openImRecipient.trim()
                         val content = openImMessage.trim()
@@ -1403,6 +1425,29 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
+    activeCall?.let { call ->
+        DmCallSheet(
+            session = session,
+            api = api,
+            peerId = call.peerId,
+            peerName = call.peerName,
+            requestedMode = call.requestedMode,
+            callId = call.callId,
+            onSignal = { creds ->
+                // OpenIM hook: one C2C text on the existing conversation. Swap this send for a custom
+                // call message later; the media path still works if the callee joins with call_id.
+                if (!openImReady) false
+                else if (creds.signalTransport.isNotBlank() && creds.signalTransport != DM_CALL_SIGNAL_TRANSPORT) false
+                else {
+                    val peer = if (creds.callerId == session.id.toString()) creds.peerId else creds.callerId
+                    val text = creds.signalText.takeIf { parseDmCallInvite(it) != null }
+                        ?: dmCallInviteText(creds.callId, creds.mode, session.id)
+                    runCatching { openImGateway.sendText(peer, text) }.isSuccess
+                }
+            },
+            onDismiss = { activeCall = null },
+        )
+    }
     if (showPasswordChange) PasswordSheet(session.token, onDismiss = { showPasswordChange = false }, onChanged = onLogout)
     if (showCoverUpload) CoverUploadSheet(session,api,onDismiss={showCoverUpload=false;refreshKey++})
     if (showIdentity) IdentitySheet(session,api,onDismiss={showIdentity=false})
@@ -1424,17 +1469,14 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             RoomSheet(
                 room = room,
                 gateway = roomGateway,
-<<<<<<< HEAD
                 playbackUrl = if (mediaRoute == LiveMediaRoute.VIEWER_HLS) {
                     srsPlaybackUrl(BuildConfig.SRS_PLAYBACK_URL, room.stream)
                 } else null,
                 onPlaybackStatus = { activeRoomStatus = it },
                 ingest = srsIngest,
-=======
                 watchGate = if (room.creatorId == session.id) null else viewerGate ?: WatchGateUi(WatchPhase.CHECKING, 0, null, null, false),
                 onUnlock = { watchCommands.trySend(WatchCommand.Unlock) },
                 onRetryWatch = { watchCommands.trySend(WatchCommand.Retry) },
->>>>>>> origin/pr/2
                 status = activeRoomStatus,
                 feedback = roomFeedback,
                 wallet = wallet,
@@ -1617,7 +1659,6 @@ private fun RoomTile(room: LiveRoom, onClick: () -> Unit) {
 }
 
 @Composable
-<<<<<<< HEAD
 private fun SrsHostStage(ingest: SrsIngestPublisher, gateway: LiveKitRoomGateway?, room: LiveRoom) {
     Box(Modifier.fillMaxSize()) {
         SrsHostPreview(ingest, Modifier.fillMaxSize())
@@ -1635,7 +1676,12 @@ private fun SrsHostStage(ingest: SrsIngestPublisher, gateway: LiveKitRoomGateway
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     )
                 }
-=======
+            }
+        }
+    }
+}
+
+@Composable
 private fun WatchBlockedOverlay(gate: WatchGateUi, wallet: Wallet?, onUnlock: () -> Unit, onRetry: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.82f)).padding(top = 72.dp), contentAlignment = Alignment.Center) {
         Column(
@@ -1680,7 +1726,6 @@ private fun WatchBlockedOverlay(gate: WatchGateUi, wallet: Wallet?, onUnlock: ()
                     }
                 }
                 WatchPhase.PREVIEW, WatchPhase.OPEN -> Unit
->>>>>>> origin/pr/2
             }
         }
     }
@@ -1691,15 +1736,12 @@ private fun WatchBlockedOverlay(gate: WatchGateUi, wallet: Wallet?, onUnlock: ()
 private fun RoomSheet(
     room: LiveRoom,
     gateway: LiveKitRoomGateway?,
-<<<<<<< HEAD
     playbackUrl: String?,
     onPlaybackStatus: (String) -> Unit,
     ingest: SrsIngestPublisher?,
-=======
     watchGate: WatchGateUi?,
     onUnlock: () -> Unit,
     onRetryWatch: () -> Unit,
->>>>>>> origin/pr/2
     status: String,
     feedback: String?,
     wallet: Wallet?,
@@ -1733,15 +1775,11 @@ private fun RoomSheet(
     val watchBlocked = gate != null && !gate.phase.allowsPlayback()
     androidx.activity.compose.BackHandler { requestClose() }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-<<<<<<< HEAD
-        if (playbackUrl != null) {
+        if (playbackUrl != null && !watchBlocked) {
             SrsPlaybackView(playbackUrl, onPlaybackStatus, Modifier.fillMaxSize())
         } else if (ingest != null && isHost && matchId == null) {
             SrsHostStage(ingest, gateway, room)
-        } else if (gateway != null) {
-=======
-        if (gateway != null && !watchBlocked) {
->>>>>>> origin/pr/2
+        } else if (gateway != null && !watchBlocked) {
             val videoIds by gateway.videoIdentities.collectAsState()
             val opponentId = scores.firstOrNull { it.creatorId != room.creatorId }?.creatorId
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
@@ -1946,6 +1984,10 @@ private fun MessagesScreen(
     onMessage: (String) -> Unit,
     onRefresh: () -> Unit,
     onConnect: () -> Unit,
+    onVideoCall: () -> Unit,
+    onVoiceCall: () -> Unit,
+    onJoinCall: (String) -> Unit,
+    onAcceptCall: (DmCallInvite) -> Unit,
     onSend: () -> Unit,
     support: ChatRecipient?,
     gifts: List<Gift>,
@@ -2033,6 +2075,14 @@ private fun MessagesScreen(
     if (composeOpen) ModalBottomSheet(onDismissRequest = { composeOpen = false }) {
         Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text((recipientName ?: recipient?.name)?.let { "发给 $it" } ?: "新消息", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            if (recipientId != ownUserId) DmCallActions(
+                canStart = recipientId.isNotBlank() && recipientId.toLongOrNull() != null,
+                incoming = history?.let { latestIncomingDmCall(it.messages, ownUserId) },
+                onVideo = onVideoCall,
+                onVoice = onVoiceCall,
+                onJoin = onJoinCall,
+                onAccept = onAcceptCall,
+            )
             if (enteringAccount) OutlinedTextField(
                 value = recipientId, onValueChange = onRecipientId, label = { Text("对方账号 ID") },
                 supportingText = { Text("可在对方的「我的」页面查看账号。") },

@@ -115,6 +115,8 @@ Billd 客户端登录入口为 `POST /user/create`（JSON：`username`、`passwo
 
 LiveKit 房间 token 入口为 `POST /livekit/token`（JSON：`live_session_id`），需要 Billd JWT。服务端先查询账务服务中的直播会话，再签发 10 分钟 token；主播获得发布权限，观众只获得订阅权限。`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET` 只配置在服务端环境。
 
+私信 1v1 通话使用同一套密钥，房间名是 `dm-` 加 32 位十六进制，不会被直播/PK 扫描清掉。`POST /livekit/calls`（JSON：`peer_id`、`mode` 为 `video` 或 `voice`）为双方签发可发布的 10 分钟 token；对方用 `POST /livekit/calls/join`（JSON：`call_id`）加入，任意一方 `POST /livekit/calls/end` 挂断。响应里的 `signal_text` 是现有 OpenIM 单聊文本，格式 `dm-call:v1 call_id=<id> mode=video|voice from=<主叫账号>`，只负责把通话号送到当前会话，媒体不走 OpenIM。Android 实际连接 `BuildConfig.LIVEKIT_URL`（模拟器 `ws://10.0.2.2:7880`，VMware 构建加 `-PlivekitPort=17880`）。在 Billd 目录执行 `pnpm build` 后运行 `node --test tests/dm-call.test.cjs tests/dm-call-router.test.cjs` 可核对令牌权限；双设备画面和声音仍要连到 VMware 的 LiveKit `17880`。消息页进入会话后可选「视频通话」或「语音通话」，挂断会断开 LiveKit。
+
 业务接口经由 `http://localhost:4300/revenue/...` 使用 Billd JWT，例如 `GET /revenue/level` 会返回当前用户的消费等级和主播等级；充值只接受支付服务使用 `PAYMENT_WEBHOOK_SECRET` 生成的 `X-Payment-Signature`。账务数据库中的用户和直播会话由 Billd 服务通过私有网络及 `X-Internal-Key` 自动同步。
 
 真实支付宝充值入口为 `GET /alipay/recharge?coins=100`，异步通知为 `POST /alipay/notify`；通知会先由支付宝 SDK 验签，再写入账务钱包。

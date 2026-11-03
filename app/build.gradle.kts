@@ -32,6 +32,8 @@ android {
         buildConfigField("String", "BILLD_API_URL", "\"http://$backendHost:$billdPort\"")
         buildConfigField("String", "SRS_PLAYBACK_URL", "\"http://$backendHost:$srsPlaybackPort\"")
         buildConfigField("String", "SRS_RTMP_URL", "\"rtmp://$backendHost:$srsRtmpPort\"")
+        // LiveKit the phone can reach. Emulator default 10.0.2.2:7880; VMware uses -PlivekitPort=17880.
+        // 1v1 private calls dial this URL. The token still comes from Billd and does not include the API secret.
         buildConfigField("String", "LIVEKIT_URL", "\"ws://$backendHost:$livekitPort\"")
         buildConfigField("String", "OPENIM_API_URL", "\"http://$backendHost:$openImApiPort\"")
         buildConfigField("String", "OPENIM_WS_URL", "\"ws://$backendHost:$openImWsPort\"")

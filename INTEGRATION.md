@@ -67,6 +67,20 @@ Ordinary viewers do not join LiveKit. The host camera for that same `live/{liveS
 ## Local service choices
 
 - Start with **SRS** for ordinary broadcast ingest and playback.
-- Use **LiveKit** for interactive dual-host PK and audio/video calls.
-- Use **OpenIM Server** plus the AAR generated from `third_party/openim-sdk-core` for private messages.
+- Use **LiveKit** for interactive dual-host PK and private-message 1v1 audio/video calls.
+- Use **OpenIM Server** plus the AAR generated from `third_party/openim-sdk-core` for private messages. OpenIM carries the call invite only; it does not carry media.
 - Choose **ZLMediaKit** instead of SRS when protocol conversion or GB28181/RTSP is required; running both for the same stream is unnecessary.
+
+## Private 1v1 call
+
+`POST /livekit/calls`, `POST /livekit/calls/join`, and `POST /livekit/calls/end` issue a 10-minute LiveKit token for two authenticated Billd users. Both participants can publish. `mode` is `video` (`microphone` + `camera`) or `voice` (`microphone` only). The room name is `dm-` plus 32 hex characters, so the live/PK reconciler does not delete it. `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` stay on the server. The response `url` is `LIVEKIT_URL` (emulator `ws://10.0.2.2:7880`, VMware `ws://192.168.254.132:17880`). The Android call screen dials `BuildConfig.LIVEKIT_URL` from `-PbackendHost` and `-PlivekitPort` instead, because the token is not bound to a host.
+
+OpenIM hook: `signal_transport` is `openim-c2c-text` and `signal_text` is `dm-call:v1 call_id=<32 hex> mode=video|voice from=<caller id>`. The app sends that string with the existing `OpenImGateway.sendText` on the current conversation. The callee can tap 接听 or paste the call id. Replace `sendText` with a custom OpenIM content type later; do not add a second chat service. Joining with `call_id` does not require the message to arrive.
+
+Verify the grants without a device, from `upstream-overlays/billd-live-server` after `pnpm build`:
+
+```bash
+node --test tests/dm-call.test.cjs tests/dm-call-router.test.cjs tests/livekit-permissions.test.cjs
+```
+
+The first test signs real tokens and checks that both users can publish, voice cannot publish camera, a third user is rejected, and `dm-` rooms do not match the live/PK room pattern. Dual-device audio and video still need the VMware LiveKit on port `17880`. Build the APK with `-PbackendHost=192.168.254.132 -PlivekitPort=17880`, open 消息, and start 视频通话 or 语音通话. Hang up disconnects the room and calls `/livekit/calls/end`.

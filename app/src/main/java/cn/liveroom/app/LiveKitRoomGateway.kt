@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 enum class MediaConnectionState { IDLE, CONNECTED, RECONNECTING, DISCONNECTED }
 
-/** Thin adapter over the upstream LiveKit Android SDK for a live room or PK room. */
+/** Thin adapter over the upstream LiveKit Android SDK for a live room, PK room, or 1v1 call. */
 class LiveKitRoomGateway(context: Context) {
     private val room: Room = LiveKit.create(context.applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
