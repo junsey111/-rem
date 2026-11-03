@@ -102,6 +102,8 @@ revenueRouter.get('/gift-orders/:requestId', async ctx => {
 });
 
 revenueRouter.get('/gifts', async (ctx, next) => {
+  // Pass-through. Each gift includes effect_type (none|yyeva|svga|lottie), effect_url,
+  // effect_video_mode, effect_md5 and icon_url. Fullscreen gifts use effect_type "yyeva".
   const result = await axios.get(`${REVENUE_API_URL}/v1/gifts/catalog`);
   successHandler({ ctx, data: result });
   await next();
@@ -309,6 +311,87 @@ revenueRouter.get('/matches/:id/score', async (ctx, next) => {
   });
   successHandler({ ctx, data: result });
   await next();
+});
+
+const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function requireLiveId(id: string) {
+  if (!/^[1-9][0-9]{0,19}$/.test(id || '')) {
+    throw new CustomError('直播间编号无效', 400, 400);
+  }
+}
+
+async function forwardWatch(ctx, method: 'GET' | 'POST', path: string, data?: any) {
+  await requireUser(ctx);
+  try {
+    const headers = { Authorization: ctx.headers.authorization || '' };
+    const result = method === 'GET'
+      ? await axios.get(`${REVENUE_API_URL}${path}`, { headers })
+      : await axios.post(`${REVENUE_API_URL}${path}`, data ?? {}, { headers });
+    successHandler({ ctx, data: result });
+  } catch (error) {
+    if (!axiosClient.isAxiosError(error)) throw error;
+    const status = error.response?.status;
+    const message = error.response?.data?.message;
+    if (status && status >= 400 && status < 500 && typeof message === 'string' && message) {
+      throw new CustomError(message, status, status);
+    }
+    throw error;
+  }
+}
+
+revenueRouter.get('/lives/:liveId/watch-access', async (ctx) => {
+  requireLiveId(ctx.params.liveId);
+  await forwardWatch(ctx, 'GET', `/v1/lives/${ctx.params.liveId}/watch-access`);
+});
+
+revenueRouter.post('/lives/:liveId/watch-heartbeat', async (ctx) => {
+  requireLiveId(ctx.params.liveId);
+  const body = ctx.request.body || {};
+  if (typeof body.request_id !== 'string' || !uuidV4.test(body.request_id)) {
+    throw new CustomError('观看心跳单号无效，请使用 UUID v4', 400, 400);
+  }
+  if (typeof body.delta_seconds !== 'number' || !Number.isInteger(body.delta_seconds)) {
+    throw new CustomError('请提供整数观看心跳秒数', 400, 400);
+  }
+  await forwardWatch(ctx, 'POST', `/v1/lives/${ctx.params.liveId}/watch-heartbeat`, {
+    request_id: body.request_id.toLowerCase(),
+    delta_seconds: body.delta_seconds,
+  });
+});
+
+revenueRouter.post('/lives/:liveId/watch-unlock', async (ctx) => {
+  requireLiveId(ctx.params.liveId);
+  const body = ctx.request.body || {};
+  if (typeof body.request_id !== 'string' || !uuidV4.test(body.request_id)) {
+    throw new CustomError('解锁单号无效，请使用 UUID v4', 400, 400);
+  }
+  await forwardWatch(ctx, 'POST', `/v1/lives/${ctx.params.liveId}/watch-unlock`, {
+    request_id: body.request_id.toLowerCase(),
+  });
+});
+
+revenueRouter.put('/lives/:liveId/watch-price', async (ctx) => {
+  requireLiveId(ctx.params.liveId);
+  const price = ctx.request.body?.unlock_price_coins;
+  if (typeof price !== 'number' || !Number.isInteger(price) || price < 0) {
+    throw new CustomError('请填写 0 及以上的整数观看价格，0 表示免费', 400, 400);
+  }
+  await requireUser(ctx);
+  try {
+    const result = await axios.put(`${REVENUE_API_URL}/v1/lives/${ctx.params.liveId}/watch-price`, { unlock_price_coins: price }, {
+      headers: { Authorization: ctx.headers.authorization || '' },
+    });
+    successHandler({ ctx, data: result });
+  } catch (error) {
+    if (!axiosClient.isAxiosError(error)) throw error;
+    const status = error.response?.status;
+    const message = error.response?.data?.message;
+    if (status && status >= 400 && status < 500 && typeof message === 'string' && message) {
+      throw new CustomError(message, status, status);
+    }
+    throw error;
+  }
 });
 
 revenueRouter.get('/lives/:id/settlement', async (ctx, next) => {

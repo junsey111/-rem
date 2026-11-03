@@ -116,23 +116,28 @@ func (s *Server) handleGiftCatalog(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT gift_id, display_name, coin_price, match_points, diamond_reward FROM gift_catalog WHERE enabled = TRUE ORDER BY coin_price`)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT gift_id, display_name, coin_price, match_points, diamond_reward, effect_type, effect_url, effect_video_mode, effect_md5, icon_url FROM gift_catalog WHERE enabled = TRUE ORDER BY coin_price`)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
 	defer rows.Close()
 	type gift struct {
-		GiftID      string `json:"gift_id"`
-		Name        string `json:"display_name"`
-		Coins       uint32 `json:"coin_price"`
-		MatchPoints uint32 `json:"match_points"`
-		Diamonds    uint32 `json:"diamond_reward"`
+		GiftID          string `json:"gift_id"`
+		Name            string `json:"display_name"`
+		Coins           uint32 `json:"coin_price"`
+		MatchPoints     uint32 `json:"match_points"`
+		Diamonds        uint32 `json:"diamond_reward"`
+		EffectType      string `json:"effect_type"`
+		EffectURL       string `json:"effect_url"`
+		EffectVideoMode string `json:"effect_video_mode"`
+		EffectMD5       string `json:"effect_md5"`
+		IconURL         string `json:"icon_url"`
 	}
 	items := []gift{}
 	for rows.Next() {
 		var item gift
-		if err := rows.Scan(&item.GiftID, &item.Name, &item.Coins, &item.MatchPoints, &item.Diamonds); err != nil {
+		if err := rows.Scan(&item.GiftID, &item.Name, &item.Coins, &item.MatchPoints, &item.Diamonds, &item.EffectType, &item.EffectURL, &item.EffectVideoMode, &item.EffectMD5, &item.IconURL); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
@@ -830,6 +835,18 @@ func (s *Server) handleLivesPrefix(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case r.Method == http.MethodGet && parts[3] == "watch-access":
+		s.handleWatchAccess(w, r, liveSessionID)
+		return
+	case r.Method == http.MethodPost && parts[3] == "watch-heartbeat":
+		s.handleWatchHeartbeat(w, r, liveSessionID)
+		return
+	case r.Method == http.MethodPost && parts[3] == "watch-unlock":
+		s.handleWatchUnlock(w, r, liveSessionID)
+		return
+	case r.Method == http.MethodPut && parts[3] == "watch-price":
+		s.handleWatchPrice(w, r, liveSessionID)
+		return
 	case r.Method == http.MethodGet && parts[3] == "match":
 		var matchID uint64
 		err := s.db.QueryRowContext(r.Context(), `SELECT match_id FROM live_matches WHERE status='OPEN' AND (live_session_id=? OR opponent_live_session_id=?) ORDER BY match_id DESC LIMIT 1`, liveSessionID, liveSessionID).Scan(&matchID)
