@@ -90,5 +90,5 @@ test('real password route and MySQL enforce disabled accounts, server expiry, un
   assert.ok(isPasswordHash((await user.findByPk(9)).password));assert.equal((await user.findByPk(9)).token,null);
   assert.equal(await verifyPassword('x','$scrypt$v1$999999999$8$3$bad$bad'),false);
   await user.destroy({where:{id:1}});assert.equal((await call('/user/me',undefined,current)).status,401);
- }finally{if(server)await new Promise(r=>server.close(r));if(db)await db.close();await admin.query(`DROP DATABASE IF EXISTS \`${name}\``);await admin.end();}
+ }finally{if(server)await new Promise(r=>{server.close(r);server.closeAllConnections?.();});if(db)await db.close();await admin.query(`DROP DATABASE IF EXISTS \`${name}\``);await admin.end();}
 });

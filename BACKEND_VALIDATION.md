@@ -325,3 +325,11 @@ Android 聊天可以发送并渲染 `contentType=110` 的 `dm_gift` / `dm_video`
 本轮没有启动 MySQL，没有把新路由打进完整 Billd 进程，没有连接 OpenIM、Revenue 或 Android 设备。因此不能把契约测试当成私信送礼扣币或真机收发已经验收。Revenue 仍需实现上述三个路径后，才能用同一 `request_id` 做实扣和重放验证。
 
 退款补充：00017 增加生成列唯一约束，允许 REJECTED 后重新申请，同一充值只允许一笔未驳回单；原请求重试仍返回原驳回状态，不复活旧申请。真实 MySQL 并发重申请、旧请求重放、释放金币及借贷平衡测试通过，见 .tools/final-refund-reapplication-tests.out。
+
+## 2026-11-03：合并 PR #1–#10
+
+合并 SRS 推拉流、付费观看、私信礼物和视频结算、私密通话、礼物特效、主播介绍与邀请奖励相关 PR。解决 Android 媒体路由、观看准入与特效层冲突，保留各分支功能。合并验证中修正 Billd 收据响应类型、Windows 32 位 Go 原子计数对齐、测试 HTTP 连接清理及 Media3 API opt-in。
+
+隔离 MySQL 下 Revenue 全套 `go test ./...` 与构建通过；Billd 构建通过，31 项测试中 30 项通过、1 项因缺少独立 LiveKit 实例跳过。Android `assembleDebug` 和 `lintDebug` 通过；相同源码复制到英文路径后，45 项 JVM 单元测试全部通过，绕过本机中文路径下的测试类加载问题。验证日志位于被忽略的 `.tools/merge-*.out`。
+
+真实支付、打款、实名调用保持关闭，邀请奖励默认关闭。本轮未做 Android 真机、实际媒体与完整外部服务端到端验证，也未部署到虚拟机；上述结果不代表全功能上线验收。

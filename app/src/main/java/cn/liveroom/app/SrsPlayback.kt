@@ -78,6 +78,7 @@ internal fun srsPlaybackStatus(errorCode: Int?, playbackState: Int): String = wh
 }
 
 @Composable
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun SrsPlaybackView(url: String, onStatus: (String) -> Unit, modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val onStatusState by rememberUpdatedState(onStatus)

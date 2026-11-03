@@ -33,7 +33,7 @@ type Server struct {
 	internalKey   string
 	accountURL    string
 	referrals     service.ReferralPolicy
-	reqCounter    uint64
+	reqCounter    atomic.Uint64
 }
 
 // New creates a new API server.
@@ -1121,7 +1121,7 @@ func (s *Server) wrap(route string, next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) newRequestID() string {
-	v := atomic.AddUint64(&s.reqCounter, 1)
+	v := s.reqCounter.Add(1)
 	return fmt.Sprintf("req-%d", v)
 }
 

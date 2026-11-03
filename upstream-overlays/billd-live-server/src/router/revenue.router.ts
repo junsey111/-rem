@@ -42,7 +42,7 @@ async function requireUser(ctx) {
   return userInfo;
 }
 
-async function postRevenue(path: string, data: any, token?: string, internal = false) {
+async function postRevenue(path: string, data: any, token?: string, internal = false): Promise<any> {
   return axios.post(`${REVENUE_API_URL}${path}`, data, {
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
