@@ -57,6 +57,7 @@ dependencies {
     implementation("com.github.pedroSG94.RootEncoder:library:2.6.7")
     implementation("io.socket:socket.io-client:2.1.0")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
     if (file("libs/open_im_sdk.aar").exists()) {
         implementation(files("libs/open_im_sdk.aar"))

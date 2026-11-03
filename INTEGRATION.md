@@ -52,6 +52,18 @@ The device camera is opened by only one publisher at a time:
 
 PK subscribers and accepted co-hosts stay on LiveKit. Ordinary viewers do not see a picture until this RTMP publish is active.
 
+## Ordinary viewer playback
+
+Non-interactive viewers play HLS with Media3 ExoPlayer from `BuildConfig.SRS_PLAYBACK_URL` (the HTTP server, container port 8080; default host port `8088` / VMware `18088`). The playlist is:
+
+```text
+{SRS_PLAYBACK_URL}/live/{liveSessionId}.m3u8
+```
+
+`liveSessionId` is the Billd `/live/list` `roomId`, which is the Revenue live session id. `ossrs/srs:6` `conf/docker.conf` enables HLS on the default vhost and serves `[app]/[stream].m3u8`. This client assumes app `live` and stream `{liveSessionId}`. `/live/list` does not return a play URL. A missing base URL or a non-http(s) origin does not invent a stream; playback errors stay on screen.
+
+Ordinary viewers do not join LiveKit. The host camera for that same `live/{liveSessionId}` is the RTMP ingest above, not LiveKit. LiveKit publishes the host camera only after RTMP has stopped, for an active PK or an accepted/muted co-host seat. HTTP-FLV (`.flv` on the same app/stream) is what SRS http_remux serves; this player does not use it.
+
 ## Local service choices
 
 - Start with **SRS** for ordinary broadcast ingest and playback.

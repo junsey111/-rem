@@ -323,6 +323,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var showBusiness by remember { mutableStateOf<String?>(null) }
     var showCohost by remember { mutableStateOf(false) }
     var cohostMode by remember { mutableStateOf<String?>(null) }
+    var cohostKnown by remember { mutableStateOf(false) }
     var operationsPage by remember { mutableIntStateOf(1) }
     var operationsRefresh by remember { mutableIntStateOf(0) }
     var operationsLoading by remember { mutableStateOf(false) }
@@ -586,7 +587,15 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
-    LaunchedEffect(activeRoom?.stream, session.token, activeMatchId, cohostMode, hostCohostLiveKit) {
+    val mediaRoute = liveMediaRoute(
+        hasRoom = activeRoom != null,
+        isHost = activeRoom?.creatorId == session.id,
+        matchId = activeMatchId,
+        viewerCohostKnown = cohostKnown,
+        viewerCohostMode = cohostMode,
+        hostCohostSeat = hostCohostLiveKit,
+    )
+    LaunchedEffect(activeRoom?.stream, session.token, mediaRoute, cohostMode) {
         val room = activeRoom ?: return@LaunchedEffect
         roomFeedback = null
         val liveSessionId = room.stream.toLongOrNull()
@@ -594,9 +603,22 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             activeRoomStatus = "暂时无法加入此直播间，请返回刷新"
             return@LaunchedEffect
         }
+        if (mediaRoute == LiveMediaRoute.PENDING) {
+            activeRoomStatus = "正在连接直播"
+            return@LaunchedEffect
+        }
+        if (mediaRoute == LiveMediaRoute.VIEWER_HLS) {
+            roomGateway = null
+            activeRoomStatus = if (srsPlaybackUrl(BuildConfig.SRS_PLAYBACK_URL, room.stream) == null) {
+                "播放地址不可用，请返回刷新"
+            } else {
+                "正在连接直播"
+            }
+            return@LaunchedEffect
+        }
         val isHost = room.creatorId == session.id
-        // Ordinary host video is the SRS RTMP publish. LiveKit camera starts only for PK / co-host.
-        val ordinarySrs = hostPublishesOrdinarySrs(isHost, activeMatchId, hostCohostLiveKit)
+        // Ordinary host video is the SRS RTMP publish. LiveKit camera starts only after that publish stops.
+        val ordinarySrs = mediaRoute == LiveMediaRoute.HOST_RTMP
         val gateway = LiveKitRoomGateway(context)
         roomGateway = gateway
         if (!ordinarySrs) activeRoomStatus = "正在连接直播"
@@ -605,7 +627,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                 val credentials = api.liveKitToken(session.token, liveSessionId, activeMatchId)
                 gateway.join(credentials.url, credentials.token)
                 if (isHost && !ordinarySrs) cameraHandoff.withLock { gateway.publishCameraAndMicrophone() }
-                else if (!isHost && cohostMode != null) gateway.publishCohost(cohostMode == "VIDEO")
+                else if (!isHost && activeMatchId == null && cohostMode != null) gateway.publishCohost(cohostMode == "VIDEO")
             }
             if (!ordinarySrs) activeRoomStatus = if (isHost) "正在直播" else "已加入直播间"
             awaitCancellation()
@@ -684,12 +706,14 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
 
     LaunchedEffect(activeRoom?.stream, session.token, activeMatchId) {
         cohostMode = null
+        cohostKnown = false
         val room = activeRoom ?: return@LaunchedEffect
         if (room.creatorId == session.id) return@LaunchedEffect
         val liveId = room.stream.toLongOrNull() ?: return@LaunchedEffect
         while (true) {
             try { cohostMode = if (activeMatchId == null) api.cohosts(session.token,liveId).firstOrNull { it.userId==session.id && it.status=="ACCEPTED" }?.mode else null }
             catch(e:CancellationException){throw e}catch(_:Exception){cohostMode=null}
+            cohostKnown = true
             kotlinx.coroutines.delay(3000)
         }
     }
@@ -990,6 +1014,10 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             RoomSheet(
                 room = room,
                 gateway = roomGateway,
+                playbackUrl = if (mediaRoute == LiveMediaRoute.VIEWER_HLS) {
+                    srsPlaybackUrl(BuildConfig.SRS_PLAYBACK_URL, room.stream)
+                } else null,
+                onPlaybackStatus = { activeRoomStatus = it },
                 ingest = srsIngest,
                 status = activeRoomStatus,
                 feedback = roomFeedback,
@@ -1200,6 +1228,8 @@ private fun SrsHostStage(ingest: SrsIngestPublisher, gateway: LiveKitRoomGateway
 private fun RoomSheet(
     room: LiveRoom,
     gateway: LiveKitRoomGateway?,
+    playbackUrl: String?,
+    onPlaybackStatus: (String) -> Unit,
     ingest: SrsIngestPublisher?,
     status: String,
     feedback: String?,
@@ -1232,7 +1262,9 @@ private fun RoomSheet(
     val requestClose = { if (isHost) confirmClose = true else onClose() }
     androidx.activity.compose.BackHandler { requestClose() }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (ingest != null && isHost && matchId == null) {
+        if (playbackUrl != null) {
+            SrsPlaybackView(playbackUrl, onPlaybackStatus, Modifier.fillMaxSize())
+        } else if (ingest != null && isHost && matchId == null) {
             SrsHostStage(ingest, gateway, room)
         } else if (gateway != null) {
             val videoIds by gateway.videoIdentities.collectAsState()
