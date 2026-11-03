@@ -27,7 +27,17 @@ data class UpstreamServices(
 
 data class UserSession(val id: Long, val username: String, val token: String)
 data class BilldRoom(val roomId: String, val title: String, val host: String, val creatorId: Long, val coverPath: String? = null)
-data class Gift(val id: String, val name: String, val coinPrice: Int, val diamonds: Int)
+data class Gift(
+    val id: String,
+    val name: String,
+    val coinPrice: Int,
+    val diamonds: Int,
+    val effectType: String = EFFECT_NONE,
+    val effectUrl: String = "",
+    val effectVideoMode: String = "",
+    val effectMd5: String = "",
+    val iconUrl: String = "",
+)
 data class Wallet(val balance: Long)
 data class UserLevel(val viewerLevel: Int, val creatorLevel: Int, val viewerPoints: Long, val creatorPoints: Long)
 data class Earnings(val diamonds: Long, val gifts: Long)
@@ -172,12 +182,7 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         buildList {
             for (i in 0 until rows.length()) {
                 val row = rows.optJSONObject(i) ?: continue
-                add(Gift(
-                    id = row.optString("gift_id"),
-                    name = row.optString("display_name"),
-                    coinPrice = row.optInt("coin_price"),
-                    diamonds = row.optInt("diamond_reward"),
-                ))
+                add(parseGiftRow(row))
             }
         }
     }

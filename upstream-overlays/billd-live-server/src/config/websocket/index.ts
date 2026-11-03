@@ -5,6 +5,7 @@ import { REVENUE_API_URL } from '@/config/secret';
 import { authJwt } from '@/app/auth/authJwt';
 import { mediaSessionHash } from '@/service/media-authority';
 import { RequestRateLimiter } from '@/app/request-rate';
+import { giftEvents } from '@/service/gift-broadcast';
 import { persistChat, chatEvents } from '@/service/room-chat';
 import axios from '@/utils/request';
 import { chalkINFO } from '@/utils/chalkTip';
@@ -48,7 +49,22 @@ export const connectWebSocket = (server) => {
   chatEvents.on('moderation', notifyModeration);
   const notifyMessage = (data) => io.to(data.roomId).emit(WsMsgTypeEnum.message,data);
   chatEvents.on('message',notifyMessage);
-  server.once('close', () => {chatEvents.off('moderation', notifyModeration);chatEvents.off('message',notifyMessage);});
+  const notifyGift = (data) => {
+    if (!data?.roomId) return;
+    io.to(String(data.roomId)).emit('giftAccepted', {
+      roomId: String(data.roomId),
+      request_id: String(data.request_id || ''),
+      gift_id: String(data.gift_id || ''),
+      viewer_id: Number(data.viewer_id),
+      quantity: Number(data.quantity || 1),
+    });
+  };
+  giftEvents.on('accepted', notifyGift);
+  server.once('close', () => {
+    chatEvents.off('moderation', notifyModeration);
+    chatEvents.off('message', notifyMessage);
+    giftEvents.off('accepted', notifyGift);
+  });
 
   // socket.emit会将消息发送给发件人
   // socket.broadcast.emit会将消息发送给除了发件人以外的所有人

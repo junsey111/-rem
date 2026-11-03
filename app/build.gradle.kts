@@ -59,6 +59,8 @@ dependencies {
     implementation("io.livekit:livekit-android:2.29.2")
     implementation("com.github.pedroSG94.RootEncoder:library:2.6.7")
     implementation("io.socket:socket.io-client:2.1.0")
+    // YYEVA-Android 1.1.73, Apache-2.0. TextureView player is EvaAnimViewV3.
+    implementation("com.github.yylive.YYEVA-Android:yyeva:1.1.73")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")

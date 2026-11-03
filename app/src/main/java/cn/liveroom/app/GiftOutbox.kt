@@ -30,6 +30,7 @@ class GiftOutbox(context: Context, userId: Long) {
     }
 
     fun save(gift: PendingGift) {
+        // Payment intent only. Gift effects start after ACCEPTED or a room broadcast, never here.
         check(load() == null) { "请先核实上一笔送礼" }
         check(prefs.edit().putString(key, JSONObject().put("payload", gift.payload)
             .put("giftName", gift.giftName).put("coins", gift.coins).put("hostName", gift.hostName).toString()).commit()) {

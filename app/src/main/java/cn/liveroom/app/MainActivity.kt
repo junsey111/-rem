@@ -323,6 +323,8 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     val context = LocalContext.current
     val api = remember { LivePlatformApi() }
     val giftOutbox = remember(session.id) { GiftOutbox(context, session.id) }
+    val effectSession = remember(session.id) { GiftEffectSession(context) }
+    DisposableEffect(effectSession) { onDispose { effectSession.close() } }
     val openImGateway = remember(context) { OpenImGateway(context) }
     val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -452,6 +454,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                     wallet = if (recovering) api.recoverGift(session.token, intent) else api.sendGift(session.token, intent)
                     giftOutbox.clear()
                     pendingGift = null
+                    effectSession.offerAccepted(intent, activeRoom?.stream)
                     notify("礼物已由服务端确认")
                     // A replay returns the original post-debit balance; refresh the current wallet.
                     runCatching { api.wallet(session.token) }.onSuccess { wallet = it }
@@ -709,6 +712,21 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             } catch (error: CancellationException) { throw error
             } catch (error: Exception) { historyError = "消息暂时无法更新，已有记录已保留，请重试"
             } finally { historyLoading = false }
+        }
+    }
+
+    LaunchedEffect(gifts) { effectSession.updateCatalog(gifts) }
+
+    LaunchedEffect(activeRoom?.stream, session.token) {
+        val roomId = activeRoom?.stream ?: return@LaunchedEffect
+        effectSession.enterRoom(roomId)
+        val channel = RoomGiftChannel()
+        try {
+            channel.listen(session.token, roomId) { effectSession.offerBroadcast(it) }
+            awaitCancellation()
+        } finally {
+            channel.close()
+            effectSession.leaveRoom()
         }
     }
 
@@ -1511,6 +1529,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                 onClose = { leaveRoom() },
                 invitations = matchInvitations.filter { it.opponentLiveSessionId == room.stream.toLongOrNull() },
                 onRespondInvitation = respondInvitation,
+                effectSession = effectSession,
                 onEndMatch = {
                     val matchId = activeMatchId
                     if (matchId != null && !matchLoading) scope.launch {
@@ -1762,6 +1781,7 @@ private fun RoomSheet(
     invitations: List<MatchInvitation>,
     onRespondInvitation: (MatchInvitation, Boolean) -> Unit,
     onEndMatch: () -> Unit,
+    effectSession: GiftEffectSession,
     onGift: (Gift) -> Unit,
     onInviteMatch: (LiveRoom) -> Unit,
 ) {
@@ -1770,6 +1790,7 @@ private fun RoomSheet(
     var confirmClose by remember { mutableStateOf(false) }
     var confirmEndMatch by remember { mutableStateOf(false) }
     val selectedGift = gifts.firstOrNull { it.id == selectedGiftId }
+    val effectFailure by effectSession.failure.collectAsState()
     val requestClose = { if (isHost) confirmClose = true else onClose() }
     val gate = watchGate
     val watchBlocked = gate != null && !gate.phase.allowsPlayback()
@@ -1798,6 +1819,7 @@ private fun RoomSheet(
                 }
             }
         }
+        GiftEffectOverlay(effectSession, Modifier.fillMaxSize())
         if (gate != null && watchBlocked) WatchBlockedOverlay(gate, wallet, onUnlock, onRetryWatch)
         Column(
             Modifier.align(Alignment.TopCenter).fillMaxWidth()
@@ -1838,6 +1860,7 @@ private fun RoomSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             feedback?.let { Text(it, color = Color.White, style = MaterialTheme.typography.bodyMedium) }
+            effectFailure?.let { Text(it, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodyMedium) }
             Text(status, color = Color(0xFFDDDEE2), style = MaterialTheme.typography.bodySmall)
             TextButton(onClick=onCohost,enabled=matchId==null){Text(if(isHost) "连麦管理" else "申请连麦")}
             TextButton(onClick=onRoomChat){Text("直播公屏")}
