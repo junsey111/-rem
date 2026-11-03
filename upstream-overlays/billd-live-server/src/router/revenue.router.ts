@@ -131,6 +131,47 @@ revenueRouter.get('/level', async (ctx, next) => {
   await next();
 });
 
+revenueRouter.get('/referrals/me', async (ctx, next) => {
+  const user = await requireUser(ctx);
+  await syncRevenueUser(user);
+  const result = await axios.get(`${REVENUE_API_URL}/v1/referrals/me`, {
+    headers: { Authorization: ctx.headers.authorization || '' },
+  });
+  successHandler({ ctx, data: result });
+  await next();
+});
+
+revenueRouter.post('/referrals/redeem', async (ctx, next) => {
+  const user = await requireUser(ctx);
+  const token = ctx.headers.authorization?.split(' ')[1];
+  const body = ctx.request.body || {};
+  if (typeof body.request_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.request_id)) {
+    throw new CustomError('邀请兑换缺少有效单号，请更新客户端后重试', 400, 400);
+  }
+  if (typeof body.code !== 'string' || body.code.trim() === '' || body.code.trim().length > 32) {
+    throw new CustomError('请填写邀请码', 400, 400);
+  }
+  await syncRevenueUser(user);
+  try {
+    const result = await postRevenue('/v1/referrals/redeem', {
+      request_id: body.request_id.toLowerCase(),
+      code: body.code.trim().toUpperCase(),
+    }, token);
+    successHandler({ ctx, data: result });
+  } catch (error) {
+    if (!axiosClient.isAxiosError(error)) throw error;
+    const status = error.response?.status;
+    const payload = error.response?.data;
+    if (status && status >= 400 && status < 500 && typeof payload?.code === 'string' && typeof payload?.message === 'string') {
+      ctx.status = status;
+      ctx.body = { code: payload.code, message: payload.message };
+    } else {
+      throw error;
+    }
+  }
+  await next();
+});
+
 revenueRouter.get('/earnings', async (ctx, next) => {
   await requireUser(ctx);
   const result = await axios.get(`${REVENUE_API_URL}/v1/creators/me/earnings`, {

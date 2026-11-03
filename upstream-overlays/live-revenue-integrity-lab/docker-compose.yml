@@ -103,6 +103,9 @@ services:
       PAYMENT_WEBHOOK_SECRET: "${PAYMENT_WEBHOOK_SECRET:-change-me-payment-webhook}"
       INTERNAL_SERVICE_KEY: "${INTERNAL_SERVICE_KEY:-change-me-internal-key}"
       BILLD_ACCOUNT_URL: "${BILLD_ACCOUNT_URL:-http://billd-live-server:4300/user/me}"
+      REFERRALS_ENABLED: "${REFERRALS_ENABLED:-false}"
+      REFERRAL_INVITER_COINS: "${REFERRAL_INVITER_COINS:-100}"
+      REFERRAL_INVITEE_COINS: "${REFERRAL_INVITEE_COINS:-50}"
     command: ["/usr/local/bin/api"]
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
