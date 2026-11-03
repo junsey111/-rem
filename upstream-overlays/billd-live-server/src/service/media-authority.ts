@@ -15,9 +15,7 @@ import { managedMediaRoom as managedRoom } from '@/service/media-room-name';
 export const mediaSessionHash = (token: string) =>
   crypto.createHash('sha256').update(token).digest('hex');
 
-export async function mediaAuthority(
-  room: string
-): Promise<{
+export async function mediaAuthority(room: string): Promise<{
   room: string;
   open: boolean;
   directory_open: boolean;
@@ -158,10 +156,17 @@ export async function reconcileMedia(io): Promise<void> {
         } else {
           try {
             const proof = JSON.parse(participant.metadata);
-            if (!/^[1-9][0-9]{0,15}$/.test(proof.live_id || '')) throw Error('Missing live binding');
-            await requireMediaAccess(participant.identity, proof.live_id, room.name);
+            if (!/^[1-9][0-9]{0,15}$/.test(proof.live_id || ''))
+              throw Error('Missing live binding');
+            await requireMediaAccess(
+              participant.identity,
+              proof.live_id,
+              room.name
+            );
           } catch {
-            await liveKitControl('RemoveParticipant', room.name, {identity:participant.identity});
+            await liveKitControl('RemoveParticipant', room.name, {
+              identity: participant.identity,
+            });
             continue;
           }
           const canPublish = authority.publishers.includes(
@@ -235,6 +240,80 @@ export async function reconcileMedia(io): Promise<void> {
   if (failures) throw Error('Media reconciliation incomplete');
 }
 
+// Enumerate database seats as well as LiveKit rooms: a vanished room must not
+// leave three permanently occupied seats. Failed probes never report absence.
+export async function reconcileCohostSeats(): Promise<void> {
+  const headers = { 'X-Internal-Key': INTERNAL_SERVICE_KEY };
+  const url = `${REVENUE_API_URL}/v1/internal/cohost-presence`;
+  const result = await liveKitControl('ListRooms');
+  if (!Array.isArray(result?.rooms)) throw Error('Invalid LiveKit room list');
+  const rooms = new Set(result.rooms.map((room) => room.name));
+  const participants = new Map<string, any[]>();
+  let cursor = '';
+  let failures = 0;
+  do {
+    const page: any = await axios.get(url, {
+      headers,
+      timeout: 3000,
+      params: cursor ? { after_id: cursor } : {},
+    });
+    if (
+      !Array.isArray(page?.seats) ||
+      page.seats.length > 100 ||
+      typeof page.next_after_id !== 'string' ||
+      (page.next_after_id &&
+        (!/^[1-9][0-9]*$/.test(page.next_after_id) ||
+          BigInt(page.next_after_id) <= BigInt(cursor || '0')))
+    )
+      throw Error('Invalid cohost seat page');
+    for (const seat of page.seats) {
+      try {
+        if (
+          ![seat.cohost_id, seat.live_session_id, seat.user_id].every(
+            (id) => typeof id === 'string' && /^[1-9][0-9]*$/.test(id)
+          )
+        )
+          throw Error('Invalid cohost seat');
+        const room = seat.live_session_id;
+        if (!participants.has(room)) {
+          let list: any[] = [];
+          if (rooms.has(room)) {
+            try {
+              const result = await liveKitControl('ListParticipants', room);
+              if (!Array.isArray(result?.participants))
+                throw Error('Invalid LiveKit participant list');
+              list = result.participants;
+            } catch (error) {
+              if (
+                !axiosClient.isAxiosError(error) ||
+                error.response?.status !== 404
+              )
+                throw error;
+            }
+          }
+          participants.set(room, list);
+        }
+        const participant = participants
+          .get(room)!
+          .find((p) => p.identity === seat.user_id);
+        const online =
+          !!participant &&
+          (await validSession(participant.identity, participant.metadata)) &&
+          String(JSON.parse(participant.metadata).live_id) === room;
+        await axios.post(
+          url,
+          { cohost_id: seat.cohost_id, online },
+          { headers, timeout: 3000 }
+        );
+      } catch {
+        failures++;
+      }
+    }
+    cursor = page.next_after_id;
+  } while (cursor);
+  if (failures) throw Error('Cohost presence reconciliation incomplete');
+}
+
 export function startMediaReconciliation(io): () => void {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout>;
@@ -243,6 +322,11 @@ export function startMediaReconciliation(io): () => void {
       await reconcileMedia(io);
     } catch {
       console.error('Media reconciliation failed; will retry');
+    }
+    try {
+      await reconcileCohostSeats();
+    } catch {
+      console.error('Cohost presence reconciliation failed; will retry');
     }
     if (!stopped) {
       timer = setTimeout(run, 5000);

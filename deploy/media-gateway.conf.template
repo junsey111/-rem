@@ -1,9 +1,14 @@
+resolver 127.0.0.11 valid=5s ipv6=off;
+upstream billd_backend {
+    zone billd_backend 64k;
+    server billd-live-server:4300 resolve;
+}
 server {
     listen 8080;
     server_tokens off;
     location = /_media_auth {
         internal;
-        proxy_pass http://billd-live-server:4300/srs/authorize;
+        proxy_pass http://billd_backend/srs/authorize;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header Authorization $http_authorization;

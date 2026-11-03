@@ -268,7 +268,7 @@ func (s *Server) handleCohost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, e = tx.ExecContext(r.Context(), `UPDATE cohost_requests SET status=? WHERE cohost_id=?`, next, id); fail(e) {
+	if _, e = tx.ExecContext(r.Context(), `UPDATE cohost_requests SET status=?,media_absent_since=NULL,media_observed_at=NULL WHERE cohost_id=?`, next, id); fail(e) {
 		return
 	}
 	if _, e = tx.ExecContext(r.Context(), `INSERT INTO cohost_actions(request_id,cohost_id,operator_id,action) VALUES(?,?,?,?)`, c.RequestID, id, user, c.Action); fail(e) {
