@@ -10,6 +10,7 @@ import { ALLOW_HTTP_CODE } from '@/constant';
 import { CustomError } from '@/model/customError.model';
 import axios from '@/utils/request';
 import { mediaAuthority, mediaSessionHash } from '@/service/media-authority';
+import { requireMediaAccess } from '@/service/media-access';
 import { DmCallError, endDmCall, joinDmCall, openDmCall } from '@/service/dm-call';
 
 const liveKitRouter = new Router({ prefix: '/livekit' });
@@ -72,9 +73,10 @@ liveKitRouter.post('/token', async (ctx, next) => {
   const authority = await mediaAuthority(room);
   if (!authority.open) throw new CustomError('直播已结束或主播暂无开播权限', 403, 403);
   canPublish = authority.publishers.includes(String(userInfo.id));
+  const mediaLease = await requireMediaAccess(String(userInfo.id), liveSessionId, room);
   const publishSources = authority.publish_sources?.[String(userInfo.id)];
   const token = jwt.sign({
-    metadata: JSON.stringify({ session_hash: mediaSessionHash(ctx.headers.authorization?.split(' ')[1] || '') }),
+    metadata: JSON.stringify({ session_hash: mediaSessionHash(ctx.headers.authorization?.split(' ')[1] || ''), live_id: liveSessionId }),
     video: {
       room,
       roomJoin: true,
@@ -88,7 +90,7 @@ liveKitRouter.post('/token', async (ctx, next) => {
     algorithm: 'HS256',
     issuer: LIVEKIT_API_KEY,
     subject: String(userInfo.id),
-    expiresIn: '10m',
+    expiresIn: mediaLease,
   });
   successHandler({ ctx, data: { url: process.env.LIVEKIT_URL || 'ws://10.0.2.2:7880', token } });
   await next();

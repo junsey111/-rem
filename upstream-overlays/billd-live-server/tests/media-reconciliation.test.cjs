@@ -36,11 +36,13 @@ test('real LiveKit signalling/control and MySQL remove stale sessions, close roo
   db=new Sequelize(name,decodeURIComponent(base.username),decodeURIComponent(base.password),{host:base.hostname,port:Number(base.port||3306),dialect:'mysql',logging:false});
   stub('@/config/mysql',{__esModule:true,default:db});stub('@/utils',{initTable:()=>{}});
   stub('@/config/secret',{INTERNAL_SERVICE_KEY:'isolated-authority-key',REVENUE_API_URL:`http://127.0.0.1:${authority.address().port}`,LIVEKIT_API_KEY:'devkey',LIVEKIT_API_SECRET:'secret'});
+  let mediaLocked=false;
+  stub('@/service/media-access',{requireMediaAccess:async id=>{if(mediaLocked && id==='5')throw Error('preview expired');return 600;}});
   const media=require('../dist/service/media-authority');control=media.liveKitControl;
   model=require('../dist/model/live.model').default;await model.sync();
   for(const room of [...managed,external])await control('CreateRoom',room,{name:room});
   const join=async(room,id,proof=true)=>{
-   const token=jwt.sign({metadata:proof?JSON.stringify({session_hash:media.mediaSessionHash(tokens.get(id)||'unknown')}):'',video:{room,roomJoin:true,canPublish:true,canSubscribe:true,canUpdateOwnMetadata:false}},'secret',{issuer:'devkey',subject:String(id),expiresIn:60});
+   const token=jwt.sign({metadata:proof?JSON.stringify({session_hash:media.mediaSessionHash(tokens.get(id)||'unknown'),live_id:room}):'',video:{room,roomJoin:true,canPublish:true,canSubscribe:true,canUpdateOwnMetadata:false}},'secret',{issuer:'devkey',subject:String(id),expiresIn:60});
    const url=new URL(process.env.LIVEKIT_TEST_URL.replace(/^http/,'ws')+'/rtc');
    url.search=new URLSearchParams({access_token:token,protocol:'15',sdk:'js',version:'2.0.0',auto_subscribe:'0'}).toString();
    const ws=new WebSocket(url);sockets.push(ws);await once(ws,'open');return ws;
@@ -70,6 +72,8 @@ test('real LiveKit signalling/control and MySQL remove stale sessions, close roo
   // Reusing an unexpired but rotated/revoked token can reconnect; another pass must evict again.
   await join('11',3);await media.reconcileMedia(io);
   assert.ok(!(await control('ListParticipants','11')).participants.some(p=>p.identity==='3'));
+  mediaLocked=true;await media.reconcileMedia(io);
+  assert.ok(!(await control('ListParticipants','11')).participants.some(p=>p.identity==='5'),'expired preview must disconnect an existing LiveKit participant');
   await admin.query('UPDATE user SET status=2 WHERE id=1');await media.reconcileMedia(io);
   assert.ok(!(await control('ListParticipants','11')).participants.some(p=>p.identity==='1'));
   assert.equal(await model.count(),0);assert.deepEqual(disconnected,['host']);

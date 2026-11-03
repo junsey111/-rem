@@ -96,9 +96,10 @@ func (s *Service) loadWatchState(ctx context.Context, tx *sql.Tx, userID, liveID
 	`, userID, liveID); err != nil {
 		return 0, "", 0, 0, false, err
 	}
+	// A media-started deadline is authoritative even when the client omits heartbeats.
 	var unlockedBit int
 	err = tx.QueryRowContext(ctx, `
-		SELECT watched_unpaid_seconds, unlocked FROM live_watch_progress
+		SELECT GREATEST(watched_unpaid_seconds, IFNULL(TIMESTAMPDIFF(SECOND, preview_started_at, UTC_TIMESTAMP(6)), 0)), unlocked FROM live_watch_progress
 		WHERE user_id=? AND live_session_id=? FOR UPDATE
 	`, userID, liveID).Scan(&watched, &unlockedBit)
 	unlocked = unlockedBit != 0
@@ -115,9 +116,12 @@ func (s *Service) WatchAccess(ctx context.Context, userID, liveID uint64) (Watch
 		return WatchAccess{}, err
 	}
 	defer tx.Rollback()
-	creatorID, _, price, watched, unlocked, err := s.loadWatchState(ctx, tx, userID, liveID)
+	creatorID, status, price, watched, unlocked, err := s.loadWatchState(ctx, tx, userID, liveID)
 	if err != nil {
 		return WatchAccess{}, err
+	}
+	if status != "OPEN" {
+		return WatchAccess{}, &AppError{HTTPStatus: 409, Code: "LIVE_SESSION_CLOSED", Message: "直播已结束"}
 	}
 	if err = tx.Commit(); err != nil {
 		return WatchAccess{}, err
@@ -200,16 +204,23 @@ func (s *Service) WatchHeartbeat(ctx context.Context, userID, liveID uint64, req
 	access := DeriveWatchAccess(strconv.FormatUint(liveID, 10), price, watched, unlocked)
 	applied := 0
 	if access.Status == "PREVIEW" {
+		var reported int
+		if err = tx.QueryRowContext(ctx, `SELECT watched_unpaid_seconds FROM live_watch_progress WHERE user_id=? AND live_session_id=?`, userID, liveID).Scan(&reported); err != nil {
+			return WatchAccess{}, err
+		}
 		applied = ClampWatchDelta(delta)
-		room := FreePreviewSeconds - watched
+		room := FreePreviewSeconds - reported
 		if room < applied {
 			applied = room
 		}
 		if applied < 0 {
 			applied = 0
 		}
-		watched += applied
-		if _, err = tx.ExecContext(ctx, `UPDATE live_watch_progress SET watched_unpaid_seconds=? WHERE user_id=? AND live_session_id=?`, watched, userID, liveID); err != nil {
+		reported += applied
+		if reported > watched {
+			watched = reported
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE live_watch_progress SET watched_unpaid_seconds=? WHERE user_id=? AND live_session_id=?`, reported, userID, liveID); err != nil {
 			return WatchAccess{}, err
 		}
 	}
@@ -297,4 +308,18 @@ func (s *Service) WatchUnlock(ctx context.Context, userID, liveID uint64, reques
 		return WatchAccess{}, err
 	}
 	return DeriveWatchAccess(strconv.FormatUint(liveID, 10), price, watched, true), nil
+}
+
+// BeginMediaPreview starts one continuous 60-second window on first media access.
+// Reconnects, restarts and omitted client heartbeats cannot reset that window.
+func (s *Service) BeginMediaPreview(ctx context.Context, userID, liveID uint64) (WatchAccess, error) {
+	access, err := s.WatchAccess(ctx, userID, liveID)
+	if err != nil || access.Status != "PREVIEW" {
+		return access, err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE live_watch_progress SET preview_started_at=COALESCE(preview_started_at,TIMESTAMPADD(SECOND,-watched_unpaid_seconds,UTC_TIMESTAMP(6))) WHERE user_id=? AND live_session_id=?`, userID, liveID)
+	if err != nil {
+		return WatchAccess{}, err
+	}
+	return s.WatchAccess(ctx, userID, liveID)
 }

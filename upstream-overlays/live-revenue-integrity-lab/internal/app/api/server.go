@@ -62,6 +62,7 @@ func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentS
 	mux.HandleFunc("/v1/internal/users", s.requireInternalKey(s.wrap("internal_user_sync", s.handleInternalUserSync)))
 	mux.HandleFunc("/v1/internal/lives", s.requireInternalKey(s.wrap("internal_live_sync", s.handleInternalLiveSync)))
 	mux.HandleFunc("/v1/internal/matches", s.requireInternalKey(s.wrap("internal_match_sync", s.handleInternalMatchSync)))
+	mux.HandleFunc("/v1/internal/media-access", s.requireInternalKey(s.wrap("internal_media_access", s.handleMediaAccess)))
 	mux.HandleFunc("/v1/internal/media-rooms/", s.requireInternalKey(s.wrap("internal_media_room", s.handleMediaRoom)))
 	mux.HandleFunc("/v1/internal/operations/", s.requireInternalKey(s.wrap("internal_operations", s.handleInternalOperations)))
 	mux.HandleFunc("/v1/internal/finance/", s.requireInternalKey(s.wrap("internal_finance", s.handleFinanceAdmin)))

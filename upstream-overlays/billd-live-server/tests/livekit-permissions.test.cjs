@@ -15,6 +15,8 @@ let matchStatus = 'OPEN';
 let liveStatus = 'OPEN';
 let activeMatch = 991;
 let cohostMode=null;
+let paidAllowed=true;
+stub('@/service/media-access',{requireMediaAccess:async()=>{if(!paidAllowed)throw Object.assign(Error('locked'),{statusCode:402});return 37;}});
 stub('@/service/media-authority', { mediaAuthority:async room=>({room,open:liveStatus==='OPEN',publishers:room.startsWith('pk-')?['1','2']:(cohostMode?['1','9']:['1']),...(cohostMode?{publish_sources:{'9':cohostMode==='AUDIO'?['microphone']:['microphone','camera']}}:{})}), mediaSessionHash:token=>'hash-'+token });
 stub('@/config/secret', { LIVEKIT_API_KEY:'fixture-key', LIVEKIT_API_SECRET:'fixture-secret', REVENUE_API_URL:'http://fixture' });
 stub('@/app/auth/authJwt', { authJwt:async ctx => ({ code:200, userInfo:{ id:Number(ctx.headers.authorization.slice(7)) } }) });
@@ -42,6 +44,7 @@ test('PK spectators subscribe; only participants publish; closed/unrelated match
       if (expected!==200) { assert.equal(data.token,undefined); return; }
       const claims=jwt.verify(data.token,'fixture-secret',{issuer:'fixture-key',algorithms:['HS256']});
       assert.equal(claims.sub,String(user));
+      assert.equal(claims.exp-claims.iat,37);
       assert.equal(claims.video.canSubscribe,true);
       assert.equal(JSON.parse(claims.metadata).session_hash,'hash-'+user);
       return claims.video;
@@ -60,6 +63,7 @@ test('PK spectators subscribe; only participants publish; closed/unrelated match
     cohostMode='AUDIO';const audio=await call(9,11);assert.equal(audio.canPublish,true);assert.deepEqual(audio.canPublishSources,['microphone']);
     cohostMode='VIDEO';assert.deepEqual((await call(9,11)).canPublishSources,['microphone','camera']);
     cohostMode=null;assert.equal((await call(9,11)).canPublish,false);
+    paidAllowed=false;await call(9,11,undefined,402);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }

@@ -195,3 +195,8 @@ Billd 通过内部 `LIVEKIT_API_URL`（默认 `http://livekit:7880`）调用 Liv
 本地管理员已创建，Web 与真实 API 已启动；账号处置、资金规则、提现退款审核、礼物目录、主播申请、举报和公屏管理的最新实现、启动方法与尚未完成项见 [ADMIN_BACKEND.md](ADMIN_BACKEND.md)。旧验收段落描述其当时状态，以此新增记录为本轮进展依据。
 
 当前新增的支付/实名接口与默认关闭策略见 [INTEGRATION_INTERFACES.md](INTEGRATION_INTERFACES.md)，本地后台操作和验收边界见 [ADMIN_BACKEND.md](ADMIN_BACKEND.md)。新增连麦、封面、主播准入和 Android 账户服务代码已保存在仓库覆盖层；虚拟机当前 SSH 超时，尚未部署本轮变更。
+
+
+### 媒体鉴权更新（2026-11-03）
+
+SRS 推流票据、HLS 播放列表/分片鉴权、数据库权威试看窗口及 LiveKit 观看权限已接入，配置、迁移、新旧 APK 兼容和测试范围见 [MEDIA_SECURITY.md](MEDIA_SECURITY.md)。启动前须设置独立随机 `MEDIA_AUTH_KEY`，Revenue 迁移到 00022。旧文档所述直接访问 SRS 播放端口不再适用于新版配置。

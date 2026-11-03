@@ -333,3 +333,14 @@ Android 聊天可以发送并渲染 `contentType=110` 的 `dm_gift` / `dm_video`
 隔离 MySQL 下 Revenue 全套 `go test ./...` 与构建通过；Billd 构建通过，31 项测试中 30 项通过、1 项因缺少独立 LiveKit 实例跳过。Android `assembleDebug` 和 `lintDebug` 通过；相同源码复制到英文路径后，45 项 JVM 单元测试全部通过，绕过本机中文路径下的测试类加载问题。验证日志位于被忽略的 `.tools/merge-*.out`。
 
 真实支付、打款、实名调用保持关闭，邀请奖励默认关闭。本轮未做 Android 真机、实际媒体与完整外部服务端到端验证，也未部署到虚拟机；上述结果不代表全功能上线验收。
+
+
+## 2026-11-03：媒体访问控制与 Debian 验证
+
+实现 SRS 主播会话票据、HLS 播放列表与分片逐请求鉴权、数据库持续试看窗口、LiveKit 入场及在线观看权限核对。PK 同时检查两侧场次观看权限。Revenue 迁移新增 00022；无需客户端心跳也会到期，重连不重置。配置和已知边界见 MEDIA_SECURITY.md。
+
+Revenue 全套 go test 通过；Billd 最终回归 33 项全部通过、0 跳过，其中独立 Debian LiveKit + 本机隔离 MySQL 的真实信令/控制测试通过，确认到期后移除已连接观众。Android assembleDebug/lintDebug 和英文路径下 45 项 JVM 测试通过，另构建指向 Debian 192.168.254.132 的测试 APK。
+
+Debian 独立容器用 FFmpeg 实际推 SRS，确认票据回调拒绝/放行、HLS 生成、Nginx 播放列表和分片鉴权、禁止匿名 RTMP 播放与禁止缓存；此项鉴权端为替身。真实权限规则由 Billd 路由和 Revenue/MySQL 测试另行验证，尚非真机端到端验收。测试日志保存于被忽略的 .tools/media-*.out。
+
+Debian 已恢复 SSH，部署前备份 Billd/Revenue 数据库及镜像。应用 Revenue 00022、Billd 缺失的增量表及列；同步最新编译代码并补齐 Linux sharp 运行依赖。SRS 管理端口收至回环地址，HLS 18088 改走鉴权网关。真实充值、打款/退款执行、实名保持关闭。当前仍需新版 Android 真机测试，不能把独立信令、配置测试等同于全业务验收完成。

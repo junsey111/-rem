@@ -1043,7 +1043,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
-    LaunchedEffect(activeRoom?.stream, session.id, activeMatchId, hostCohostLiveKit) {
+    LaunchedEffect(activeRoom?.stream, session.id, session.token, activeMatchId, hostCohostLiveKit) {
         val room = activeRoom ?: return@LaunchedEffect
         if (!hostPublishesOrdinarySrs(room.creatorId == session.id, activeMatchId, hostCohostLiveKit)) return@LaunchedEffect
         val url = srsIngestUrl(BuildConfig.SRS_RTMP_URL, room.stream)
@@ -1057,7 +1057,10 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             try {
                 activeRoomStatus = "正在连接直播"
                 publisher.onDropped = { activeRoomStatus = "推流已断开，观众暂时看不到画面" }
-                withTimeout(15_000) { publisher.start(url) }
+                withTimeout(15_000) {
+                    val ticket = api.srsPublishToken(session.token, room.stream.toLong())
+                    publisher.start("$url?ticket=${java.net.URLEncoder.encode(ticket, "UTF-8")}")
+                }
                 activeRoomStatus = "正在直播"
                 awaitCancellation()
             } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
@@ -1514,6 +1517,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                 playbackUrl = if (mediaRoute == LiveMediaRoute.VIEWER_HLS) {
                     srsPlaybackUrl(BuildConfig.SRS_PLAYBACK_URL, room.stream)
                 } else null,
+                playbackToken = session.token,
                 onPlaybackStatus = { activeRoomStatus = it },
                 ingest = srsIngest,
                 watchGate = if (room.creatorId == session.id) null else viewerGate ?: WatchGateUi(WatchPhase.CHECKING, 0, null, null, false),
@@ -1813,6 +1817,7 @@ private fun RoomSheet(
     room: LiveRoom,
     gateway: LiveKitRoomGateway?,
     playbackUrl: String?,
+    playbackToken: String,
     onPlaybackStatus: (String) -> Unit,
     ingest: SrsIngestPublisher?,
     watchGate: WatchGateUi?,
@@ -1855,7 +1860,7 @@ private fun RoomSheet(
     androidx.activity.compose.BackHandler { requestClose() }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (playbackUrl != null && !watchBlocked) {
-            SrsPlaybackView(playbackUrl, onPlaybackStatus, Modifier.fillMaxSize())
+            SrsPlaybackView(playbackUrl, playbackToken, onPlaybackStatus, Modifier.fillMaxSize())
         } else if (ingest != null && isHost && matchId == null) {
             SrsHostStage(ingest, gateway, room)
         } else if (gateway != null && !watchBlocked) {

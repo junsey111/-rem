@@ -79,11 +79,15 @@ internal fun srsPlaybackStatus(errorCode: Int?, playbackState: Int): String = wh
 
 @Composable
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-internal fun SrsPlaybackView(url: String, onStatus: (String) -> Unit, modifier: Modifier = Modifier) {
+internal fun SrsPlaybackView(url: String, token: String, onStatus: (String) -> Unit, modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val onStatusState by rememberUpdatedState(onStatus)
-    val player = remember(url) {
-        ExoPlayer.Builder(context.applicationContext).build().apply {
+    val player = remember(url, token) {
+        val http = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(mapOf("Authorization" to "Bearer $token"))
+            .setAllowCrossProtocolRedirects(false)
+        val mediaSource = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(http)
+        ExoPlayer.Builder(context.applicationContext).setMediaSourceFactory(mediaSource).build().apply {
             setMediaItem(MediaItem.fromUri(url))
             playWhenReady = true
             prepare()

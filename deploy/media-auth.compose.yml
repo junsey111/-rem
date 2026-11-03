@@ -1,0 +1,37 @@
+services:
+  billd-live-server:
+    environment:
+      MEDIA_AUTH_KEY: ${MEDIA_AUTH_KEY:?Set MEDIA_AUTH_KEY}
+      SRS_INTERNAL_API_URL: http://srs:1985
+      SRS_RECONCILE_ENABLED: 'true'
+      ALIPAY_DISBURSEMENTS_ENABLED: 'false'
+      ALIPAY_RECHARGE_ENABLED: 'false'
+      IDENTITY_ENABLED: 'false'
+  srs:
+    entrypoint: ["sh", "/etc/srs/start-secure.sh"]
+    command: []
+    environment:
+      MEDIA_AUTH_KEY: ${MEDIA_AUTH_KEY:?Set MEDIA_AUTH_KEY}
+    volumes:
+      - srs-hls:/srv/hls
+      - ./deploy/srs-secure.conf:/etc/srs/secure.conf:ro
+      - ./deploy/start-srs-secure.sh:/etc/srs/start-secure.sh:ro
+    ports: !override
+      - "1935:1935"
+      - "127.0.0.1:11985:1985"
+  media-gateway:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    environment:
+      MEDIA_AUTH_KEY: ${MEDIA_AUTH_KEY:?Set MEDIA_AUTH_KEY}
+      NGINX_ENVSUBST_FILTER: ^MEDIA_AUTH_KEY$
+    volumes:
+      - srs-hls:/srv/hls:ro
+      - ./deploy/media-gateway.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      - srs
+      - billd-live-server
+    ports:
+      - "18088:8080"
+volumes:
+  srs-hls:

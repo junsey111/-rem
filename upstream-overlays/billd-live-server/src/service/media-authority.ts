@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { requireMediaAccess } from '@/service/media-access';
 import jwt from 'jsonwebtoken';
 import axiosClient from 'axios';
 import {
@@ -155,6 +156,14 @@ export async function reconcileMedia(io): Promise<void> {
             identity: participant.identity,
           });
         } else {
+          try {
+            const proof = JSON.parse(participant.metadata);
+            if (!/^[1-9][0-9]{0,15}$/.test(proof.live_id || '')) throw Error('Missing live binding');
+            await requireMediaAccess(participant.identity, proof.live_id, room.name);
+          } catch {
+            await liveKitControl('RemoveParticipant', room.name, {identity:participant.identity});
+            continue;
+          }
           const canPublish = authority.publishers.includes(
             participant.identity
           );

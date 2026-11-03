@@ -1,0 +1,21 @@
+server {
+    listen 8080;
+    server_tokens off;
+    location = /_media_auth {
+        internal;
+        proxy_pass http://billd-live-server:4300/srs/authorize;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header X-Media-Key "${MEDIA_AUTH_KEY}";
+    }
+    location ~ "^/live/[1-9][0-9]{0,15}(\.m3u8|-[0-9]+\.ts)$" {
+        auth_request /_media_auth;
+        root /srv/hls;
+        try_files $uri =404;
+        types { application/vnd.apple.mpegurl m3u8; video/mp2t ts; }
+        add_header Cache-Control "private, no-store" always;
+    }
+    location / { return 404; }
+}

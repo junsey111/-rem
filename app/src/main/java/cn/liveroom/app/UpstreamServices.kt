@@ -328,6 +328,10 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
             JSONObject().put("request_id", requestId)))
     }
 
+    suspend fun srsPublishToken(token: String, liveSessionId: Long): String = withContext(Dispatchers.IO) {
+        request("/srs/publish-token", "POST", token, JSONObject().put("live_session_id", liveSessionId)).getString("token")
+    }
+
     suspend fun liveKitToken(token: String, liveSessionId: Long, matchId: Long? = null): LiveKitCredentials = withContext(Dispatchers.IO) {
         val data = request("/livekit/token", "POST", token, JSONObject().put("live_session_id", liveSessionId).apply { if (matchId != null) put("match_id", matchId) })
         LiveKitCredentials(data.optString("url"), data.optString("token")).also {
