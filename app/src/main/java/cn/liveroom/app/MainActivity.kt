@@ -337,6 +337,10 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var showIdentity by remember { mutableStateOf(false) }
     var showRoomChat by remember { mutableStateOf(false) }
     var showBusiness by remember { mutableStateOf<String?>(null) }
+    var hostProfile by remember { mutableStateOf<LiveRoom?>(null) }
+    var showReferral by remember { mutableStateOf(false) }
+    var referralRequestId by remember(session.id) { mutableStateOf<String?>(null) }
+    var customerServiceNotice by remember { mutableStateOf<String?>(null) }
     var showCohost by remember { mutableStateOf(false) }
     var cohostMode by remember { mutableStateOf<String?>(null) }
     var cohostKnown by remember { mutableStateOf(false) }
@@ -507,6 +511,12 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     }
 
 
+    LaunchedEffect(session.token) {
+        supportContact = try { api.openImSupport(session.token) }
+        catch (error: CancellationException) { throw error }
+        catch (_: Exception) { null }
+    }
+
     LaunchedEffect(session.token, messageConnectionAttempt) {
         openImBusy = true
         openImStatus = "正在连接消息服务"
@@ -518,7 +528,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                 openImConversations = parseOpenImConversations(openImGateway.conversations())
             }
             openImStatus = "消息已连接"
-            supportContact = try { api.openImSupport(session.token) } catch (error: CancellationException) { throw error } catch (_: Exception) { null }
         } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
             openImReady = false
             openImStatus = "连接超时，请重试"
@@ -564,13 +573,13 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         historyRefresh++
         runCatching { openImGateway.conversations() }.onSuccess { openImConversations = parseOpenImConversations(it) }
     }
-    val sendDmGift: (String) -> Unit = { giftId ->
+    val sendDmGift: (String) -> Unit = fun(giftId) {
         val recipient = openImRecipient.trim()
         val pending = pendingDmGift
-        if (recipient.isBlank() || openImBusy) return@sendDmGift
+        if (recipient.isBlank() || openImBusy) return
         if (pending != null && (pending.recipientId != recipient || (pending.phase == "settle" && pending.giftId != giftId))) {
             openImStatus = "请先完成上一笔私信礼物"
-            return@sendDmGift
+            return
         }
         scope.launch {
             openImBusy = true
@@ -604,13 +613,13 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             } finally { openImBusy = false }
         }
     }
-    val sendDmVideo: (String, Int, ByteArray, Int) -> Unit = { title, price, bytes, duration ->
+    val sendDmVideo: (String, Int, ByteArray, Int) -> Unit = fun(title, price, bytes, duration) {
         val recipient = openImRecipient.trim()
         val pending = pendingDmVideo
-        if (recipient.isBlank() || openImBusy) return@sendDmVideo
+        if (recipient.isBlank() || openImBusy) return
         if (pending != null && pending.recipientId != recipient) {
             openImStatus = "请先完成上一条视频消息"
-            return@sendDmVideo
+            return
         }
         scope.launch {
             openImBusy = true
@@ -1201,6 +1210,30 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         }
     }
 
+    fun openSupportChat() {
+        if (openImBusy) {
+            notify("正在连接消息服务")
+            return
+        }
+        scope.launch {
+            openImBusy = true
+            try {
+                val target = openSupportConversation(api, openImGateway, session.token)
+                openImRecipient = target.userId
+                openImRecipientName = target.name
+                supportContact = ChatRecipient(target.userId, target.name)
+                selectedTab = 2
+                chatOpenSignal++
+            } catch (error: CancellationException) { throw error
+            } catch (error: PlatformHttpException) {
+                if (error.statusCode == 404) supportContact = null
+                else customerServiceNotice = error.message ?: "客服暂时无法连接"
+            } catch (error: Exception) {
+                customerServiceNotice = error.message ?: "客服暂时无法连接"
+            } finally { openImBusy = false }
+        }
+    }
+
     val respondInvitation: (MatchInvitation, Boolean) -> Unit = { invitation, accept ->
         if (!matchLoading) scope.launch {
             matchLoading = true
@@ -1282,6 +1315,8 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                         }
                     },
                     onJoin = { activeRoom = it },
+                    onHost = { hostProfile = it },
+                    onReferral = { showReferral = true },
                     onRefresh = { refreshKey++ },
                 )
                 1 -> RankingsScreen(
@@ -1371,21 +1406,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                     pendingVideoPhase = pendingDmVideo?.takeIf { it.recipientId == openImRecipient }?.phase,
                     chatOpenSignal = chatOpenSignal,
                     onOpenChat = { id, name -> openImRecipient = id; openImRecipientName = name },
-                    onOpenSupport = {
-                        if (!openImBusy) scope.launch {
-                            openImBusy = true
-                            try {
-                                val target = openSupportConversation(api, openImGateway, session.token)
-                                openImRecipient = target.userId
-                                openImRecipientName = target.name
-                                supportContact = ChatRecipient(target.userId, target.name)
-                                chatOpenSignal++
-                                selectedTab = 2
-                            } catch (error: CancellationException) { throw error
-                            } catch (error: Exception) { openImStatus = error.message ?: "客服暂时无法连接"
-                            } finally { openImBusy = false }
-                        }
-                    },
+                    onOpenSupport = { openSupportChat() },
                     onSendGift = { gift -> sendDmGift(gift.id) },
                     onRetryGift = { pendingDmGift?.let { sendDmGift(it.giftId) } },
                     onSendVideo = sendDmVideo,
@@ -1418,6 +1439,9 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                     onBusiness = { showBusiness = "withdrawals" },
                     onCoverUpload = { showCoverUpload = true },
                     onIdentity = { showIdentity = true },
+                    onReferral = { showReferral = true },
+                    customerServiceAvailable = supportContact != null,
+                    onCustomerService = { openSupportChat() },
                     onLogout = onLogout,
                     onRefresh = { refreshKey++ },
                     onTopUp = { amount ->
@@ -1505,6 +1529,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                 isHost = room.creatorId == session.id,
                 matchId = activeMatchId,
                 scores = matchScores,
+                onHostProfile = { hostProfile = room },
                 onMessageHost = {
                     scope.launch {
                         try {
@@ -1572,6 +1597,33 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             }
         }
     }
+    if (showReferral) ReferralSheet(
+        token = session.token,
+        api = api,
+        pendingRequestId = referralRequestId,
+        onPendingRequestId = { referralRequestId = it },
+        onInviteeBalance = { wallet = Wallet(it) },
+        onDismiss = { showReferral = false },
+    )
+    customerServiceNotice?.let { message ->
+        CustomerServiceUnavailableSheet(message, onDismiss = { customerServiceNotice = null })
+    }
+    hostProfile?.let { room ->
+        HostIntroductionPage(
+            name = room.host,
+            creatorId = room.creatorId,
+            coverPath = room.coverPath,
+            roomTitle = room.title,
+            levelLabel = hostLevelLabel(room.creatorId, session.id, level),
+            onDismiss = { hostProfile = null },
+            onEnterRoom = if (activeRoom?.stream == room.stream) null else {
+                {
+                    hostProfile = null
+                    activeRoom = room
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -1599,6 +1651,8 @@ private fun LiveScreen(
     starting: Boolean,
     onStart: () -> Unit,
     onJoin: (LiveRoom) -> Unit,
+    onHost: (LiveRoom) -> Unit,
+    onReferral: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     LazyVerticalGrid(
@@ -1613,6 +1667,7 @@ private fun LiveScreen(
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("发现直播", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text("点进直播间，和主播聊聊", style = MaterialTheme.typography.bodyMedium, color = Fog)
+                    TextButton(onClick = onReferral, contentPadding = PaddingValues(0.dp)) { Text("拉新送币") }
                 }
                 Button(onClick = onStart, enabled = !starting, shape = RoundedCornerShape(12.dp)) {
                     if (starting) {
@@ -1645,34 +1700,36 @@ private fun LiveScreen(
                 OutlinedButton(onClick = onRefresh) { Text("刷新看看") }
             }
         }
-        items(rooms, key = { it.stream }) { room -> RoomTile(room, onClick = { onJoin(room) }) }
+        items(rooms, key = { it.stream }) { room -> RoomTile(room, onClick = { onJoin(room) }, onHost = { onHost(room) }) }
     }
 }
 
 @Composable
-private fun RoomTile(room: LiveRoom, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(12.dp), color = NightSurface) {
-        Column {
-            // The directory has no cover field yet. Never substitute an unrelated host photo.
-            Box(Modifier.fillMaxWidth().aspectRatio(0.85f).background(Color(0xFF252A32))) {
-                room.coverPath?.let { LiveCoverImage(it) }
-                Column(Modifier.align(Alignment.Center).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if(room.coverPath==null)Icon(Icons.Default.LiveTv, contentDescription = null, tint = Color(0xFFCCD2DC), modifier = Modifier.size(32.dp))
-                    if(room.coverPath==null)Text("暂无封面", style = MaterialTheme.typography.bodySmall, color = Color(0xFFCCD2DC))
+private fun RoomTile(room: LiveRoom, onClick: () -> Unit, onHost: () -> Unit) {
+    Column {
+        Surface(onClick = onClick, shape = RoundedCornerShape(12.dp), color = NightSurface) {
+            Column {
+                Box(Modifier.fillMaxWidth().aspectRatio(0.85f).background(Color(0xFF252A32))) {
+                    room.coverPath?.let { LiveCoverImage(it) }
+                    Column(Modifier.align(Alignment.Center).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if(room.coverPath==null)Icon(Icons.Default.LiveTv, contentDescription = null, tint = Color(0xFFCCD2DC), modifier = Modifier.size(32.dp))
+                        if(room.coverPath==null)Text("暂无封面", style = MaterialTheme.typography.bodySmall, color = Color(0xFFCCD2DC))
+                    }
+                    Row(Modifier.align(Alignment.TopStart).padding(10.dp).clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.7f)).padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF77E2B9)))
+                        Text("直播", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                    }
                 }
-                Row(Modifier.align(Alignment.TopStart).padding(10.dp).clip(RoundedCornerShape(6.dp))
-                    .background(Color.Black.copy(alpha = 0.7f)).padding(horizontal = 8.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF77E2B9)))
-                    Text("直播", style = MaterialTheme.typography.labelSmall, color = Color.White)
-                }
-            }
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(room.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                Text(room.title, Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(room.host, style = MaterialTheme.typography.bodySmall, color = Fog, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+        }
+        Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(room.host, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = Fog, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            TextButton(onClick = onHost, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("介绍") }
         }
     }
 }
@@ -1768,6 +1825,7 @@ private fun RoomSheet(
     giftLoading: Boolean,
     pendingGift: PendingGift?,
     onRetryGift: () -> Unit,
+    onHostProfile: () -> Unit,
     isHost: Boolean,
     matchId: Long?,
     scores: List<MatchScore>,
@@ -1827,9 +1885,16 @@ private fun RoomSheet(
                 .windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                    Text(room.host, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(room.title, color = Color(0xFFDDDEE2), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                TextButton(
+                    onClick = onHostProfile,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Text(room.host, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(room.title, color = Color(0xFFDDDEE2), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("主播介绍", color = Color(0xFFDDDEE2), style = MaterialTheme.typography.labelSmall)
+                    }
                 }
                 if (!isHost) TextButton(onClick = onMessageHost) { Text("私信") }
                 if (!isHost) TextButton(onClick = onReport) { Text("举报") }
@@ -2183,6 +2248,9 @@ private fun ProfileScreen(
     onBusiness: () -> Unit,
     onCoverUpload: () -> Unit,
     onIdentity: () -> Unit,
+    onReferral: () -> Unit,
+    customerServiceAvailable: Boolean,
+    onCustomerService: () -> Unit,
     onGiftHistory: () -> Unit,
     onRefresh: () -> Unit,
     onTopUp: (Int) -> Unit,
@@ -2283,6 +2351,8 @@ private fun ProfileScreen(
         item { OutlinedButton(onClick=onBusiness,modifier=Modifier.fillMaxWidth()){Text("提现、退款与主播申请")}}
         item { TextButton(onClick=onCoverUpload){Text("设置直播封面")}}
         item { TextButton(onClick=onIdentity){Text("实名认证")}}
+        item { OutlinedButton(onClick = onReferral, modifier = Modifier.fillMaxWidth()) { Text("拉新送币") } }
+        if (customerServiceAvailable) item { OutlinedButton(onClick = onCustomerService, modifier = Modifier.fillMaxWidth()) { Text("联系客服") } }
         item { TextButton(onClick = onLogout) { Text("退出登录") } }
         item {
             level?.let { Text("累计消费 ${it.viewerPoints} 积分 · 主播积分 ${it.creatorPoints}", style = MaterialTheme.typography.bodySmall, color = Fog) }

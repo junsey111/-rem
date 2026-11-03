@@ -36,12 +36,12 @@ private fun java.io.InputStream.readBytesLimited(limit:Int):ByteArray{
  return output.toByteArray()
 }
 @Composable
-fun LiveCoverImage(path:String){
+fun LiveCoverImage(path:String,onLoaded:((Boolean)->Unit)?=null){
  var bitmap by remember(path){mutableStateOf<android.graphics.Bitmap?>(null)}
- LaunchedEffect(path){bitmap=withContext(Dispatchers.IO){runCatching{
+ LaunchedEffect(path){val loaded=withContext(Dispatchers.IO){runCatching{
   require(path.matches(Regex("/live/covers/[1-9][0-9]{0,9}")))
   val connection=URL(BuildConfig.BILLD_API_URL.trimEnd('/')+path).openConnection() as HttpURLConnection
   try{connection.connectTimeout=5000;connection.readTimeout=5000;connection.instanceFollowRedirects=false;check(connection.responseCode==200);val bytes=connection.inputStream.use{it.readBytesLimited(2*1024*1024+1)};check(bytes.size<=2*1024*1024);BitmapFactory.decodeByteArray(bytes,0,bytes.size)}finally{connection.disconnect()}
- }.getOrNull()}}
+ }.getOrNull()};bitmap=loaded;onLoaded?.invoke(loaded!=null)}
  bitmap?.let{Image(it.asImageBitmap(),contentDescription=null,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxSize())}
 }
