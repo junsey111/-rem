@@ -7,6 +7,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.pedro.common.ConnectChecker
 import com.pedro.encoder.input.video.CameraHelper
+import com.pedro.encoder.input.gl.render.filters.BeautyFilterRender
+import com.pedro.encoder.input.gl.render.filters.BrightnessFilterRender
+import com.pedro.encoder.input.gl.render.filters.SaturationFilterRender
 import com.pedro.library.rtmp.RtmpCamera2
 import com.pedro.library.view.OpenGlView
 import kotlinx.coroutines.CancellableContinuation
@@ -20,7 +23,7 @@ import kotlin.coroutines.resumeWithException
  * Publishes the host camera and microphone to SRS over RTMP.
  * Owns the camera until [stop]. LiveKit must not enable its camera while this is running.
  */
-class SrsIngestPublisher(context: Context) {
+class SrsIngestPublisher(context: Context, private var beautySettings: CameraBeautySettings = CameraBeautySettings()) {
     private val appContext = context.applicationContext
     private var connectResult: CancellableContinuation<Unit>? = null
     private var preview: OpenGlView? = null
@@ -52,6 +55,7 @@ class SrsIngestPublisher(context: Context) {
         check(!started && !stopped) { "推流已经结束" }
         started = true
         camera.streamClient.setReTries(0)
+        applyBeautyFilters()
         if (!camera.prepareVideo() || !camera.prepareAudio()) {
             throw IllegalStateException("无法准备摄像头或麦克风")
         }
@@ -65,6 +69,31 @@ class SrsIngestPublisher(context: Context) {
                 val pending = takeConnect()
                 if (pending != null && pending.isActive) pending.resumeWithException(error)
             }
+        }
+    }
+
+    fun updateBeauty(settings: CameraBeautySettings) {
+        if (stopped || beautySettings == settings) return
+        beautySettings = settings
+        if (started) applyBeautyFilters()
+    }
+
+    private fun applyBeautyFilters() {
+        val gl = camera.glInterface
+        gl.clearFilters()
+        var first = true
+        fun add(filter: com.pedro.encoder.input.gl.render.filters.BaseFilterRender) {
+            if (first) {
+                gl.setFilter(filter)
+                first = false
+            } else gl.addFilter(filter)
+        }
+        if (beautySettings.smoothing) add(BeautyFilterRender())
+        if (beautySettings.brightness != 0f) {
+            add(BrightnessFilterRender().apply { brightness = beautySettings.brightness })
+        }
+        if (beautySettings.saturation != 1f) {
+            add(SaturationFilterRender().apply { saturation = beautySettings.saturation })
         }
     }
 

@@ -182,6 +182,22 @@ revenueRouter.get('/earnings', async (ctx, next) => {
   await next();
 });
 
+revenueRouter.get('/sessions', async ctx => {
+  await requireUser(ctx);
+  const result = await axios.get(`${REVENUE_API_URL}/v1/creators/me/sessions`, {
+    headers: { Authorization: ctx.headers.authorization || '' }, timeout: 10000,
+  });
+  successHandler({ ctx, data: result });
+});
+
+revenueRouter.get('/supporters', async ctx => {
+  await requireUser(ctx);
+  const result = await axios.get(`${REVENUE_API_URL}/v1/creators/me/supporters`, {
+    headers: { Authorization: ctx.headers.authorization || '' }, timeout: 10000,
+  });
+  successHandler({ ctx, data: result });
+});
+
 revenueRouter.get('/rankings/creators', async (ctx, next) => {
   await requireUser(ctx);
   const result = await axios.get(`${REVENUE_API_URL}/v1/rankings/creators`, {

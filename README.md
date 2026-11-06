@@ -138,6 +138,8 @@ LiveKit 房间 token 入口为 `POST /livekit/token`（JSON：`live_session_id`�
 
 既有数据库部署前执行 Billd 的 `migrations/20261102_recharge_orders.sql`，并部署对应订单 model 与路由。初始化使用 DB_SYNC_MODE=3 时不会自动创建新表，必须执行该迁移。新模型已在 initDb 中显式注册，以便正常数据库同步模式创建。商户缺少配置时接口返回 503；需要支付宝可访问的 PUBLIC_BASE_URL 才能接收真实通知。当前 VM 未配置有效商户，尚不能完成真实支付。
 
+关注关系、动态、评论、访客和用户屏蔽功能需要先在既有 Billd 数据库执行 `migrations/20261105_user_follow_relation.sql`、`migrations/20261105_user_moments.sql`、`migrations/20261105_profile_visits.sql` 和 `migrations/20261105_user_blocks.sql`；这些脚本可重复执行，不会清理已有数据。动态支持纯文字发布、全部/关注/本人/指定用户主页列表、点赞、评论分页、评论发布/本人删除及本人动态删除；图片和内容审核后台尚未接入，不能据此开放不受审核的公开生产发布。访客记录在查看其他用户主页时产生，每个访客只保留最近查看时间。屏蔽关系从用户搜索和推荐中双向隐藏账号，并过滤动态与评论；OpenIM 私信端的权限拦截尚未接入。
+
 充值路由回归：先在 Billd 目录执行 `pnpm build`，再运行 `node --test tests/alipay-orders.test.cjs`。测试用临时 RSA 密钥验证真实 SDK 验签，订单和账务边界隔离；不能代替真实付款验收。
 
 漏通知补偿：本人查询订单时，后端会对待确认订单向支付宝主动查单并验签，成功后使用同一账务幂等键入账。部署已有订单表时还须执行一次 `migrations/20261102_recharge_reconciliation.sql`；持久化查单时间保证同一订单 30 秒内最多一条请求取得查单资格。补偿在用户查询时触发，完整 Billd 服务另有每 30 秒扫描待确认订单的后台补偿。网络故障或未支付仍显示待确认，不根据超时推断到账。设置仅用于测试的 `MYSQL_TEST_URL` 后，可运行 `node --test tests/recharge-order-mysql.test.cjs` 验证真实模型和并发领取；测试创建并删除独立数据库。
@@ -200,3 +202,9 @@ Billd 通过内部 `LIVEKIT_API_URL`（默认 `http://livekit:7880`）调用 Liv
 ### 媒体鉴权更新（2026-11-03）
 
 SRS 推流票据、HLS 播放列表/分片鉴权、数据库权威试看窗口及 LiveKit 观看权限已接入，配置、迁移、新旧 APK 兼容和测试范围见 [MEDIA_SECURITY.md](MEDIA_SECURITY.md)。启动前须设置独立随机 `MEDIA_AUTH_KEY`，Revenue 迁移到 00022。旧文档所述直接访问 SRS 播放端口不再适用于新版配置。
+
+消息通知偏好需要在既有 Billd 数据库执行 `migrations/20261106_user_notification_preferences.sql`；Android 通知设置页的四类偏好会按账号保存。系统推送仍需单独接入推送服务和设备令牌，当前设置不会伪装成已送达的推送。
+
+发现页的性别、年龄、同城筛选依赖 Revenue 的 `00025_profile_gender.sql`，部署 Revenue 时需按顺序执行该迁移。性别是用户自填资料；筛选只匹配本人填写的完整资料，不对未填写信息作推断。主播后台最近 30 场记录通过 Revenue `/v1/creators/me/sessions` 按当前登录主播查询。守护页展示当前主播近 7 日成功收礼用户及金额，需执行 Revenue `00026_creator_supporter_index.sql`；该列表不授予守护身份或权益。
+
+任务中心的日常互动进度通过 Billd `/moments/tasks/today` 读取 UTC 当日的动态、点赞和评论记录。每日签到由 `/moments/tasks/checkin` 按 UTC 日期幂等记录；部署前执行 Billd `migrations/20261107_user_daily_checkin.sql`。当前没有任务积分账本，页面只展示真实签到和互动次数，不显示或发放奖励。新手任务、直播任务及签到奖励需在服务端配置任务规则和奖励账本后再开放。

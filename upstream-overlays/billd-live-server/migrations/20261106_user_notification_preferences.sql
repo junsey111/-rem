@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS `user_notification_preference` (
+  `user_id` INT UNSIGNED NOT NULL,
+  `messages` TINYINT(1) NOT NULL DEFAULT 1,
+  `visitors` TINYINT(1) NOT NULL DEFAULT 1,
+  `announcements` TINYINT(1) NOT NULL DEFAULT 1,
+  `marketing` TINYINT(1) NOT NULL DEFAULT 0,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

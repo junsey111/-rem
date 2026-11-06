@@ -39,8 +39,17 @@ data class Gift(
     val iconUrl: String = "",
 )
 data class Wallet(val balance: Long)
-data class UserLevel(val viewerLevel: Int, val creatorLevel: Int, val viewerPoints: Long, val creatorPoints: Long)
+data class UserLevel(
+    val viewerLevel: Int,
+    val creatorLevel: Int,
+    val viewerPoints: Long,
+    val creatorPoints: Long,
+    val viewerNextLevelPoints: Long,
+    val creatorNextLevelPoints: Long,
+)
 data class Earnings(val diamonds: Long, val gifts: Long)
+data class CreatorLiveSession(val id: String, val status: String, val startedAt: String, val durationSeconds: Long)
+data class CreatorSupporter(val userId: Long, val giftCount: Long, val coins: Long)
 data class RankingEntry(val userId: Long, val value: Long, val gifts: Long)
 data class LiveKitCredentials(val url: String, val token: String)
 data class DmCallCredentials(
@@ -64,11 +73,22 @@ data class GiftHistory(val orders: List<GiftReceipt>, val nextCursor: String)
 class PlatformHttpException(val statusCode: Int, message: String, val errorCode: String? = null) : IllegalStateException(message)
 class ModerationRejectedException(message: String) : IllegalStateException(message)
 
-data class UserProfile(val age: Int?, val region: String?, val source: String)
+data class UserProfile(val age: Int?, val region: String?, val source: String, val gender: String? = null)
+data class IdentityVerificationStatus(val enabled: Boolean, val requestId: String?, val status: String?)
 
 data class OperationsSummary(val users: Long, val disabledUsers: Long, val listedRooms: Long, val pendingOrders: Long, val creditedOrders: Long, val observedAt: String)
 data class OperationsUser(val id: Long, val username: String, val status: Int)
 data class OperationsUsers(val users: List<OperationsUser>, val total: Long, val page: Int, val pageSize: Int)
+data class PublicUser(val id: Long, val username: String, val avatar: String?, val description: String?, val isFollowing: Boolean = false)
+data class UserRelations(val users: List<PublicUser>, val nextCursor: String)
+data class MomentPost(val id: String, val userId: Long, val username: String, val content: String, val createdAt: String, val likeCount: Long, val isLiked: Boolean, val commentCount: Long = 0)
+data class MomentComment(val id: String, val userId: Long, val username: String, val content: String, val createdAt: String, val isMine: Boolean)
+data class MomentDailyProgress(val published: Int, val liked: Int, val commented: Int)
+data class DailyCheckin(val today: String, val checkedIn: Boolean, val streakDays: Int, val rewardConfigured: Boolean)
+data class CloseFriendUser(val id: Long, val username: String, val avatar: String?)
+data class CloseFriendRelations(val friends: List<CloseFriendUser>, val incoming: List<CloseFriendUser>, val outgoing: List<CloseFriendUser>)
+data class ProfileVisitor(val user: PublicUser, val lastSeenAt: String)
+data class NotificationPreferences(val messages: Boolean, val visitors: Boolean, val announcements: Boolean, val marketing: Boolean)
 data class ModerationLive(val id: String, val creatorId: String, val startedAt: String)
 data class ModerationLives(val lives: List<ModerationLive>, val nextCursor: String)
 data class ModerationAction(val id: String, val requestId: String, val operatorId: String, val liveId: String, val reason: String, val createdAt: String)
@@ -128,17 +148,205 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         }, data.getLong("total"), data.getInt("page"), data.getInt("page_size"))
     }
 
+    suspend fun searchUsers(token: String, query: String): List<PublicUser> = withContext(Dispatchers.IO) {
+        val rows = request("/user/search", "POST", token, JSONObject().put("query", query)).getJSONArray("users")
+        (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { user ->
+            PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank),
+                user.optString("desc").takeIf(String::isNotBlank), user.optBoolean("is_following"))
+        } }
+    }
+
+    suspend fun recommendedUsers(token: String, gender: String? = null, ageMin: Int? = null, ageMax: Int? = null, sameRegion: Boolean = false): List<PublicUser> = withContext(Dispatchers.IO) {
+        val query = buildList {
+            gender?.let { add("gender=${URLEncoder.encode(it, "UTF-8")}") }
+            ageMin?.let { add("age_min=$it") }
+            ageMax?.let { add("age_max=$it") }
+            if (sameRegion) add("region=same")
+        }.joinToString("&")
+        val rows = request("/user/recommendations" + if (query.isEmpty()) "" else "?$query", token = token).getJSONArray("users")
+        (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { user ->
+            PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank),
+                user.optString("desc").takeIf(String::isNotBlank), user.optBoolean("is_following"))
+        } }
+    }
+
+    suspend fun recordProfileVisit(token: String, userId: Long) = withContext(Dispatchers.IO) {
+        request("/user/visits", "POST", token, JSONObject().put("user_id", userId))
+        Unit
+    }
+
+    suspend fun profileVisitors(token: String): List<ProfileVisitor> = withContext(Dispatchers.IO) {
+        val rows = request("/user/visitors", token = token).getJSONArray("visitors")
+        (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
+            val user = row.optJSONObject("user") ?: return@let null
+            ProfileVisitor(PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank), null), row.optString("last_seen_at"))
+        } }
+    }
+
+    suspend fun relations(token: String, type: String, beforeId: String = ""): UserRelations = withContext(Dispatchers.IO) {
+        require(type in setOf("following", "followers", "friends"))
+        require(beforeId.isBlank() || beforeId.matches(Regex("[1-9][0-9]{0,19}")))
+        val path = "/user/relations?type=$type" + if (beforeId.isBlank()) "" else "&before_id=$beforeId"
+        val data = request(path, token = token)
+        val rows = data.getJSONArray("users")
+        UserRelations((0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { user ->
+            PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank),
+                user.optString("desc").takeIf(String::isNotBlank))
+        } }, data.optString("next_before_id"))
+    }
+
+    suspend fun setFollowing(token: String, userId: Long, following: Boolean) = withContext(Dispatchers.IO) {
+        request("/user/${if (following) "follow" else "unfollow"}", "POST", token, JSONObject().put("user_id", userId))
+        Unit
+    }
+
+    suspend fun blockedUsers(token: String): List<PublicUser> = withContext(Dispatchers.IO) {
+        val rows = request("/user/blocks", token = token).getJSONArray("users")
+        (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.optJSONObject("user")?.let { user ->
+            PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank), user.optString("desc").takeIf(String::isNotBlank))
+        } }
+    }
+
+    suspend fun setBlocked(token: String, userId: Long, blocked: Boolean) = withContext(Dispatchers.IO) {
+        request(if (blocked) "/user/blocks" else "/user/blocks/$userId", if (blocked) "POST" else "DELETE", token,
+            if (blocked) JSONObject().put("user_id", userId) else null)
+        Unit
+    }
+
+    suspend fun notificationPreferences(token: String): NotificationPreferences = withContext(Dispatchers.IO) {
+        parseNotificationPreferences(request("/user/notification-preferences", token = token).getJSONObject("preferences"))
+    }
+
+    suspend fun saveNotificationPreference(token: String, key: String, enabled: Boolean): NotificationPreferences = withContext(Dispatchers.IO) {
+        require(key in setOf("messages", "visitors", "announcements", "marketing"))
+        parseNotificationPreferences(request("/user/notification-preferences", "PUT", token, JSONObject().put(key, enabled)).getJSONObject("preferences"))
+    }
+
+    private fun parseNotificationPreferences(data: JSONObject) = NotificationPreferences(
+        data.getBoolean("messages"), data.getBoolean("visitors"), data.getBoolean("announcements"), data.getBoolean("marketing"),
+    )
+
+    suspend fun moments(token: String, scope: String, beforeId: String = "", userId: Long? = null): Pair<List<MomentPost>, String> = withContext(Dispatchers.IO) {
+        require(scope in setOf("all", "following", "mine", "user"))
+        require((scope == "user") == (userId != null) && (userId == null || userId > 0))
+        val path = "/moments?scope=$scope" + (userId?.let { "&user_id=$it" } ?: "") + if (beforeId.isBlank()) "" else "&before_id=$beforeId"
+        val data = request(path, token = token)
+        val rows = data.getJSONArray("moments")
+        val posts = (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
+            val author = row.optJSONObject("author") ?: return@let null
+            MomentPost(row.getString("id"), row.getLong("user_id"), author.getString("username"), row.getString("content"),
+                row.optString("created_at"), row.optLong("like_count"), row.optBoolean("is_liked"), row.optLong("comment_count"))
+        } }
+        posts to data.optString("next_before_id")
+    }
+
+    suspend fun momentDailyProgress(token: String): MomentDailyProgress = withContext(Dispatchers.IO) {
+        val data = request("/moments/tasks/today", token = token)
+        MomentDailyProgress(data.optInt("published"), data.optInt("liked"), data.optInt("commented"))
+    }
+
+    suspend fun dailyCheckin(token: String): DailyCheckin = withContext(Dispatchers.IO) {
+        parseDailyCheckin(request("/moments/tasks/checkin", token = token))
+    }
+
+    suspend fun submitDailyCheckin(token: String): DailyCheckin = withContext(Dispatchers.IO) {
+        parseDailyCheckin(request("/moments/tasks/checkin", "POST", token, JSONObject()))
+    }
+
+    private fun parseDailyCheckin(data: JSONObject) = DailyCheckin(data.getString("today"), data.getBoolean("checked_in"),
+        data.getInt("streak_days"), data.optBoolean("reward_configured"))
+
+    suspend fun closeFriendRelations(token: String): CloseFriendRelations = withContext(Dispatchers.IO) {
+        val data = request("/close-friends", token = token)
+        fun parse(key: String): List<CloseFriendUser> {
+            val rows = data.optJSONArray(key) ?: return emptyList()
+            return (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.optJSONObject("user")?.let { user ->
+                CloseFriendUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank))
+            } }
+        }
+        CloseFriendRelations(parse("friends"), parse("incoming"), parse("outgoing"))
+    }
+
+    suspend fun inviteCloseFriend(token: String, userId: Long) = withContext(Dispatchers.IO) {
+        require(userId > 0)
+        request("/close-friends", "POST", token, JSONObject().put("user_id", userId))
+        Unit
+    }
+
+    suspend fun acceptCloseFriend(token: String, userId: Long) = withContext(Dispatchers.IO) {
+        require(userId > 0)
+        request("/close-friends/$userId/accept", "POST", token, JSONObject())
+        Unit
+    }
+
+    suspend fun removeCloseFriend(token: String, userId: Long) = withContext(Dispatchers.IO) {
+        require(userId > 0)
+        request("/close-friends/$userId", "DELETE", token)
+        Unit
+    }
+
+    suspend fun publishMoment(token: String, content: String): MomentPost = withContext(Dispatchers.IO) {
+        val row = request("/moments", "POST", token, JSONObject().put("content", content))
+        MomentPost(row.getString("id"), row.getLong("user_id"), "我", row.getString("content"), row.optString("created_at"), 0, false)
+    }
+
+    suspend fun deleteMoment(token: String, id: String) = withContext(Dispatchers.IO) {
+        request("/moments/$id", "DELETE", token)
+        Unit
+    }
+
+    suspend fun likeMoment(token: String, id: String, liked: Boolean) = withContext(Dispatchers.IO) {
+        request("/moments/$id/like", if (liked) "PUT" else "DELETE", token)
+        Unit
+    }
+
+    suspend fun momentComments(token: String, momentId: String, beforeId: String = ""): Pair<List<MomentComment>, String> = withContext(Dispatchers.IO) {
+        require(momentId.matches(Regex("[1-9][0-9]{0,19}")))
+        val data = request("/moments/$momentId/comments" + if (beforeId.isBlank()) "" else "?before_id=$beforeId", token = token)
+        val rows = data.getJSONArray("comments")
+        val comments = (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
+            val author = row.optJSONObject("author") ?: return@let null
+            MomentComment(row.getString("id"), row.getLong("user_id"), author.getString("username"), row.getString("content"),
+                row.optString("created_at"), row.optBoolean("is_mine"))
+        } }
+        comments to data.optString("next_before_id")
+    }
+
+    suspend fun publishMomentComment(token: String, momentId: String, content: String): MomentComment = withContext(Dispatchers.IO) {
+        require(momentId.matches(Regex("[1-9][0-9]{0,19}")))
+        val row = request("/moments/$momentId/comments", "POST", token, JSONObject().put("content", content)).getJSONObject("comment")
+        MomentComment(row.getString("id"), row.getLong("user_id"), row.getJSONObject("author").getString("username"),
+            row.getString("content"), row.optString("created_at"), row.optBoolean("is_mine"))
+    }
+
+    suspend fun deleteMomentComment(token: String, momentId: String, commentId: String) = withContext(Dispatchers.IO) {
+        require(momentId.matches(Regex("[1-9][0-9]{0,19}")) && commentId.matches(Regex("[1-9][0-9]{0,19}")))
+        request("/moments/$momentId/comments/$commentId", "DELETE", token)
+        Unit
+    }
+
     suspend fun profile(token: String): UserProfile = withContext(Dispatchers.IO) {
         parseProfile(request("/revenue/profile", token = token))
     }
 
-    suspend fun saveProfile(token: String, age: Int, region: String): UserProfile = withContext(Dispatchers.IO) {
-        parseProfile(request("/revenue/profile", "PUT", token, JSONObject().put("age_years", age).put("region_code", region)))
+    suspend fun saveProfile(token: String, age: Int, region: String, gender: String): UserProfile = withContext(Dispatchers.IO) {
+        parseProfile(request("/revenue/profile", "PUT", token, JSONObject().put("age_years", age).put("region_code", region).put("gender", gender)))
+    }
+
+    suspend fun identityVerificationStatus(token: String): IdentityVerificationStatus = withContext(Dispatchers.IO) {
+        val data = request("/verification/me", token = token)
+        val verification = data.optJSONObject("verification")
+        IdentityVerificationStatus(data.optBoolean("enabled"), verification?.optString("request_id"), verification?.optString("status"))
+    }
+
+    suspend fun startIdentityVerification(token: String, requestId: String): String = withContext(Dispatchers.IO) {
+        request("/verification/start", "POST", token, JSONObject().put("request_id", requestId)).getString("verification_url")
     }
 
     private fun parseProfile(data: JSONObject) = UserProfile(
         if (data.isNull("age_years")) null else data.optInt("age_years"),
         if (data.isNull("region_code")) null else data.optString("region_code"), data.optString("source"),
+        if (data.isNull("gender")) null else data.optString("gender"),
     )
     suspend fun register(username: String, password: String): UserSession = withContext(Dispatchers.IO) {
         val data = request("/user/create", "POST", body = JSONObject()
@@ -198,6 +406,8 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
             creatorLevel = data.optInt("creator_level"),
             viewerPoints = data.optLong("viewer_points"),
             creatorPoints = data.optLong("creator_points"),
+            viewerNextLevelPoints = data.optLong("viewer_next_level_points"),
+            creatorNextLevelPoints = data.optLong("creator_next_level_points"),
         )
     }
 
@@ -214,6 +424,20 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
     suspend fun earnings(token: String, period: String): Earnings = withContext(Dispatchers.IO) {
         val data = request("/revenue/earnings?period=$period", token = token)
         Earnings(data.optLong("diamonds"), data.optLong("gifts"))
+    }
+
+    suspend fun creatorSessions(token: String): List<CreatorLiveSession> = withContext(Dispatchers.IO) {
+        val rows = request("/revenue/sessions", token = token).getJSONArray("sessions")
+        (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
+            CreatorLiveSession(row.getString("live_session_id"), row.getString("status"), row.getString("started_at"), row.getLong("duration_seconds"))
+        } }
+    }
+
+    suspend fun creatorSupporters(token: String): List<CreatorSupporter> = withContext(Dispatchers.IO) {
+        val rows = request("/revenue/supporters", token = token).getJSONArray("supporters")
+        (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
+            CreatorSupporter(row.getLong("user_id"), row.getLong("gift_count"), row.getLong("coins"))
+        } }
     }
 
     suspend fun creatorRankings(token: String, period: String): List<RankingEntry> = withContext(Dispatchers.IO) {

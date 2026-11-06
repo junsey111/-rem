@@ -8,6 +8,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -45,6 +47,7 @@ fun BusinessSheet(session:UserSession,api:LivePlatformApi,initialTab:String="wit
     var target by remember { mutableStateOf(reportTarget?.toString().orEmpty()) }
     var available by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
+    var reportSubmitted by remember { mutableStateOf(false) }
     val labels=mapOf("withdrawals" to "提现","refunds" to "退款","creator-applications" to "主播申请","reports" to "举报")
     LaunchedEffect(tab,refresh){
         busy=true;error=null;rows=emptyList()
@@ -61,7 +64,7 @@ fun BusinessSheet(session:UserSession,api:LivePlatformApi,initialTab:String="wit
     }
     fun send(){scope.launch{
         busy=true;error=null
-        try{val command=pending.getOrThrow()?:return@launch;api.businessRequest(session.token,command.getString("path"),"POST",command.getJSONObject("body"));outbox.clear();pending=Result.success(null);refresh++}
+        try{val command=pending.getOrThrow()?:return@launch;api.businessRequest(session.token,command.getString("path"),"POST",command.getJSONObject("body"));outbox.clear();pending=Result.success(null);reportSubmitted=command.getString("path")=="/revenue/reports";refresh++}
         catch(e:CancellationException){throw e}catch(e:PlatformHttpException){error=e.message;if(e.statusCode in 400..499 && e.statusCode!=429){outbox.clear();pending=Result.success(null)}}
         catch(e:Exception){error="结果尚未确认，请用原单号核实。${e.message.orEmpty()}"}finally{busy=false}
     }}
@@ -70,17 +73,25 @@ fun BusinessSheet(session:UserSession,api:LivePlatformApi,initialTab:String="wit
         try{val result=api.businessRequest(session.token,"/revenue/$tab?before_id=$nextCursor");val array=result.getJSONArray(if(tab=="withdrawals"||tab=="refunds")tab else "reviews");rows=rows+(0 until array.length()).map{array.getJSONObject(it)};nextCursor=result.optString("next_before_id").takeUnless{it=="null"}.orEmpty()}
         catch(e:CancellationException){throw e}catch(e:Exception){error=e.message?:"读取失败，请重试"}finally{busy=false}
     }}
-    fun submit(){try{
+    fun submit(reportCategory: String? = null){try{
         val body=JSONObject().put("request_id",UUID.randomUUID().toString())
         when(tab){
             "withdrawals"->{require(amount.toLongOrNull()?.let{it>0}==true){"请输入有效钻石数"};require(method.isNotBlank()&&account.isNotBlank()&&name.isNotBlank()){"请填写收款方式、账号和姓名"};body.put("diamonds",amount.toLong()).put("payout_method",method.trim()).put("payout_account",account.trim()).put("payout_name",name.trim())}
             "refunds"->{require(order.isNotBlank()&&content.isNotBlank()){"请填写充值单号和原因"};body.put("recharge_request_id",order.trim()).put("reason",content.trim())}
             "creator-applications"->{require(content.isNotBlank()&&evidence.isNotBlank()){"请填写简介和材料引用"};body.put("content",content.trim()).put("evidence_reference",evidence.trim())}
-            "reports"->{require(target.toLongOrNull()?.let{it>0}==true&&content.isNotBlank()){"请填写被举报用户 ID 和问题描述"};body.put("target_type","USER").put("target_id",target.toLong()).put("content",content.trim()).put("evidence_reference",evidence.trim())}
+            "reports"->{require(target.toLongOrNull()?.let{it>0}==true&&content.isNotBlank()){"请填写被举报用户 ID 和问题描述"};body.put("target_type","USER").put("target_id",target.toLong()).put("content",reportCategory?.let { "【$it】${content.trim()}" } ?: content.trim()).put("evidence_reference",evidence.trim())}
         }
         outbox.save("/revenue/$tab",body);pending=Result.success(outbox.load());send()
     }catch(e:Exception){error=e.message}}
-    ModalBottomSheet(onDismissRequest={if(!busy)onDismiss()}){
+    if (initialTab == "reports" && reportTarget != null && pending.isSuccess && (pending.getOrNull() == null || pending.getOrNull()?.optString("path") == "/revenue/reports")) {
+        Dialog(onDismissRequest = { if (!busy) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            QumiReportScreen(content = content, onContent = { content = it }, busy = busy, error = error,
+                pending = pending.getOrNull() != null, onBack = { if (!busy) onDismiss() },
+                onSubmit = { submit(it) }, onRetry = { send() })
+            if (reportSubmitted) AlertDialog(onDismissRequest = onDismiss, title = { Text("举报已提交") },
+                text = { Text("平台将核实你提供的内容。") }, confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } })
+        }
+    } else ModalBottomSheet(onDismissRequest={if(!busy)onDismiss()}){
         LazyColumn(Modifier.fillMaxWidth().imePadding(),contentPadding=PaddingValues(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
             item{Text("账户服务",style=MaterialTheme.typography.titleLarge);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){labels.forEach{(key,label)->TextButton(enabled=!busy,onClick={tab=key}){Text(label)}}}}
             item{if(busy)LinearProgressIndicator(Modifier.fillMaxWidth());error?.let{Text(it,color=MaterialTheme.colorScheme.error)};if(pending.isFailure)Text("本地申请记录无法读取，暂不能提交新申请",color=MaterialTheme.colorScheme.error)}

@@ -4,7 +4,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class HostSurfacesTest {
-    private val level = UserLevel(viewerLevel = 2, creatorLevel = 4, viewerPoints = 10, creatorPoints = 40)
+    private val level = UserLevel(
+        viewerLevel = 2,
+        creatorLevel = 4,
+        viewerPoints = 10,
+        creatorPoints = 40,
+        viewerNextLevelPoints = 500,
+        creatorNextLevelPoints = 10000,
+    )
 
     @Test fun otherHostLevelStaysUnpublished() {
         assertEquals("主播等级暂未公开", hostLevelLabel(9, 1, level))

@@ -82,7 +82,10 @@ func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentS
 	mux.HandleFunc("/v1/internal/admission", s.requireInternalKey(s.wrap("admission", s.handleAdmission)))
 	mux.HandleFunc("/v1/wallets/me", s.requireAuth(s.wrap("wallet_balance", s.handleWalletBalance)))
 	mux.HandleFunc("/v1/users/me/profile", s.requireAuth(s.wrap("user_profile", s.handleUserProfile)))
+	mux.HandleFunc("/v1/users/discovery", s.requireAuth(s.wrap("user_discovery", s.handleUserDiscovery)))
 	mux.HandleFunc("/v1/creators/me/earnings", s.requireAuth(s.wrap("creator_earnings", s.handleCreatorEarnings)))
+	mux.HandleFunc("/v1/creators/me/sessions", s.requireAuth(s.wrap("creator_sessions", s.handleCreatorSessions)))
+	mux.HandleFunc("/v1/creators/me/supporters", s.requireAuth(s.wrap("creator_supporters", s.handleCreatorSupporters)))
 	mux.HandleFunc("/v1/users/me/level", s.requireAuth(s.wrap("user_level", s.handleUserLevel)))
 	mux.HandleFunc("/v1/referrals/me", s.requireAuth(s.wrap("referral_me", s.handleReferralMe)))
 	mux.HandleFunc("/v1/referrals/redeem", s.requireAuth(s.wrap("referral_redeem", s.handleReferralRedeem)))
@@ -217,6 +220,78 @@ func (s *Server) handleCreatorEarnings(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"creator_id": userID, "period": period, "diamonds": diamonds + dmDiamonds, "gifts": gifts + dmGifts})
 }
 
+func (s *Server) handleCreatorSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
+		return
+	}
+	userID := authenticatedUserID(r)
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT live_session_id, status, started_at,
+			GREATEST(0, TIMESTAMPDIFF(SECOND, started_at, COALESCE(closed_at, UTC_TIMESTAMP(6))))
+		FROM live_sessions WHERE creator_id=? ORDER BY started_at DESC LIMIT 30`, userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	defer rows.Close()
+	sessions := make([]map[string]any, 0)
+	for rows.Next() {
+		var id uint64
+		var status string
+		var startedAt time.Time
+		var duration int64
+		if err := rows.Scan(&id, &status, &startedAt, &duration); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		sessions = append(sessions, map[string]any{"live_session_id": strconv.FormatUint(id, 10), "status": status,
+			"started_at": startedAt.UTC().Format(time.RFC3339), "duration_seconds": duration})
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+func (s *Server) handleCreatorSupporters(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
+		return
+	}
+	userID := authenticatedUserID(r)
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT viewer_id, COUNT(*), COALESCE(SUM(charged_coins),0)
+		FROM gift_orders
+		WHERE creator_id=? AND status='ACCEPTED' AND created_at>=UTC_TIMESTAMP(6)-INTERVAL 7 DAY
+		GROUP BY viewer_id ORDER BY 3 DESC, viewer_id ASC LIMIT 50`, userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	defer rows.Close()
+	type supporter struct {
+		UserID uint64 `json:"user_id"`
+		Gifts  int64  `json:"gift_count"`
+		Coins  int64  `json:"coins"`
+	}
+	supporters := make([]supporter, 0)
+	for rows.Next() {
+		var item supporter
+		if err := rows.Scan(&item.UserID, &item.Gifts, &item.Coins); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		supporters = append(supporters, item)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"period_days": 7, "supporters": supporters})
+}
+
 func (s *Server) handleUserLevel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
@@ -242,11 +317,13 @@ func (s *Server) handleUserLevel(w http.ResponseWriter, r *http.Request) {
 	spent += dmSpent
 	earned += dmEarned
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"user_id":        userID,
-		"viewer_points":  spent,
-		"viewer_level":   service.LevelForPoints(spent),
-		"creator_points": earned,
-		"creator_level":  service.LevelForPoints(earned),
+		"user_id":                   userID,
+		"viewer_points":             spent,
+		"viewer_level":              service.LevelForPoints(spent),
+		"viewer_next_level_points":  service.NextLevelPoints(spent),
+		"creator_points":            earned,
+		"creator_level":             service.LevelForPoints(earned),
+		"creator_next_level_points": service.NextLevelPoints(earned),
 	})
 }
 

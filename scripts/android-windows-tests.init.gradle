@@ -1,0 +1,17 @@
+// Gradle 8's Windows test worker can lose non-ASCII classpath entries.
+// Usage: gradle -I scripts/android-windows-tests.init.gradle :app:testDebugUnitTest
+gradle.projectsEvaluated {
+  gradle.rootProject.project(':app').tasks.named('testDebugUnitTest') {
+    doFirst {
+      def original = classpath.files.toList()
+      def targetRoot = java.nio.file.Files.createTempDirectory('liveroom-unit-classpath-').toFile()
+      classpath = project.files(original.withIndex().collect { source, index ->
+        if (source.toString().chars().allMatch { it < 128 } || !source.exists()) return source
+        def dest = new File(targetRoot, "entry-${index}" + (source.isDirectory() ? '' : '.jar'))
+        if (source.isDirectory()) { project.copy { from source; into dest } }
+        else { dest.bytes = source.bytes }
+        return dest
+      })
+    }
+  }
+}

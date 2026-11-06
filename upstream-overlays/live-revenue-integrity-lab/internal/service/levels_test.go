@@ -15,4 +15,13 @@ func TestLevelForPoints(t *testing.T) {
 			t.Fatalf("LevelForPoints(%d) = %d, want %d", test.points, got, test.level)
 		}
 	}
+	thresholds := []struct {
+		points int64
+		next   int64
+	}{{0, 100}, {99, 100}, {100, 500}, {499, 500}, {500, 2000}, {2000, 10000}, {10000, 50000}, {50000, 0}}
+	for _, test := range thresholds {
+		if got := NextLevelPoints(test.points); got != test.next {
+			t.Fatalf("NextLevelPoints(%d) = %d, want %d", test.points, got, test.next)
+		}
+	}
 }

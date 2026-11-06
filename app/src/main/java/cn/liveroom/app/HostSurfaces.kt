@@ -20,8 +20,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -74,7 +74,7 @@ fun HostIntroductionPage(
                 .windowInsetsPadding(WindowInsets.safeDrawing),
         ) {
             Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "关闭主播介绍") }
+                IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, contentDescription = "关闭主播介绍") }
                 Text("主播介绍", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             }
             Column(
@@ -117,7 +117,7 @@ private fun HostCover(coverPath: String?) {
         }
         if (coverNote != null) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Default.LiveTv, contentDescription = null, tint = Color(0xFFCCD2DC), modifier = Modifier.size(32.dp))
+                Icon(Icons.Rounded.LiveTv, contentDescription = null, tint = Color(0xFFCCD2DC), modifier = Modifier.size(32.dp))
                 Text(coverNote, color = Color(0xFFCCD2DC), style = MaterialTheme.typography.bodySmall)
             }
         }

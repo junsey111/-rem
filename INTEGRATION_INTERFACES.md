@@ -42,6 +42,16 @@
 
 Revenue 需要同时提供扣费接口和 `GET /v1/dm/videos/:id/access`（`{unlocked: boolean}`）。缺任一口时，付费视频保持锁定。迁移文件为 `migrations/20261102_openim_dm_video.sql`。
 
+## 蜜友关系
+
+`GET /close-friends` 返回当前账号的 `friends`、`incoming` 和 `outgoing` 用户列表。`POST /close-friends` 使用 `{user_id}` 创建邀请；对方用 `POST /close-friends/:requesterId/accept` 接受。`DELETE /close-friends/:userId` 可忽略/撤销待处理邀请或解除已建立关系。双方任一方向存在屏蔽关系时，不允许邀请或接受，列表隐藏该关系。
+
+关系由唯一的无序用户对保证只能有一条；迁移为 `migrations/20261108_user_close_friends.sql`。DB_SYNC_MODE=2 会通过 Sequelize 模型建表/校正；生产使用已迁移数据库时先执行 SQL 再用 `DB_SYNC_MODE=3` 启动。关系只表达双方同意，不触发收费、金币、礼物或等级权益。
+
+## 用户等级
+
+`GET /revenue/level` 转发 Revenue `GET /v1/users/me/level`，返回观众累计已确认消费积分、主播累计已确认钻石积分、当前等级和下一档积分门槛。最高等级的 `*_next_level_points` 为 `0`。门槛只由 Revenue 计算，客户端不据此发放余额或虚构权益。
+
 ## 本地与部署
 
 本地后台：http://localhost:8000/ 。本地凭据位于 Git 忽略的 `.local/admin-local.json`。本地 API 为 24300，Revenue 为 24808，仅监听回环地址。

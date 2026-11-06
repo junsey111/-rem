@@ -20,3 +20,20 @@ func LevelForPoints(points int64) int {
 	}
 	return 6
 }
+
+func NextLevelPoints(points int64) int64 {
+	switch LevelForPoints(points) {
+	case 1:
+		return 100
+	case 2:
+		return 500
+	case 3:
+		return 2000
+	case 4:
+		return 10000
+	case 5:
+		return 50000
+	default:
+		return 0
+	}
+}

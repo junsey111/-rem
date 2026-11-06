@@ -7,6 +7,13 @@ import '@/model/roomChat.model';
 import '@/model/liveCover.model';
 import '@/model/providerAttempt.model';
 import '@/model/identityVerification.model';
+import '@/model/followRelation.model';
+import '@/model/moment.model';
+import '@/model/profileVisit.model';
+import '@/model/userBlock.model';
+import '@/model/notificationPreference.model';
+import '@/model/dailyCheckin.model';
+import '@/model/closeFriendRelation.model';
 
 import sequelize from '@/config/mysql';
 import { PROJECT_NODE_ENV } from '@/constant';

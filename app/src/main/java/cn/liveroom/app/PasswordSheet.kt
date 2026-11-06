@@ -24,10 +24,9 @@ fun PasswordSheet(token: String, onDismiss: () -> Unit, onChanged: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var uncertain by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    ModalBottomSheet(onDismissRequest = { if (!busy) onDismiss() }) {
-        Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("修改密码", style = MaterialTheme.typography.titleLarge)
-            Text("修改成功后需要重新登录。请记住新密码。", style = MaterialTheme.typography.bodyMedium)
+    QumiModalSheet(onDismiss = onDismiss, dismissEnabled = !busy) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            QumiSheetTitle("修改密码", "修改成功后需要重新登录。请记住新密码。")
             OutlinedTextField(value = old, onValueChange = { old = it.take(1024); error = null }, label = { Text("原密码") },
                 enabled = !busy && !uncertain, singleLine = true, visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())

@@ -7,13 +7,16 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -42,16 +45,28 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.ChatBubbleOutline
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.EmojiEvents
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LiveTv
-import androidx.compose.material.icons.filled.PersonOutline
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.CameraAlt
+import androidx.compose.material.icons.rounded.ChatBubble
+import androidx.compose.material.icons.rounded.ChatBubbleOutline
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.PlayCircleOutline
+import androidx.compose.material.icons.rounded.PersonOutline
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.AccountBalanceWallet
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Campaign
+import androidx.compose.material.icons.rounded.EmojiEvents
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.LiveTv
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -66,6 +81,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -79,6 +95,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -95,6 +112,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -152,9 +172,21 @@ class MainActivity : ComponentActivity() {
 private fun LiveRoomApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var session by remember { mutableStateOf(readSession(context)) }
+    val requestNotificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    var session by remember { mutableStateOf(if (BuildConfig.PREVIEW_QUMI_LOGIN) null else readSession(context)) }
     var loggingOut by remember { mutableStateOf(false) }
     var logoutError by remember { mutableStateOf<String?>(null) }
+    val view = LocalView.current
+    SideEffect {
+        val window = (view.context as? android.app.Activity)?.window
+        if (window != null) {
+            val bars = WindowCompat.getInsetsController(window, view)
+            bars.isAppearanceLightStatusBars = session != null
+            bars.isAppearanceLightNavigationBars = session != null
+            window.statusBarColor = if (session == null) android.graphics.Color.rgb(23, 18, 52) else android.graphics.Color.WHITE
+            window.navigationBarColor = if (session == null) android.graphics.Color.rgb(23, 18, 52) else android.graphics.Color.WHITE
+        }
+    }
     LaunchedEffect(Unit) {
         val api = LivePlatformApi()
         while (true) {
@@ -226,6 +258,13 @@ private fun LiveRoomApp() {
                         }
                     }
                 },
+                onRequestNotifications = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    } else {
+                        context.startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName))
+                    }
+                },
             )
         }
         logoutError?.let { message ->
@@ -247,43 +286,17 @@ private fun AuthScreen(onAuthenticated: (UserSession) -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
-    Column(
-        Modifier.fillMaxSize().background(NightInk).padding(horizontal = 24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("现场 Live", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(if (registering) "创建账号" else "登录", style = MaterialTheme.typography.titleMedium, color = Fog, modifier = Modifier.padding(top = 8.dp, bottom = 22.dp))
-        if (registering) {
-            OutlinedTextField(
-                value = username,
-                onValueChange = { username = it; error = null },
-                label = { Text("用户名") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        } else {
-            OutlinedTextField(
-                value = accountId,
-                onValueChange = { accountId = it.filter(Char::isDigit); error = null },
-                label = { Text("账号 ID") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it; error = null },
-            label = { Text("密码") },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-        )
-        error?.let { Text(it, color = Coral, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 10.dp)) }
-        Button(
-            enabled = !busy && password.isNotBlank() && if (registering) username.isNotBlank() else accountId.isNotBlank(),
-            onClick = {
+    QumiLoginFrame(
+        registering = registering,
+        accountId = accountId,
+        username = username,
+        password = password,
+        error = error,
+        busy = busy,
+        onAccountId = { accountId = it.filter(Char::isDigit); error = null },
+        onUsername = { username = it; error = null },
+        onPassword = { password = it; error = null },
+        onSubmit = {
                 scope.launch {
                     busy = true
                     error = null
@@ -306,20 +319,14 @@ private fun AuthScreen(onAuthenticated: (UserSession) -> Unit) {
                         busy = false
                     }
                 }
-            },
-            modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
-        ) {
-            if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text(if (registering) "注册并登录" else "登录")
-        }
-        TextButton(onClick = { registering = !registering; error = null }) {
-            Text(if (registering) "已有账号？登录" else "创建新账号")
-        }
-    }
+        },
+        onToggleRegister = { registering = !registering; error = null },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
+private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onRequestNotifications: () -> Unit) {
     val context = LocalContext.current
     val api = remember { LivePlatformApi() }
     val giftOutbox = remember(session.id) { GiftOutbox(context, session.id) }
@@ -328,13 +335,56 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     val openImGateway = remember(context) { OpenImGateway(context) }
     val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableIntStateOf(0) }
+    var accountPage by remember { mutableStateOf(QumiAccountPage.MINE) }
+    var searchReturnTab by remember { mutableIntStateOf(0) }
+    var searchReturnPage by remember { mutableStateOf(QumiAccountPage.MINE) }
+    var profileReturnTab by remember { mutableIntStateOf(0) }
+    var profileReturnPage by remember { mutableStateOf(QumiAccountPage.MINE) }
+    var publicProfileId by remember { mutableStateOf<Long?>(null) }
+    var publicProfileFallbackName by remember { mutableStateOf("") }
+    var openImMessagePage by remember { mutableStateOf(false) }
+    var billsCategory by remember { mutableIntStateOf(0) }
+    var contactTab by remember { mutableIntStateOf(0) }
+    var announcementIndex by remember { mutableIntStateOf(0) }
+    fun openPublicProfile(id: String, name: String) {
+        val targetId = id.toLongOrNull()?.takeIf { it > 0 } ?: return
+        profileReturnTab = selectedTab
+        profileReturnPage = accountPage
+        publicProfileId = targetId
+        publicProfileFallbackName = name
+        selectedTab = 4
+        accountPage = QumiAccountPage.PUBLIC_PROFILE
+    }
+    BackHandler(enabled = (selectedTab == 4 && accountPage != QumiAccountPage.MINE) || (selectedTab == 3 && (openImMessagePage || accountPage != QumiAccountPage.MINE))) {
+        accountPage = when {
+            selectedTab == 3 && openImMessagePage -> { openImMessagePage = false; QumiAccountPage.MINE }
+            selectedTab == 3 && accountPage == QumiAccountPage.ANNOUNCEMENT_DETAIL -> QumiAccountPage.EVENTS
+            selectedTab == 3 && accountPage == QumiAccountPage.SECRETARY_PROFILE -> QumiAccountPage.SECRETARY_SETTINGS
+            selectedTab == 3 && accountPage == QumiAccountPage.SECRETARY_SETTINGS -> QumiAccountPage.SECRETARY_CHAT
+            selectedTab == 3 && accountPage == QumiAccountPage.SECRETARY_CHAT -> QumiAccountPage.MINE
+            selectedTab == 3 -> QumiAccountPage.MINE
+            else -> when (accountPage) {
+                QumiAccountPage.BILLS -> QumiAccountPage.WALLET
+                QumiAccountPage.PROFILE_EDIT -> QumiAccountPage.PROFILE
+                QumiAccountPage.YOUTH, QumiAccountPage.ABOUT, QumiAccountPage.BLACKLIST, QumiAccountPage.QUALIFICATION -> QumiAccountPage.SETTINGS
+                QumiAccountPage.SEARCH -> { selectedTab = searchReturnTab; searchReturnPage }
+                QumiAccountPage.PUBLIC_PROFILE -> { selectedTab = profileReturnTab; profileReturnPage }
+                QumiAccountPage.LEVEL -> QumiAccountPage.MINE
+                QumiAccountPage.TASKS, QumiAccountPage.GUARD, QumiAccountPage.HOST,
+                QumiAccountPage.IDENTITY, QumiAccountPage.CONTACTS, QumiAccountPage.EVENTS,
+                QumiAccountPage.ANNOUNCEMENT_DETAIL, QumiAccountPage.VISITORS -> QumiAccountPage.MINE
+                else -> QumiAccountPage.MINE
+            }
+        }
+    }
+    var discoverySection by remember { mutableIntStateOf(0) }
+    var discoveryFilter by remember { mutableIntStateOf(0) }
     var canManageOperations by remember { mutableStateOf(false) }
     var operationsSummary by remember { mutableStateOf<OperationsSummary?>(null) }
     var operationsUsers by remember { mutableStateOf<OperationsUsers?>(null) }
     var showModeration by remember { mutableStateOf(false) }
     var showPasswordChange by remember { mutableStateOf(false) }
     var showCoverUpload by remember { mutableStateOf(false) }
-    var showIdentity by remember { mutableStateOf(false) }
     var showRoomChat by remember { mutableStateOf(false) }
     var showBusiness by remember { mutableStateOf<String?>(null) }
     var hostProfile by remember { mutableStateOf<LiveRoom?>(null) }
@@ -362,6 +412,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var activeRoomStatus by remember { mutableStateOf("正在连接媒体服务") }
     var roomGateway by remember { mutableStateOf<LiveKitRoomGateway?>(null) }
     var srsIngest by remember { mutableStateOf<SrsIngestPublisher?>(null) }
+    var cameraBeauty by remember(session.id) { mutableStateOf(CameraBeautyPreferences.load(context, session.id)) }
     val cameraHandoff = remember { Mutex() }
     var hostCohostLiveKit by remember { mutableStateOf(false) }
     var roomRegistration by remember { mutableStateOf<BilldRoomRegistration?>(null) }
@@ -401,6 +452,14 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var historyRefresh by remember { mutableIntStateOf(0) }
     var chatVisible by remember { mutableStateOf(false) }
     var chatOpenSignal by remember { mutableIntStateOf(0) }
+    fun openDirectMessage(id: String, name: String) {
+        openImRecipient = id
+        openImRecipientName = name
+        selectedTab = 3
+        accountPage = QumiAccountPage.MINE
+        openImMessagePage = true
+        chatOpenSignal++
+    }
     val dmGiftOutbox = remember(session.id) { DmGiftOutbox(context, session.id) }
     val dmVideoOutbox = remember(session.id) { DmVideoOutbox(context, session.id) }
     val dmUnlockIds = remember(session.id) { DmUnlockIds(context, session.id) }
@@ -412,6 +471,13 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     var rechargeBusy by remember { mutableStateOf(false) }
     var profile by remember { mutableStateOf<UserProfile?>(null) }
     var profileBusy by remember { mutableStateOf(false) }
+    var identityVerification by remember { mutableStateOf<IdentityVerificationStatus?>(null) }
+    var identityLoading by remember { mutableStateOf(false) }
+    var identityStarting by remember { mutableStateOf(false) }
+    var identityError by remember { mutableStateOf<String?>(null) }
+    var identityRefresh by remember { mutableIntStateOf(0) }
+    var blockTarget by remember { mutableStateOf<PublicUser?>(null) }
+    var blockBusy by remember { mutableStateOf(false) }
     var rechargeOrders by remember { mutableStateOf(emptyList<RechargeOrder>()) }
     var rechargeOrdersError by remember { mutableStateOf<String?>(null) }
     var roomFeedback by remember { mutableStateOf<String?>(null) }
@@ -484,15 +550,15 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             if (!canManageOperations) {
                 operationsSummary = null
                 operationsUsers = null
-                if (selectedTab == 4) { selectedTab = 3; notify("运营权限暂不可用，请刷新后重试") }
-            } else if (selectedTab == 4) operationsRefresh++
-            if (selectedTab != 4) break
+                if (selectedTab == 5) { selectedTab = 4; notify("运营权限暂不可用，请刷新后重试") }
+            } else if (selectedTab == 5) operationsRefresh++
+            if (selectedTab != 5) break
             kotlinx.coroutines.delay(15_000)
         } while (true)
     }
 
     LaunchedEffect(canManageOperations, selectedTab, operationsPage, operationsRefresh) {
-        if (!canManageOperations || selectedTab != 4) return@LaunchedEffect
+        if (!canManageOperations || selectedTab != 5) return@LaunchedEffect
         operationsLoading = true
         operationsError = null
         // Clear the previous page while changing page, rather than label old rows as new.
@@ -759,6 +825,27 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         launch { runCatching { api.earnings(session.token, "monthly") }.onSuccess { monthlyEarnings = it }.onFailure { monthlyEarnings = null } }
     }
 
+    LaunchedEffect(selectedTab, accountPage, session.token, identityRefresh) {
+        if (selectedTab != 4 || accountPage != QumiAccountPage.IDENTITY) return@LaunchedEffect
+        identityLoading = true
+        identityError = null
+        try {
+            identityVerification = api.identityVerificationStatus(session.token)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            identityError = if (error is PlatformHttpException && error.statusCode == 503) "实名认证服务尚未启用"
+                else "认证状态暂不可用，请检查网络后重试"
+        } finally {
+            identityLoading = false
+        }
+    }
+
+    LaunchedEffect(hostProfile?.creatorId, session.token) {
+        val viewedUserId = hostProfile?.creatorId ?: return@LaunchedEffect
+        if (viewedUserId != session.id && viewedUserId > 0) runCatching { api.recordProfileVisit(session.token, viewedUserId) }
+    }
+
     LaunchedEffect(session.token, rankTypeContributors, rankPeriod, selectedTab) {
         if (selectedTab != 1) return@LaunchedEffect
         rankingsLoading = true
@@ -772,7 +859,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     }
 
     LaunchedEffect(selectedTab, session.token, refreshKey) {
-        if (selectedTab != 3) return@LaunchedEffect
+        if (selectedTab != 4) return@LaunchedEffect
         while (true) {
             try {
                 rechargeOrders = api.rechargeOrders(session.token)
@@ -1052,7 +1139,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
             return@LaunchedEffect
         }
         cameraHandoff.withLock {
-            val publisher = SrsIngestPublisher(context)
+            val publisher = SrsIngestPublisher(context, cameraBeauty)
             srsIngest = publisher
             try {
                 activeRoomStatus = "正在连接直播"
@@ -1146,7 +1233,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
     }
 
     LaunchedEffect(selectedTab, activeRoom?.creatorId, session.token) {
-        if (selectedTab != 4 && activeRoom?.creatorId != session.id) return@LaunchedEffect
+        if (selectedTab != 2 && activeRoom?.creatorId != session.id) return@LaunchedEffect
         while (true) {
             try { matchInvitations = api.matchInvitations(session.token)
             } catch (error: CancellationException) { throw error
@@ -1225,7 +1312,9 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                 openImRecipient = target.userId
                 openImRecipientName = target.name
                 supportContact = ChatRecipient(target.userId, target.name)
-                selectedTab = 2
+                selectedTab = 3
+                accountPage = QumiAccountPage.MINE
+                openImMessagePage = true
                 chatOpenSignal++
             } catch (error: CancellationException) { throw error
             } catch (error: PlatformHttpException) {
@@ -1280,27 +1369,59 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         containerColor = NightInk,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            NavigationBar(containerColor = NightSurface) {
-                val tabs = listOf("直播", "榜单", "消息", "我的") + if (canManageOperations) listOf("运营") else emptyList()
-                val icons = listOf(Icons.Default.Home, Icons.Default.EmojiEvents, Icons.Default.ChatBubbleOutline, Icons.Default.PersonOutline, Icons.Default.Shield)
-                tabs.forEachIndexed { index, title ->
-                    NavigationBarItem(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
-                        icon = { Icon(icons[index], contentDescription = title) },
-                        label = { Text(title) },
-                    )
+            if ((selectedTab != 3 && selectedTab != 4) || accountPage == QumiAccountPage.MINE) {
+                NavigationBar(containerColor = NightSurface) {
+                    val tabs = listOf("交友", "动态", "直播", "消息", "我的") + if (canManageOperations) listOf("运营") else emptyList()
+                    val idleIcons = listOf(Icons.Rounded.FavoriteBorder, Icons.Rounded.PhotoCamera, Icons.Rounded.PlayCircleOutline, Icons.Rounded.ChatBubbleOutline, Icons.Rounded.PersonOutline, Icons.Rounded.Shield)
+                    val activeIcons = listOf(Icons.Rounded.Favorite, Icons.Rounded.CameraAlt, Icons.Rounded.PlayCircle, Icons.Rounded.ChatBubble, Icons.Rounded.AccountCircle, Icons.Rounded.Shield)
+                    tabs.forEachIndexed { index, title ->
+                        NavigationBarItem(
+                            selected = selectedTab == index,
+                            onClick = { selectedTab = index; accountPage = QumiAccountPage.MINE; openImMessagePage = false },
+                            icon = {
+                                Icon(if (selectedTab == index) activeIcons[index] else idleIcons[index],
+                                    contentDescription = title, modifier = Modifier.size(27.dp))
+                            },
+                            label = { Text(title, fontWeight = if (selectedTab == index) FontWeight.SemiBold else FontWeight.Normal) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Color(0xFF7864E8),
+                                selectedTextColor = Color(0xFF7864E8),
+                                indicatorColor = Color(0xFFF0ECFF),
+                                unselectedIconColor = Color(0xFF858A98),
+                                unselectedTextColor = Color(0xFF858A98),
+                            ),
+                        )
+                    }
                 }
             }
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            TopBar(title = listOf("现场", "榜单", "消息", "我的", "运营")[selectedTab], onRefresh = { refreshKey++ })
+            if (selectedTab == 0) {
+                QumiDiscoveryHeader(
+                    section = discoverySection,
+                    filter = discoveryFilter,
+                    onSection = { discoverySection = it },
+                    onFilter = { discoveryFilter = it },
+                    onStart = { selectedTab = 2 },
+                    onSearch = { searchReturnTab = selectedTab; selectedTab = 4; accountPage = QumiAccountPage.SEARCH },
+                )
+            } else if (selectedTab != 1 && selectedTab != 3 && selectedTab != 4) TopBar(title = when (selectedTab) { 2 -> "直播"; else -> "运营" }, onRefresh = { refreshKey++ })
             pendingGift?.let { pending ->
                 PendingGiftNotice(pending, giftLoading, onRetry = { submitGift(pending) })
             }
             when (selectedTab) {
-                0 -> LiveScreen(
+                0 -> QumiFriendsScreen(token = session.token, section = discoverySection, filter = discoveryFilter,
+                    onSearch = { searchReturnTab = selectedTab; selectedTab = 4; accountPage = QumiAccountPage.SEARCH },
+                    onOpenUser = { id, name -> openPublicProfile(id, name) },
+                    onMessageUser = { id, name -> openDirectMessage(id, name) },
+                    onBlockUser = { id -> scope.launch { runCatching { api.searchUsers(session.token, id.toString()).firstOrNull() }.onSuccess { blockTarget = it }.onFailure { notify(it.message ?: "读取用户失败") } } })
+                1 -> QumiMomentsScreen(
+                    token = session.token,
+                    onMessages = { selectedTab = 3; accountPage = QumiAccountPage.MINE },
+                    onOpenUser = { id, name -> openPublicProfile(id, name) },
+                )
+                2 -> LiveScreen(
                     rooms = rooms,
                     loading = roomsLoading,
                     error = roomsError,
@@ -1309,7 +1430,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                         val age = profile?.age
                         val minimumAge = if (profile?.region == "KR") 19 else 18
                         if (profile?.source != "SELF_REPORTED") {
-                            selectedTab = 3
+                            selectedTab = 4
                             notify("请先在“我的”填写年龄和地区，再开播")
                         } else if (age == null || age < minimumAge) {
                             notify("当前年龄未达到开播要求")
@@ -1322,16 +1443,71 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                     onReferral = { showReferral = true },
                     onRefresh = { refreshKey++ },
                 )
-                1 -> RankingsScreen(
-                    entries = rankingEntries,
-                    loading = rankingsLoading,
-                    error = rankingsError,
-                    contributors = rankTypeContributors,
-                    period = rankPeriod,
-                    onContributors = { rankTypeContributors = it },
-                    onPeriod = { rankPeriod = it },
-                )
-                2 -> MessagesScreen(
+                3 -> when (accountPage) {
+                    QumiAccountPage.SEARCH -> QumiUserSearchScreen(
+                        token = session.token,
+                        onBack = { selectedTab = searchReturnTab; accountPage = searchReturnPage },
+                        onOpenUser = { id, name -> openPublicProfile(id, name) },
+                        onMessageUser = { id, name -> openDirectMessage(id, name) },
+                        onBlockUser = { id -> scope.launch { runCatching { api.searchUsers(session.token, id.toString()).firstOrNull() }.onSuccess { blockTarget = it }.onFailure { notify(it.message ?: "读取用户失败") } } },
+                    )
+                    QumiAccountPage.CONTACTS -> QumiContactsScreen(token = session.token, initialTab = contactTab, onOpenUser = { id, name -> openPublicProfile(id, name) }, onMessageUser = { id, name -> openDirectMessage(id, name) }, onBack = { accountPage = QumiAccountPage.MINE }, onSearch = { tab ->
+                        contactTab = tab
+                        searchReturnTab = selectedTab; searchReturnPage = QumiAccountPage.CONTACTS; accountPage = QumiAccountPage.SEARCH
+                    })
+                    QumiAccountPage.SECRETARY_PROFILE -> QumiSecretaryProfileScreen(
+                        onBack = { accountPage = QumiAccountPage.SECRETARY_SETTINGS },
+                    )
+                    QumiAccountPage.SECRETARY_CHAT -> QumiSecretaryChatScreen(
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onSettings = { accountPage = QumiAccountPage.SECRETARY_SETTINGS },
+                    )
+                    QumiAccountPage.SECRETARY_SETTINGS -> QumiSecretarySettingsScreen(
+                        onBack = { accountPage = QumiAccountPage.SECRETARY_CHAT },
+                        onOpenProfile = { accountPage = QumiAccountPage.SECRETARY_PROFILE },
+                    )
+                    QumiAccountPage.VISITORS -> QumiVisitorsScreen(
+                        token = session.token,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onOpenUser = { id, name -> openPublicProfile(id, name) },
+                    )
+                    QumiAccountPage.EVENTS -> QumiAnnouncementListScreen(
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onOpenDetail = { announcementIndex = it; accountPage = QumiAccountPage.ANNOUNCEMENT_DETAIL },
+                    )
+                    QumiAccountPage.ANNOUNCEMENT_DETAIL -> QumiAnnouncementDetailScreen(
+                        title = if (announcementIndex == 0) "绿色直播文明公约" else "严厉打击违规交易",
+                        index = announcementIndex,
+                        onBack = { accountPage = QumiAccountPage.EVENTS },
+                    )
+                    QumiAccountPage.NOTIFICATIONS -> QumiNotificationSettingsScreen(
+                        token = session.token,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                    )
+                    else -> if (!openImMessagePage) QumiMessagesHomeScreen(
+                        ready = openImReady,
+                        busy = openImBusy,
+                        conversations = openImConversations.map { Triple(it.userId, it.name, it.latestMessage) },
+                        supportName = supportContact?.name,
+                        supportPreview = supportContact?.let { contact -> openImConversations.firstOrNull { it.userId == contact.userId }?.latestMessage },
+                        onNewMessage = { openImMessagePage = true },
+                        onContacts = { accountPage = QumiAccountPage.CONTACTS },
+                        onConnect = { messageConnectionAttempt++ },
+                        onOpenAnnouncements = { accountPage = QumiAccountPage.EVENTS },
+                        onOpenVisitors = { accountPage = QumiAccountPage.VISITORS },
+                        onOpenSecretaryChat = { accountPage = QumiAccountPage.SECRETARY_CHAT },
+                        onOpenConversation = { id, name ->
+                            openImRecipient = id
+                            openImRecipientName = name
+                            openImMessagePage = true
+                            chatOpenSignal++
+                        },
+                        onOpenSupport = { openSupportChat(); openImMessagePage = true },
+                        onOpenNotifications = { accountPage = QumiAccountPage.NOTIFICATIONS },
+                        onRequestNotifications = onRequestNotifications,
+                        onOpenMatch = { selectedTab = 0 },
+                    ) else MessagesScreen(
+                    onExit = { openImMessagePage = false },
                     status = openImStatus,
                     ownUserId = session.id.toString(),
                     onChatVisibility = { chatVisible = it },
@@ -1353,7 +1529,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                                         if (openImRecipient == recipient && chatVisible) history = appendOlderHistory(current, older)
                                     } catch (error: kotlinx.coroutines.TimeoutCancellationException) { if (openImRecipient == recipient && chatVisible) historyError = "加载超时，请重试"
                                     } catch (error: CancellationException) { throw error
-                                    } catch (error: Exception) { if (openImRecipient == recipient && chatVisible) historyError = "更早消息加载失败，请重试"
+                                    } catch (_: Exception) { if (openImRecipient == recipient && chatVisible) historyError = "更早消息加载失败，请重试"
                                     } finally { historyLoading = false }
                                 }
                             }
@@ -1380,25 +1556,19 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                     onVideoCall = { beginCall(openImRecipient, openImRecipientName, "video", null) },
                     onVoiceCall = { beginCall(openImRecipient, openImRecipientName, "voice", null) },
                     onJoinCall = { beginCall(openImRecipient, openImRecipientName, "", it) },
-                    onAcceptCall = { invite ->
-                        beginCall(invite.fromUserId.toString(), openImRecipientName ?: "用户 ${invite.fromUserId}", invite.mode, invite.callId)
-                    },
+                    onAcceptCall = { invite -> beginCall(invite.fromUserId.toString(), openImRecipientName ?: "用户 ${invite.fromUserId}", invite.mode, invite.callId) },
                     onSend = {
                         val recipient = openImRecipient.trim()
                         val content = openImMessage.trim()
-                        if (recipient.isNotBlank() && content.isNotBlank()) {
-                            scope.launch {
-                                openImBusy = true
-                                runCatching { openImGateway.sendText(recipient, content) }
-                                    .onSuccess {
-                                        openImMessage = ""
-                                        openImStatus = "消息已发送"
-                                        historyRefresh++
-                                        runCatching { openImGateway.conversations() }.onSuccess { openImConversations = parseOpenImConversations(it) }
-                                    }
-                                    .onFailure { openImStatus = "发送失败，内容已保留，请重试" }
-                                openImBusy = false
-                            }
+                        if (recipient.isNotBlank() && content.isNotBlank()) scope.launch {
+                            openImBusy = true
+                            runCatching { openImGateway.sendText(recipient, content) }
+                                .onSuccess {
+                                    openImMessage = ""; openImStatus = "消息已发送"; historyRefresh++
+                                    runCatching { openImGateway.conversations() }.onSuccess { openImConversations = parseOpenImConversations(it) }
+                                }
+                                .onFailure { openImStatus = "发送失败，内容已保留，请重试" }
+                            openImBusy = false
                         }
                     },
                     support = supportContact,
@@ -1410,56 +1580,254 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                     chatOpenSignal = chatOpenSignal,
                     onOpenChat = { id, name -> openImRecipient = id; openImRecipientName = name },
                     onOpenSupport = { openSupportChat() },
+                    onOpenVisitors = { accountPage = QumiAccountPage.VISITORS },
+                    onOpenAnnouncements = { accountPage = QumiAccountPage.EVENTS },
+                    onOpenNotifications = { openImMessagePage = false; accountPage = QumiAccountPage.NOTIFICATIONS },
                     onSendGift = { gift -> sendDmGift(gift.id) },
                     onRetryGift = { pendingDmGift?.let { sendDmGift(it.giftId) } },
                     onSendVideo = sendDmVideo,
                     onUnlock = unlockDmVideo,
                     onPlay = playDmVideo,
                     onVerifyGift = verifyDmGift,
-                )
-                3 -> ProfileScreen(
-                    session = session,
-                    wallet = wallet,
-                    level = level,
-                    daily = dailyEarnings,
-                    monthly = monthlyEarnings,
-                    rechargeBusy = rechargeBusy,
-                    rechargeOrders = rechargeOrders,
-                    rechargeOrdersError = rechargeOrdersError,
-                    profile = profile,
-                    profileBusy = profileBusy,
-                    onSaveProfile = { age, region ->
-                        if (!profileBusy) scope.launch {
-                            profileBusy = true
-                            try { profile = api.saveProfile(session.token, age, region); notify("资料已保存，来源为本人填写")
-                            } catch (error: CancellationException) { throw error
-                            } catch (_: Exception) { notify("资料未能保存，请检查填写内容后重试")
-                            } finally { profileBusy = false }
-                        }
-                    },
-                    onGiftHistory = { showGiftHistory = true; loadGiftHistory(false) },
-                    onChangePassword = { showPasswordChange = true },
-                    onBusiness = { showBusiness = "withdrawals" },
-                    onCoverUpload = { showCoverUpload = true },
-                    onIdentity = { showIdentity = true },
-                    onReferral = { showReferral = true },
-                    customerServiceAvailable = supportContact != null,
-                    onCustomerService = { openSupportChat() },
-                    onLogout = onLogout,
-                    onRefresh = { refreshKey++ },
-                    onTopUp = { amount ->
-                        if (!rechargeBusy) scope.launch {
-                            rechargeBusy = true
-                            try {
-                                val url = api.rechargeUrl(session.token, amount)
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                refreshKey++
-                            } catch (error: CancellationException) { throw error
-                            } catch (_: Exception) { notify("暂时无法发起支付，请刷新充值记录后重试")
-                            } finally { rechargeBusy = false }
-                        }
-                    },
-                )
+                    )
+                }
+                4 -> when (accountPage) {
+                    QumiAccountPage.PUBLIC_PROFILE -> publicProfileId?.let { targetId ->
+                        QumiPublicProfileScreen(
+                            token = session.token,
+                            userId = targetId,
+                            fallbackName = publicProfileFallbackName,
+                            onBack = { selectedTab = profileReturnTab; accountPage = profileReturnPage },
+                            onMessage = { id, name -> openDirectMessage(id, name) },
+                            onBlock = { id -> scope.launch {
+                                runCatching { api.searchUsers(session.token, id.toString()).firstOrNull() }
+                                    .onSuccess { blockTarget = it }
+                                    .onFailure { notify(it.message ?: "读取用户失败") }
+                            } },
+                        )
+                    } ?: Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        TextButton(onClick = { selectedTab = profileReturnTab; accountPage = profileReturnPage }) { Text("返回") }
+                    }
+                    QumiAccountPage.SEARCH -> QumiUserSearchScreen(
+                        token = session.token,
+                        onBack = { selectedTab = searchReturnTab; accountPage = searchReturnPage },
+                        onOpenUser = { id, name -> openPublicProfile(id, name) },
+                        onMessageUser = { id, name -> openDirectMessage(id, name) },
+                        onBlockUser = { id -> scope.launch { runCatching { api.searchUsers(session.token, id.toString()).firstOrNull() }.onSuccess { blockTarget = it }.onFailure { notify(it.message ?: "读取用户失败") } } },
+                    )
+                    QumiAccountPage.MINE -> QumiMineScreen(
+                        session = session, wallet = wallet, level = level,
+                        onRefresh = { refreshKey++ },
+                        onProfile = { accountPage = QumiAccountPage.PROFILE },
+                        onWallet = { accountPage = QumiAccountPage.WALLET },
+                        onBills = { billsCategory = it; accountPage = QumiAccountPage.BILLS },
+                        onSettings = { accountPage = QumiAccountPage.SETTINGS },
+                        onBusiness = { accountPage = QumiAccountPage.HOST },
+                        onTasks = { accountPage = QumiAccountPage.TASKS },
+                        onReferral = { accountPage = QumiAccountPage.REFERRAL },
+                        onLevel = { accountPage = QumiAccountPage.LEVEL },
+                        onGuard = { accountPage = QumiAccountPage.GUARD },
+                        onCostume = { accountPage = QumiAccountPage.COSTUME },
+                        onIdentity = { accountPage = QumiAccountPage.IDENTITY },
+                        onContacts = {
+                            accountPage = QumiAccountPage.CONTACTS
+                            contactTab = when (it) { 0 -> 2; 1 -> 0; else -> 1 }
+                        },
+                        onCustomerService = { accountPage = QumiAccountPage.HELP },
+                        onGuild = { accountPage = QumiAccountPage.GUILD },
+                        onNoble = { accountPage = QumiAccountPage.NOBLE },
+                        onFriends = { accountPage = QumiAccountPage.FRIENDS },
+                        onBeauty = { accountPage = QumiAccountPage.BEAUTY },
+                    )
+                    QumiAccountPage.PROFILE -> QumiPersonalHomeScreen(
+                        session = session, profile = profile, level = level,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onEdit = { accountPage = QumiAccountPage.PROFILE_EDIT },
+                    )
+                    QumiAccountPage.PROFILE_EDIT -> QumiProfileEditScreen(
+                        session = session, profile = profile, busy = profileBusy,
+                        onBack = { accountPage = QumiAccountPage.PROFILE },
+                        onCoverUpload = { showCoverUpload = true },
+                        onSave = { age, region, gender ->
+                            if (!profileBusy) scope.launch {
+                                profileBusy = true
+                                try { profile = api.saveProfile(session.token, age, region, gender); notify("资料已保存，来源为本人填写")
+                                } catch (error: CancellationException) { throw error
+                                } catch (_: Exception) { notify("资料未能保存，请检查填写内容后重试")
+                                } finally { profileBusy = false }
+                            }
+                        },
+                    )
+                    QumiAccountPage.WALLET -> QumiWalletScreen(
+                        wallet = wallet, daily = dailyEarnings, monthly = monthlyEarnings,
+                        rechargeBusy = rechargeBusy, rechargeOrders = rechargeOrders, rechargeOrdersError = rechargeOrdersError,
+                        onBack = { accountPage = QumiAccountPage.MINE }, onRefresh = { refreshKey++ },
+                        onTopUp = { amount ->
+                            if (!rechargeBusy) scope.launch {
+                                rechargeBusy = true
+                                try {
+                                    val url = api.rechargeUrl(session.token, amount)
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    refreshKey++
+                                } catch (error: CancellationException) { throw error
+                                } catch (_: Exception) { notify("暂时无法发起支付，请刷新充值记录后重试")
+                                } finally { rechargeBusy = false }
+                            }
+                        },
+                        onBills = { billsCategory = it; accountPage = QumiAccountPage.BILLS },
+                        onWithdraw = { showBusiness = "withdrawals" },
+                        onGiftHistory = { showGiftHistory = true; loadGiftHistory(false) },
+                    )
+                    QumiAccountPage.BILLS -> QumiBillsScreen(
+                        session = session, api = api, initialCategory = billsCategory,
+                        rechargeOrders = rechargeOrders, rechargeOrdersError = rechargeOrdersError,
+                        giftHistory = giftHistory, giftHistoryLoading = giftHistoryLoading, giftHistoryError = giftHistoryError,
+                        onBack = { accountPage = QumiAccountPage.WALLET }, onRefresh = { refreshKey++ },
+                        onLoadGiftHistory = { loadGiftHistory(false) },
+                    )
+                    QumiAccountPage.GUILD -> QumiGuildScreen(onBack = { accountPage = QumiAccountPage.MINE })
+                    QumiAccountPage.NOBLE -> QumiNobleScreen(session, onBack = { accountPage = QumiAccountPage.MINE })
+                    QumiAccountPage.FRIENDS -> QumiCloseFriendsScreen(
+                        session,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onFindUser = {
+                            searchReturnTab = selectedTab
+                            searchReturnPage = QumiAccountPage.FRIENDS
+                            accountPage = QumiAccountPage.SEARCH
+                        },
+                    )
+                    QumiAccountPage.BEAUTY -> QumiBeautyScreen(
+                        settings = cameraBeauty,
+                        onSettingsChange = { settings ->
+                            cameraBeauty = settings
+                            CameraBeautyPreferences.save(context, session.id, settings)
+                            srsIngest?.updateBeauty(settings)
+                        },
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                    )
+                    QumiAccountPage.BLACKLIST -> QumiBlacklistScreen(token = session.token, onBack = { accountPage = QumiAccountPage.SETTINGS })
+                    QumiAccountPage.QUALIFICATION -> QumiQualificationScreen(onBack = { accountPage = QumiAccountPage.SETTINGS })
+                    QumiAccountPage.HELP -> QumiHelpScreen(
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onSupport = { if (supportContact != null) openSupportChat() else notify("客服暂不可用，请稍后重试") },
+                    )
+                    QumiAccountPage.ABOUT -> QumiAboutScreen(onBack = { accountPage = QumiAccountPage.SETTINGS })
+                    QumiAccountPage.SETTINGS -> QumiSettingsScreen(
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onYouth = { accountPage = QumiAccountPage.YOUTH },
+                        onAbout = { accountPage = QumiAccountPage.ABOUT },
+                        onBlacklist = { accountPage = QumiAccountPage.BLACKLIST },
+                        onQualification = { accountPage = QumiAccountPage.QUALIFICATION },
+                        onChangePassword = { showPasswordChange = true },
+                        onLogout = onLogout,
+                    )
+                    QumiAccountPage.NOTIFICATIONS -> QumiNotificationSettingsScreen(
+                        token = session.token,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                    )
+                    QumiAccountPage.REFERRAL -> QumiReferralPage(
+                        token = session.token,
+                        api = api,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onRedeem = { showReferral = true },
+                    )
+                    QumiAccountPage.COSTUME -> QumiCostumeShopScreen(
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                    )
+                    QumiAccountPage.YOUTH -> QumiYouthModeScreen(
+                        accountId = session.id,
+                        onBack = { accountPage = QumiAccountPage.SETTINGS },
+                    )
+                    QumiAccountPage.LEVEL -> QumiLevelScreen(
+                        level = level,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onRefresh = { refreshKey++ },
+                    )
+                    QumiAccountPage.TASKS -> QumiTaskCenterScreen(
+                        token = session.token,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onOpenMoments = { accountPage = QumiAccountPage.MINE; selectedTab = 1 },
+                    )
+                    QumiAccountPage.GUARD -> QumiGuardScreen(
+                        token = session.token,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                    )
+                    QumiAccountPage.HOST -> QumiHostScreen(
+                        session = session,
+                        daily = dailyEarnings,
+                        monthly = monthlyEarnings,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                    )
+                    QumiAccountPage.IDENTITY -> QumiIdentityScreen(
+                        verification = identityVerification,
+                        loading = identityLoading,
+                        starting = identityStarting,
+                        error = identityError,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onRefresh = { identityRefresh++ },
+                        onStartRealName = {
+                            if (!identityStarting) scope.launch {
+                                identityStarting = true
+                                identityError = null
+                                try {
+                                    val requestId = identityVerification?.requestId?.takeIf { identityVerification?.status == "PENDING" }
+                                        ?: UUID.randomUUID().toString()
+                                    val verificationUrl = api.startIdentityVerification(session.token, requestId)
+                                    val uri = Uri.parse(verificationUrl)
+                                    require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) { "认证服务返回了无效链接" }
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                                    identityRefresh++
+                                } catch (error: CancellationException) {
+                                    throw error
+                                } catch (error: PlatformHttpException) {
+                                    identityError = if (error.statusCode == 503) "实名认证服务尚未启用"
+                                        else "暂时无法开始认证，请稍后重试"
+                                } catch (error: Exception) {
+                                    identityError = "暂时无法开始认证，请检查网络后重试"
+                                } finally {
+                                    identityStarting = false
+                                }
+                            }
+                        },
+                    )
+                    QumiAccountPage.CONTACTS -> QumiContactsScreen(
+                        token = session.token,
+                        initialTab = contactTab,
+                        onOpenUser = { id, name -> openPublicProfile(id, name) },
+                        onMessageUser = { id, name -> openDirectMessage(id, name) },
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onSearch = { tab ->
+                            contactTab = tab
+                            searchReturnTab = selectedTab; searchReturnPage = QumiAccountPage.CONTACTS; accountPage = QumiAccountPage.SEARCH
+                        },
+                    )
+                    QumiAccountPage.VISITORS -> QumiVisitorsScreen(
+                        token = session.token,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onOpenUser = { id, name -> openPublicProfile(id, name) },
+                    )
+                    QumiAccountPage.EVENTS -> QumiAnnouncementListScreen(
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onOpenDetail = { announcementIndex = it; accountPage = QumiAccountPage.ANNOUNCEMENT_DETAIL },
+                    )
+                    QumiAccountPage.ANNOUNCEMENT_DETAIL -> QumiAnnouncementDetailScreen(
+                        title = if (announcementIndex == 0) "绿色直播文明公约" else "严厉打击违规交易",
+                        index = announcementIndex,
+                        onBack = { accountPage = QumiAccountPage.EVENTS },
+                    )
+                    QumiAccountPage.SECRETARY_CHAT, QumiAccountPage.SECRETARY_SETTINGS, QumiAccountPage.SECRETARY_PROFILE -> QumiMineScreen(
+                        session = session, wallet = wallet, level = level,
+                        onRefresh = { refreshKey++ }, onProfile = { accountPage = QumiAccountPage.PROFILE },
+                        onWallet = { accountPage = QumiAccountPage.WALLET }, onBills = { billsCategory = it; accountPage = QumiAccountPage.BILLS },
+                        onSettings = { accountPage = QumiAccountPage.SETTINGS }, onBusiness = { accountPage = QumiAccountPage.HOST },
+                        onTasks = { accountPage = QumiAccountPage.TASKS }, onReferral = { accountPage = QumiAccountPage.REFERRAL },
+                        onLevel = { accountPage = QumiAccountPage.LEVEL }, onGuard = { accountPage = QumiAccountPage.GUARD },
+                        onCostume = { accountPage = QumiAccountPage.COSTUME }, onIdentity = { accountPage = QumiAccountPage.IDENTITY },
+                        onContacts = { accountPage = QumiAccountPage.CONTACTS }, onCustomerService = { accountPage = QumiAccountPage.HELP },
+                        onGuild = { accountPage = QumiAccountPage.GUILD }, onNoble = { accountPage = QumiAccountPage.NOBLE },
+                        onFriends = { accountPage = QumiAccountPage.FRIENDS }, onBeauty = { accountPage = QumiAccountPage.BEAUTY },
+                    )
+                }
                 else -> if (canManageOperations) OperationsScreen(
                     summary = operationsSummary, users = operationsUsers, page = operationsPage,
                     loading = operationsLoading, error = operationsError,
@@ -1494,8 +1862,31 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
         )
     }
     if (showPasswordChange) PasswordSheet(session.token, onDismiss = { showPasswordChange = false }, onChanged = onLogout)
+    blockTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { if (!blockBusy) blockTarget = null },
+            title = { Text("屏蔽 ${target.username}？") },
+            text = { Text("该用户会加入黑名单。你可以之后在设置中解除屏蔽。") },
+            confirmButton = { TextButton(enabled = !blockBusy, onClick = {
+                blockBusy = true
+                scope.launch {
+                    runCatching { api.setBlocked(session.token, target.id, true) }
+                        .onSuccess {
+                            blockTarget = null
+                            notify("已屏蔽 ${target.username}")
+                            if (accountPage == QumiAccountPage.PUBLIC_PROFILE) {
+                                selectedTab = profileReturnTab
+                                accountPage = profileReturnPage
+                            }
+                        }
+                        .onFailure { notify(it.message ?: "屏蔽失败，请重试") }
+                    blockBusy = false
+                }
+            }) { Text(if (blockBusy) "处理中" else "屏蔽") } },
+            dismissButton = { TextButton(enabled = !blockBusy, onClick = { blockTarget = null }) { Text("取消") } },
+        )
+    }
     if (showCoverUpload) CoverUploadSheet(session,api,onDismiss={showCoverUpload=false;refreshKey++})
-    if (showIdentity) IdentitySheet(session,api,onDismiss={showIdentity=false})
     if(activeRoom==null)showBusiness?.let { BusinessSheet(session,api,it,onDismiss={showBusiness=null}) }
     if (showModeration && canManageOperations) ModerationPanel(session, onDismiss = { showModeration = false; operationsRefresh++ })
 
@@ -1545,7 +1936,9 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit) {
                             historyRecipient = recipient.userId
                             chatOpenSignal++
                             leaveRoom()
-                            selectedTab = 2
+                            selectedTab = 3
+                            accountPage = QumiAccountPage.MINE
+                            openImMessagePage = true
                         } catch (error: CancellationException) { throw error }
                         catch (error: Exception) { notify(error.message ?: "暂时无法给主播发私信，请稍后重试") }
                     }
@@ -1643,7 +2036,49 @@ private fun PendingGiftNotice(pending: PendingGift, busy: Boolean, onRetry: () -
 private fun TopBar(title: String, onRefresh: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-        IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, contentDescription = "刷新内容") }
+        IconButton(onClick = onRefresh) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新内容") }
+    }
+}
+
+@Composable
+private fun QumiDiscoveryHeader(
+    section: Int,
+    filter: Int,
+    onSection: (Int) -> Unit,
+    onFilter: (Int) -> Unit,
+    onStart: () -> Unit,
+    onSearch: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xFFE4E3FF), Color(0xFFF5F7FC))))) {
+        Row(
+            Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 22.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            listOf("找蜜友", "交蜜友", "专属").forEachIndexed { index, title ->
+                Column(
+                    Modifier.clickable { onSection(index) }.padding(end = 26.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(title, fontSize = if (section == index) 21.sp else 16.sp, fontWeight = if (section == index) FontWeight.Bold else FontWeight.Normal, color = Ink)
+                    if (section == index) Spacer(Modifier.width(58.dp).height(4.dp).clip(CircleShape).background(Color(0xFF9785F4)))
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onSearch) { Icon(Icons.Rounded.Search, contentDescription = "搜索用户") }
+            Button(onClick = onStart, shape = CircleShape, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
+                Icon(Icons.Rounded.LiveTv, contentDescription = null, modifier = Modifier.size(19.dp))
+                Spacer(Modifier.width(5.dp)); Text("开播")
+            }
+        }
+        Row(Modifier.padding(start = 25.dp, top = 6.dp, bottom = 17.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            listOf("热门", "同城").forEachIndexed { index, title ->
+                Surface(
+                    onClick = { onFilter(index) },
+                    shape = CircleShape,
+                    color = if (filter == index) Color(0xFFF0EDFF) else Color.White.copy(alpha = .8f),
+                ) { Text(title, Modifier.padding(horizontal = 27.dp, vertical = 12.dp), color = if (filter == index) QumiPurple else Fog, fontSize = 14.sp) }
+            }
+        }
     }
 }
 
@@ -1678,7 +2113,7 @@ private fun LiveScreen(
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
                         Spacer(Modifier.width(8.dp))
                     } else {
-                        Icon(Icons.Default.LiveTv, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Rounded.LiveTv, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
                     }
                     Text(if (starting) "开播中" else "开播")
@@ -1698,7 +2133,7 @@ private fun LiveScreen(
         if (!loading && error == null && rooms.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.fillMaxWidth().padding(vertical = 64.dp), horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Icon(Icons.Default.LiveTv, contentDescription = null, tint = Fog, modifier = Modifier.size(40.dp))
+                Icon(Icons.Rounded.LiveTv, contentDescription = null, tint = Fog, modifier = Modifier.size(40.dp))
                 Text("现在还没有直播", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text("稍后再来看看，也可以自己开播", style = MaterialTheme.typography.bodyMedium, color = Fog)
                 OutlinedButton(onClick = onRefresh) { Text("刷新看看") }
@@ -1717,7 +2152,7 @@ private fun RoomTile(room: LiveRoom, onClick: () -> Unit, onHost: () -> Unit) {
                     room.coverPath?.let { LiveCoverImage(it) }
                     Column(Modifier.align(Alignment.Center).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if(room.coverPath==null)Icon(Icons.Default.LiveTv, contentDescription = null, tint = Color(0xFFCCD2DC), modifier = Modifier.size(32.dp))
+                        if(room.coverPath==null)Icon(Icons.Rounded.LiveTv, contentDescription = null, tint = Color(0xFFCCD2DC), modifier = Modifier.size(32.dp))
                         if(room.coverPath==null)Text("暂无封面", style = MaterialTheme.typography.bodySmall, color = Color(0xFFCCD2DC))
                     }
                     Row(Modifier.align(Alignment.TopStart).padding(10.dp).clip(RoundedCornerShape(6.dp))
@@ -1904,7 +2339,7 @@ private fun RoomSheet(
                 if (!isHost) TextButton(onClick = onMessageHost) { Text("私信") }
                 if (!isHost) TextButton(onClick = onReport) { Text("举报") }
                 IconButton(onClick = requestClose) {
-                    Icon(Icons.Default.Close, contentDescription = if (isHost) "结束直播" else "离开直播间", tint = Color.White)
+                    Icon(Icons.Rounded.Close, contentDescription = if (isHost) "结束直播" else "离开直播间", tint = Color.White)
                 }
             }
             if (watchGate?.phase == WatchPhase.PREVIEW) {
@@ -2059,6 +2494,7 @@ private fun RankingsScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MessagesScreen(
+    onExit: () -> Unit,
     status: String,
     ownUserId: String,
     onChatVisibility: (Boolean) -> Unit,
@@ -2091,6 +2527,9 @@ private fun MessagesScreen(
     chatOpenSignal: Int,
     onOpenChat: (String, String?) -> Unit,
     onOpenSupport: () -> Unit,
+    onOpenVisitors: () -> Unit,
+    onOpenAnnouncements: () -> Unit,
+    onOpenNotifications: () -> Unit,
     onSendGift: (Gift) -> Unit,
     onRetryGift: () -> Unit,
     onSendVideo: (String, Int, ByteArray, Int) -> Unit,
@@ -2115,12 +2554,44 @@ private fun MessagesScreen(
     LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("消息", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                IconButton(onClick = onExit) { Icon(Icons.Rounded.Close, contentDescription = "返回") }
+                Text("消息", fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
                 TextButton(onClick = { onRecipientId(""); enteringAccount = true; composeOpen = true }, enabled = ready && !busy) { Text("新消息") }
             }
             Text(status, style = MaterialTheme.typography.bodySmall, color = Fog)
             if (!ready) TextButton(onClick = onConnect, enabled = !busy) { Text(if (busy) "正在连接…" else "重新连接") }
             else TextButton(onClick = onRefresh, enabled = !busy) { Text("刷新会话") }
+        }
+        if (recipientId.isBlank() && !composeOpen) {
+            item {
+                Row(Modifier.fillMaxWidth().clickable(onClick = onOpenNotifications).padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Notifications, contentDescription = null, tint = Color(0xFF7868EC))
+                    Text("通知偏好设置", Modifier.weight(1f).padding(start = 10.dp), color = Color(0xFF333333), style = MaterialTheme.typography.bodyMedium)
+                    Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = "打开通知设置", tint = Fog, modifier = Modifier.size(18.dp))
+                }
+                HorizontalDivider(color = NightLine)
+            }
+            item {
+                Row(Modifier.fillMaxWidth().clickable(onClick = onOpenAnnouncements).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Campaign, contentDescription = null, tint = Color(0xFF7868EC), modifier = Modifier.size(34.dp))
+                    Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("平台公告", fontWeight = FontWeight.SemiBold)
+                        Text("2 条平台公告", style = MaterialTheme.typography.bodyMedium, color = Fog)
+                    }
+                }
+                HorizontalDivider(color = NightLine)
+            }
+            item {
+                Row(Modifier.fillMaxWidth().clickable(onClick = onOpenVisitors).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Visibility, contentDescription = null, tint = Color(0xFF70BFD1), modifier = Modifier.size(34.dp))
+                    Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("最近访客", fontWeight = FontWeight.SemiBold)
+                        Text("查看最近访问你主页的人", style = MaterialTheme.typography.bodyMedium, color = Fog)
+                    }
+                }
+                HorizontalDivider(color = NightLine)
+            }
         }
         support?.let { contact ->
             item {
@@ -2140,7 +2611,7 @@ private fun MessagesScreen(
         if (listed.isEmpty() && support == null) {
             item {
                 Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Default.ChatBubbleOutline, contentDescription = null, tint = Fog, modifier = Modifier.size(36.dp))
+                    Icon(Icons.Rounded.ChatBubbleOutline, contentDescription = null, tint = Fog, modifier = Modifier.size(36.dp))
                     Text(if (ready) "还没有聊天" else "暂时无法读取消息", fontWeight = FontWeight.SemiBold)
                     Text(if (ready) "点击「新消息」，给认识的人发个招呼。" else "连接恢复后，你的会话会显示在这里。", color = Fog, style = MaterialTheme.typography.bodyMedium)
                 }
@@ -2160,7 +2631,7 @@ private fun MessagesScreen(
                     Text(conversation.name, fontWeight = FontWeight.SemiBold)
                     Text(conversation.latestMessage, style = MaterialTheme.typography.bodyMedium, color = Fog, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "发消息", tint = Fog, modifier = Modifier.size(18.dp))
+                Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = "发消息", tint = Fog, modifier = Modifier.size(18.dp))
             }
             HorizontalDivider(color = NightLine)
         }
@@ -2264,12 +2735,13 @@ private fun ProfileScreen(
     var ageText by remember(profile) { mutableStateOf(profile?.age?.toString().orEmpty()) }
     var regionText by remember(profile) { mutableStateOf(profile?.region.orEmpty()) }
     confirmRecharge?.let { coins ->
-        AlertDialog(
-            onDismissRequest = { confirmRecharge = null },
-            title = { Text("充值 $coins 金币") },
-            text = { Text("实付 ¥${String.format(java.util.Locale.ROOT, "%.2f", coins / 100.0)}。确认后前往支付宝，到账结果请在充值记录查看。") },
-            confirmButton = { TextButton(onClick = { confirmRecharge = null; onTopUp(coins) }, enabled = !rechargeBusy) { Text("前往支付") } },
-            dismissButton = { TextButton(onClick = { confirmRecharge = null }) { Text("取消") } },
+        QumiConfirmSheet(
+            title = "充值 $coins 金币",
+            message = "实付 ¥${String.format(java.util.Locale.ROOT, "%.2f", coins / 100.0)}。确认后前往支付宝，到账结果请在充值记录查看。",
+            confirmLabel = "前往支付",
+            busy = rechargeBusy,
+            onDismiss = { confirmRecharge = null },
+            onConfirm = { confirmRecharge = null; onTopUp(coins) },
         )
     }
     LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -2280,7 +2752,7 @@ private fun ProfileScreen(
                     Text(session.username, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text("账号 ID ${session.id}", style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 4.dp))
                 }
-                IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, contentDescription = "刷新账户信息") }
+                IconButton(onClick = onRefresh) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新账户信息") }
             }
             Text(
                 level?.let { "用户等级 Lv.${it.viewerLevel} · 主播等级 Lv.${it.creatorLevel}" } ?: "等级信息暂不可用",
@@ -2305,7 +2777,7 @@ private fun ProfileScreen(
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Mint, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Rounded.AccountBalanceWallet, contentDescription = null, tint = Mint, modifier = Modifier.size(20.dp))
                             Text("金币余额", color = Fog)
                         }
                         Text(wallet?.balance?.toString() ?: "—", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Mint)

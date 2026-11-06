@@ -16,6 +16,7 @@ android {
     val livekitPort = providers.gradleProperty("livekitPort").orElse("7880").get()
     val openImApiPort = providers.gradleProperty("openImApiPort").orElse("10002").get()
     val openImWsPort = providers.gradleProperty("openImWsPort").orElse("10001").get()
+    val previewQumiLogin = providers.gradleProperty("previewQumiLogin").orElse("false").get().toBoolean()
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
@@ -37,6 +38,7 @@ android {
         buildConfigField("String", "LIVEKIT_URL", "\"ws://$backendHost:$livekitPort\"")
         buildConfigField("String", "OPENIM_API_URL", "\"http://$backendHost:$openImApiPort\"")
         buildConfigField("String", "OPENIM_WS_URL", "\"ws://$backendHost:$openImWsPort\"")
+        buildConfigField("boolean", "PREVIEW_QUMI_LOGIN", previewQumiLogin.toString())
     }
 
     buildFeatures {
