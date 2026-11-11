@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS secretary_follow (
+  user_id INT UNSIGNED NOT NULL PRIMARY KEY,
+  created_at DATETIME NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dm_call_history (
+  call_id VARCHAR(32) NOT NULL PRIMARY KEY,
+  caller_id INT UNSIGNED NOT NULL,
+  peer_id INT UNSIGNED NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
+);

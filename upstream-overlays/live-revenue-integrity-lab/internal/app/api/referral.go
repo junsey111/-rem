@@ -3,6 +3,7 @@ package apiserver
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/mini_station/live-revenue-integrity-lab/internal/httpx"
 	"github.com/mini_station/live-revenue-integrity-lab/internal/service"
@@ -24,6 +25,28 @@ func (s *Server) handleReferralMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, profile)
+}
+
+func (s *Server) handleReferralRewards(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
+		return
+	}
+	var before uint64
+	if raw := r.URL.Query().Get("before_id"); raw != "" {
+		var err error
+		before, err = strconv.ParseUint(raw, 10, 64)
+		if err != nil || before == 0 {
+			httpx.WriteError(w, http.StatusBadRequest, "INVALID_CURSOR", "分页无效")
+			return
+		}
+	}
+	rewards, next, err := s.svc.ListReferralRewards(r.Context(), authenticatedUserID(r), before)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "referral rewards unavailable")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"rewards": rewards, "next_before_id": next})
 }
 
 func (s *Server) handleReferralRedeem(w http.ResponseWriter, r *http.Request) {

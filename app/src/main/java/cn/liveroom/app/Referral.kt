@@ -8,7 +8,20 @@ data class ReferralProfile(
     val code: String?,
     val invitedCount: Long?,
     val rewardedCoins: Long?,
+    val rechargeBps: Int = 0,
+    val withdrawalBps: Int = 0,
+    val todayInvitedCount: Long = 0,
+    val todayRechargeRewardCoins: Long = 0,
+    val todayWithdrawalRewardCoins: Long = 0,
+    val totalRechargeRewardCoins: Long = 0,
+    val totalWithdrawalRewardCoins: Long = 0,
+    val inviterId: Long? = null,
+    val todayInvitees: List<ReferralInvite> = emptyList(),
 )
+
+data class ReferralInvite(val userId: Long, val createdAt: String)
+data class ReferralReward(val id: String, val source: String, val inviteeId: Long,
+    val sourceAmount: Long, val rewardCoins: Long, val rateBps: Int, val createdAt: String)
 
 /** POST /revenue/referrals/redeem receipt. Amounts are the server's, not a local estimate. */
 data class ReferralReceipt(
@@ -24,11 +37,23 @@ data class ReferralReceipt(
 
 internal fun parseReferralProfile(data: JSONObject): ReferralProfile {
     val code = data.optString("code").takeIf { data.has("code") && !data.isNull("code") && it.isNotBlank() }
+    val invitees = data.optJSONArray("today_invitees")
     return ReferralProfile(
         enabled = data.optBoolean("enabled"),
         code = code,
         invitedCount = data.optionalLong("invited_count"),
         rewardedCoins = data.optionalLong("rewarded_coins"),
+        rechargeBps = data.optInt("recharge_bps"),
+        withdrawalBps = data.optInt("withdrawal_bps"),
+        todayInvitedCount = data.optLong("today_invited_count"),
+        todayRechargeRewardCoins = data.optLong("today_recharge_reward_coins"),
+        todayWithdrawalRewardCoins = data.optLong("today_withdrawal_reward_coins"),
+        totalRechargeRewardCoins = data.optLong("total_recharge_reward_coins"),
+        totalWithdrawalRewardCoins = data.optLong("total_withdrawal_reward_coins"),
+        inviterId = data.optionalLong("inviter_id"),
+        todayInvitees = (0 until (invitees?.length() ?: 0)).mapNotNull { index ->
+            invitees?.optJSONObject(index)?.let { ReferralInvite(it.optLong("user_id"), it.optString("created_at")) }
+        },
     )
 }
 

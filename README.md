@@ -38,6 +38,8 @@ Revenue 的受保护接口在验证 Billd JWT 后，还会用同一个 Bearer �
 
 APK 输出在 `app/build/outputs/apk/debug/app-debug.apk`。
 
+本地开发可运行 `node scripts/dev-auto-update.cjs`。它监视 Android 源码变化，自动递增版本号、构建 APK、在 `127.0.0.1:4310` 提供更新清单和安装包，并安装到已连接的 Android 模拟器。运行 `scripts/install-dev-auto-update.ps1` 可注册当前用户登录后自动启动。App 启动时及运行期间每小时检查更新；其他设备仍需在 Android 系统界面确认安装。对外发布需要将更新服务部署到设备可访问的地址，并使用稳定的正式签名构建 APK；本地调试包及 `10.0.2.2` 地址仅适用于这台电脑的模拟器。
+
 ## 启动媒体服务
 
 SRS 官方开发启动方式：

@@ -1,4 +1,5 @@
 import Sequelize from 'sequelize';
+import { randomInt } from 'node:crypto';
 
 import { PROJECT_ENV, THIRD_PLATFORM } from '@/constant';
 import { IList, IUser } from '@/interface';
@@ -226,15 +227,23 @@ class UserService {
   }
 
   /** 创建用户 */
-  async create(props: IUser) {
-    // @ts-ignore
-    const result: any = await userModel.create(props);
+  async create(props: IUser, transaction?: Sequelize.Transaction) {
+    let result: any;
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      try {
+        result = await userModel.create({ ...props, public_id: randomInt(100000, 1000000) } as any, { transaction });
+        break;
+      } catch (error) {
+        if (!(error instanceof Sequelize.UniqueConstraintError)) throw error;
+      }
+    }
+    if (!result) throw new Error('暂时无法分配六位账号 ID，请重试');
     if (PROJECT_ENV === 'prod') {
       // 生产环境注册用户权限就是SVIP用户
-      await result.setRoles([5]);
+      await result.setRoles([5], { transaction });
     } else {
       // 非生产环境注册用户权限就是SUPER_ADMIN管理员
-      await result.setRoles([2, 3]);
+      await result.setRoles([2, 3], { transaction });
     }
     return result;
   }

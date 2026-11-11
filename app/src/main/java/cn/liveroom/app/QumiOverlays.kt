@@ -24,10 +24,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
-private val QumiOverlaySurface = Color(0xFFFBF8FF)
-private val QumiOverlayInk = Color(0xFF17151D)
-private val QumiOverlayMuted = Color(0xFF74707F)
-private val QumiOverlayPrimary = Color(0xFF6546E8)
+private val QumiOverlaySurface = LiveStyle.sheetSurface
+private val QumiOverlayInk = LiveStyle.ink
+private val QumiOverlayMuted = LiveStyle.muted
+private val QumiOverlayPrimary = LiveStyle.accent
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,9 +45,9 @@ internal fun QumiModalSheet(
         sheetState = state,
         containerColor = QumiOverlaySurface,
         tonalElevation = 0.dp,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
         dragHandle = {
-            Spacer(Modifier.size(width = 28.dp, height = 4.dp).background(Color(0xFF6E7891), RoundedCornerShape(4.dp)))
+            Spacer(Modifier.size(width = 28.dp, height = 4.dp).background(LiveStyle.muted, RoundedCornerShape(4.dp)))
         },
     ) {
         Column(
@@ -78,7 +78,7 @@ internal fun QumiConfirmSheet(
 ) {
     QumiModalSheet(onDismiss = onDismiss, dismissEnabled = !busy) {
         QumiSheetTitle(title, message)
-        HorizontalDivider(color = Color(0xFFE8E3EE))
+        HorizontalDivider(color = LiveStyle.line)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(onClick = onDismiss, enabled = !busy, modifier = Modifier.weight(1f)) { Text(dismissLabel) }
             Button(onClick = onConfirm, enabled = !busy, modifier = Modifier.weight(1f)) { Text(if (busy) "处理中…" else confirmLabel) }

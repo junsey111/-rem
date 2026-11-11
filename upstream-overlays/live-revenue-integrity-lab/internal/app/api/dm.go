@@ -120,7 +120,7 @@ func (s *Server) handleDmVideoAccess(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// dmPointTotals adds private-gift and paid-video diamonds onto the live earnings counters.
+// dmPointTotals adds private gifts, video unlocks and connected-call charges to earnings.
 // Coins themselves stay in the shared COIN wallet; this only reports the diamond amounts already stored.
 func (s *Server) dmPointTotals(ctx context.Context, userID uint64, start *time.Time) (spent, diamonds, gifts int64, err error) {
 	since := func(query string, args []any) (string, []any) {
@@ -129,7 +129,7 @@ func (s *Server) dmPointTotals(ctx context.Context, userID uint64, start *time.T
 		}
 		return query + " AND created_at>=?", append(args, *start)
 	}
-	var giftSpent, unlockSpent, giftDiamonds, giftCount, unlockDiamonds, unlockCount int64
+	var giftSpent, unlockSpent, callSpent, giftDiamonds, giftCount, unlockDiamonds, unlockCount, callDiamonds int64
 	query, args := since(`SELECT COALESCE(SUM(charged_coins),0) FROM dm_gift_orders WHERE viewer_id=? AND status='ACCEPTED'`, []any{userID})
 	if err = s.db.QueryRowContext(ctx, query, args...).Scan(&giftSpent); err != nil {
 		return 0, 0, 0, err
@@ -146,5 +146,13 @@ func (s *Server) dmPointTotals(ctx context.Context, userID uint64, start *time.T
 	if err = s.db.QueryRowContext(ctx, query, args...).Scan(&unlockDiamonds, &unlockCount); err != nil {
 		return 0, 0, 0, err
 	}
-	return giftSpent + unlockSpent, giftDiamonds + unlockDiamonds, giftCount + unlockCount, nil
+	query, args = since(`SELECT COALESCE(SUM(price_coins),0) FROM dm_call_charges WHERE payer_id=?`, []any{userID})
+	if err = s.db.QueryRowContext(ctx, query, args...).Scan(&callSpent); err != nil {
+		return 0, 0, 0, err
+	}
+	query, args = since(`SELECT COALESCE(SUM(price_coins),0) FROM dm_call_charges WHERE owner_id=?`, []any{userID})
+	if err = s.db.QueryRowContext(ctx, query, args...).Scan(&callDiamonds); err != nil {
+		return 0, 0, 0, err
+	}
+	return giftSpent + unlockSpent + callSpent, giftDiamonds + unlockDiamonds + callDiamonds, giftCount + unlockCount, nil
 }

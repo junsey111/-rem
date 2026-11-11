@@ -16,6 +16,10 @@ android {
     val livekitPort = providers.gradleProperty("livekitPort").orElse("7880").get()
     val openImApiPort = providers.gradleProperty("openImApiPort").orElse("10002").get()
     val openImWsPort = providers.gradleProperty("openImWsPort").orElse("10001").get()
+    val updateHost = providers.gradleProperty("updateHost").orElse(backendHost).get()
+    val updatePort = providers.gradleProperty("updatePort").orElse("4310").get()
+    val appVersionCode = providers.gradleProperty("appVersionCode").orElse("1").get().toInt()
+    val appVersionName = providers.gradleProperty("appVersionName").orElse("0.1.0").get()
     val previewQumiLogin = providers.gradleProperty("previewQumiLogin").orElse("false").get().toBoolean()
 
     compileOptions {
@@ -27,8 +31,8 @@ android {
         applicationId = "cn.liveroom.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
         buildConfigField("String", "SRS_URL", "\"http://$backendHost:$srsApiPort\"")
         buildConfigField("String", "BILLD_API_URL", "\"http://$backendHost:$billdPort\"")
         buildConfigField("String", "SRS_PLAYBACK_URL", "\"http://$backendHost:$srsPlaybackPort\"")
@@ -38,6 +42,7 @@ android {
         buildConfigField("String", "LIVEKIT_URL", "\"ws://$backendHost:$livekitPort\"")
         buildConfigField("String", "OPENIM_API_URL", "\"http://$backendHost:$openImApiPort\"")
         buildConfigField("String", "OPENIM_WS_URL", "\"ws://$backendHost:$openImWsPort\"")
+        buildConfigField("String", "APP_UPDATE_URL", "\"http://$updateHost:$updatePort/version.json\"")
         buildConfigField("boolean", "PREVIEW_QUMI_LOGIN", previewQumiLogin.toString())
     }
 
@@ -66,6 +71,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
+    implementation("com.google.zxing:core:3.5.4")
     if (file("libs/open_im_sdk.aar").exists()) {
         implementation(files("libs/open_im_sdk.aar"))
     }

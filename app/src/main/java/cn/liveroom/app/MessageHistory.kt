@@ -9,6 +9,7 @@ data class OpenImMessage(
     val status: Int,
     val contentType: Int = 101,
     val customData: String? = null,
+    val mediaUrl: String? = null,
 )
 
 data class OpenImHistory(

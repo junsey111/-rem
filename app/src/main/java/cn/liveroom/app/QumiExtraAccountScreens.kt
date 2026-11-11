@@ -57,9 +57,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalContext
 
-private val CostumeBackground = Color(0xFF211B4D)
-private val CostumePanel = Color(0xFF160A2B)
-private val CostumeMuted = Color(0xFF9891B5)
+private val CostumeBackground = LiveStyle.stage
+private val CostumePanel = LiveStyle.stageSurface
+private val CostumeMuted = Color(0xFFAAB3BC)
 private data class QumiShopItem(val name: String, val roses: Int, @DrawableRes val image: Int)
 
 private val QumiCostumeCatalog = linkedMapOf(
@@ -195,12 +195,12 @@ internal fun QumiCostumeShopScreen(onBack: () -> Unit) {
                 }
             }
 
-            Column(Modifier.fillMaxWidth().background(Color(0xFF2C245E))) {
+            Column(Modifier.fillMaxWidth().background(LiveStyle.stageSurface)) {
                 Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Surface(color = Color(0xFFFF6468), shape = RoundedCornerShape(6.dp)) { Text("参考目录", Modifier.padding(horizontal = 7.dp, vertical = 4.dp), color = Color.White, fontSize = 12.sp) }
                     Text("  商品和价格未在本平台上架", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
-                Row(Modifier.fillMaxWidth().height(92.dp).background(Color(0xFF321958)).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().height(92.dp).background(LiveStyle.stageSurface).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(selected?.name ?: category, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                         Text(selected?.let { "参考价 ${it.roses} 玫瑰 · 未在本平台上架" } ?: "该分类商品目录尚未接入", color = CostumeMuted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)

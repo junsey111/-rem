@@ -224,9 +224,16 @@ export function parseVideoHeader(header: string) {
   }
 }
 
-export async function storeDmVideo(senderId: number, meta: any, bytes: Buffer) {
+export async function storeDmVideo(senderId: number, meta: any, bytes: Buffer, token: string) {
   const request = validateVideoMeta(meta, senderId);
   if (!request.ok) throw new CustomError(request.message, 400, 400);
+  if (request.priceCoins > 0) {
+    const applications: any = await axios.get(`${REVENUE_API_URL}/v1/users/me/creator-applications`, {
+      headers: { Authorization: `Bearer ${token}` }, timeout: 10000,
+    });
+    if (!applications?.reviews?.some((application) => application.status === 'APPROVED'))
+      throw new CustomError('付费视频需要主播认证审核通过', 403, 403);
+  }
   const contentType = sniffVideo(bytes);
   if (!contentType) throw new CustomError('仅支持 MP4 或 WebM 视频', 400, 400);
   await requirePeer(senderId, request.recipientId);

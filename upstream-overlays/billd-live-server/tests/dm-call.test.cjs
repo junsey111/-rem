@@ -8,10 +8,13 @@ require('module-alias').addAlias('@', path.resolve(__dirname, '../dist'));
 const {
   DM_CALL_TTL_MS,
   endDmCall,
+  confirmDmCall,
   joinDmCall,
   managedMediaRoom,
   openDmCall,
   resetDmCalls,
+  readDmCall,
+  incomingDmCall,
 } = require('../dist/service/dm-call');
 
 const secret = 'fixture-secret-should-not-leak';
@@ -33,6 +36,24 @@ async function open(caller, other, mode = 'video', extra = {}) {
 }
 
 describe('dm call grants', { concurrency: 1 }, () => {
+test('incoming calls, rejection, timeout and connected duration are participant scoped', async () => {
+  resetDmCalls();
+  const invite = await open(1,2,'voice');
+  assert.equal(incomingDmCall('2',base.now).call_id,invite.call_id);
+  assert.equal(incomingDmCall('1',base.now),null);
+  assert.throws(()=>readDmCall({userId:'3',callId:invite.call_id,now:base.now}),e=>e.status===403);
+  await endDmCall({userId:'2',callId:invite.call_id,reason:'rejected',now:base.now+1000});
+  assert.equal(readDmCall({userId:'1',callId:invite.call_id,now:base.now+2000}).status,'rejected');
+  resetDmCalls();
+  const unanswered = await open(1,2,'voice');
+  assert.equal(readDmCall({userId:'1',callId:unanswered.call_id,now:base.now+60001}).status,'no_answer');
+  assert.equal(incomingDmCall('2',base.now+60001),null);
+  const connected = await open(1,2,'voice',{now:base.now+61000});
+  await confirmDmCall({userId:'2',callId:connected.call_id,participants:async()=>['1','2'],settle:async()=>{},now:base.now+62000});
+  await endDmCall({userId:'1',callId:connected.call_id,now:base.now+67000});
+  const receipt=readDmCall({userId:'2',callId:connected.call_id,now:base.now+70000});
+  assert.equal(receipt.connected,true);assert.equal(receipt.duration_seconds,5);assert.equal(receipt.status,'ended');
+});
 test('both participants can publish; voice and video grants differ; live rooms stay untouched', async () => {
   resetDmCalls();
   const video = await open(1, 2, 'video');
@@ -87,6 +108,24 @@ test('same pair reuses the open call; a different pair or mode is refused until 
   const next = await open(1, 8, 'voice');
   assert.notEqual(next.call_id, first.call_id);
   await assert.rejects(endDmCall({ userId: '9', callId: next.call_id, now: base.now }), (error) => error.status === 403);
+});
+
+test('paid call settlement requires both participants in the media room', async () => {
+  resetDmCalls();
+  const created = await open(1, 2, 'video', { priceCoins: 25, acceptedPriceCoins: 25 });
+  const joined = await joinDmCall({ ...base, userId: '2', callId: created.call_id });
+  assert.equal(joined.price_coins, 25);
+  let charges = 0;
+  const settle = async () => { charges += 1; };
+  await assert.rejects(confirmDmCall({ userId: '2', callId: created.call_id, now: base.now,
+    participants: async () => ['2'], settle }), error => error.status === 409);
+  assert.equal(charges, 0);
+  const participants = async () => ['1', '2'];
+  const confirmed = await confirmDmCall({ userId: '2', callId: created.call_id, participants, settle, now: base.now });
+  assert.equal(confirmed.charged_coins, 25);
+  await assert.rejects(confirmDmCall({ userId: '9', callId: created.call_id, participants, settle, now: base.now }), error => error.status === 403);
+  await endDmCall({ userId: '1', callId: created.call_id });
+  await assert.rejects(confirmDmCall({ userId: '2', callId: created.call_id, participants, settle, now: base.now }), error => error.status === 404);
 });
 
 test('expired, unknown, self, disabled and missing peers do not receive a token', async () => {

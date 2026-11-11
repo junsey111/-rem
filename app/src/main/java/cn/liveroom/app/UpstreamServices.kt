@@ -25,8 +25,13 @@ data class UpstreamServices(
     val openImWsUrl: String = BuildConfig.OPENIM_WS_URL,
 )
 
-data class UserSession(val id: Long, val username: String, val token: String)
-data class BilldRoom(val roomId: String, val title: String, val host: String, val creatorId: Long, val coverPath: String? = null)
+data class UserSession(val id: Long, val username: String, val token: String, val publicId: Long = id, val avatar: String? = null)
+data class BilldRoom(val roomId: String, val title: String, val host: String, val creatorId: Long,
+    val coverPath: String? = null, val roomType: String = "SINGLE", val welcomeText: String = "",
+    val backgroundId: Int = 0)
+data class RoomCreateConfig(val title: String, val roomType: String = "SINGLE",
+    val welcomeText: String = "", val backgroundId: Int = 0, val coverPath: String? = null,
+    val watchPriceCoins: Int = 0)
 data class Gift(
     val id: String,
     val name: String,
@@ -48,8 +53,16 @@ data class UserLevel(
     val creatorNextLevelPoints: Long,
 )
 data class Earnings(val diamonds: Long, val gifts: Long)
-data class CreatorLiveSession(val id: String, val status: String, val startedAt: String, val durationSeconds: Long)
+data class CreatorDashboard(
+    val monthlyIncomeFen: Long?, val totalIncomeFen: Long?,
+    val monthlySessions: Long, val totalSessions: Long,
+    val monthlyMinutes: Long, val totalMinutes: Long,
+)
+data class CreatorLiveSession(val id: String, val status: String, val startedAt: String,
+    val durationSeconds: Long, val incomeFen: Long? = null)
 data class CreatorSupporter(val userId: Long, val giftCount: Long, val coins: Long)
+data class CreatorApplication(val id: String, val status: String, val decisionReason: String)
+data class CreatorWithdrawable(val availableDiamonds: Long, val earnedDiamonds: Long, val reservedDiamonds: Long)
 data class RankingEntry(val userId: Long, val value: Long, val gifts: Long)
 data class LiveKitCredentials(val url: String, val token: String)
 data class DmCallCredentials(
@@ -67,7 +80,9 @@ data class DmCallCredentials(
 data class OpenImCredentials(val userId: String, val token: String, val apiUrl: String, val wsUrl: String)
 data class ChatRecipient(val userId: String, val name: String)
 data class MatchScore(val matchId: Long, val creatorId: Long, val points: Long)
-data class RechargeOrder(val id: String, val coins: Int, val amountFen: Int, val status: String)
+data class MatchScoreboard(val scores: List<MatchScore>, val durationMinutes: Int, val remainingSeconds: Int?)
+data class RechargeOrder(val id: String, val coins: Int, val amountFen: Int, val status: String,
+    val createdAt: String = "", val balanceAfter: Long? = null, val source: String = "ONLINE")
 data class GiftReceipt(val id: String, val requestId: String, val creatorId: Long, val liveSessionId: Long, val matchId: Long, val giftId: String, val giftName: String, val quantity: Int, val chargedCoins: Long, val status: String, val rejectCode: String, val createdAt: String)
 data class GiftHistory(val orders: List<GiftReceipt>, val nextCursor: String)
 class PlatformHttpException(val statusCode: Int, message: String, val errorCode: String? = null) : IllegalStateException(message)
@@ -79,10 +94,19 @@ data class IdentityVerificationStatus(val enabled: Boolean, val requestId: Strin
 data class OperationsSummary(val users: Long, val disabledUsers: Long, val listedRooms: Long, val pendingOrders: Long, val creditedOrders: Long, val observedAt: String)
 data class OperationsUser(val id: Long, val username: String, val status: Int)
 data class OperationsUsers(val users: List<OperationsUser>, val total: Long, val page: Int, val pageSize: Int)
-data class PublicUser(val id: Long, val username: String, val avatar: String?, val description: String?, val isFollowing: Boolean = false)
+data class PublicUser(val id: Long, val username: String, val avatar: String?, val description: String?,
+    val isFollowing: Boolean = false, val publicId: Long = id, val isFollower: Boolean = false)
 data class UserRelations(val users: List<PublicUser>, val nextCursor: String)
-data class MomentPost(val id: String, val userId: Long, val username: String, val content: String, val createdAt: String, val likeCount: Long, val isLiked: Boolean, val commentCount: Long = 0)
-data class MomentComment(val id: String, val userId: Long, val username: String, val content: String, val createdAt: String, val isMine: Boolean)
+data class MomentPost(val id: String, val userId: Long, val username: String, val content: String, val createdAt: String, val likeCount: Long, val isLiked: Boolean,
+    val commentCount: Long = 0, val mediaKind: String? = null, val mediaPath: String? = null,
+    val favoriteCount: Long = 0, val isFavorited: Boolean = false,
+    val authorAvatar: String? = null, val isFollowing: Boolean = false, val isHidden: Boolean = false,
+    val reviewStatus: String = "APPROVED", val reviewReason: String = "")
+data class MomentUpload(val kind: String, val bytes: ByteArray)
+data class MomentComment(val id: String, val userId: Long, val username: String, val content: String, val createdAt: String, val isMine: Boolean,
+    val avatar: String? = null, val parentId: String? = null, val replyToUsername: String? = null, val replyCount: Long = 0)
+data class MomentInteraction(val id: String, val type: String, val actorId: Long, val actorName: String,
+    val actorAvatar: String?, val content: String?, val createdAt: String, val post: MomentPost)
 data class MomentDailyProgress(val published: Int, val liked: Int, val commented: Int)
 data class DailyCheckin(val today: String, val checkedIn: Boolean, val streakDays: Int, val rewardConfigured: Boolean)
 data class CloseFriendUser(val id: Long, val username: String, val avatar: String?)
@@ -94,10 +118,21 @@ data class ModerationLives(val lives: List<ModerationLive>, val nextCursor: Stri
 data class ModerationAction(val id: String, val requestId: String, val operatorId: String, val liveId: String, val reason: String, val createdAt: String)
 data class ModerationActions(val actions: List<ModerationAction>, val nextCursor: String)
 
-data class MatchInvitation(val invitationId: Long, val matchId: Long, val liveSessionId: Long, val opponentLiveSessionId: Long, val creatorId: Long, val opponentCreatorId: Long, val status: String)
+data class MatchInvitation(val invitationId: Long, val matchId: Long, val liveSessionId: Long, val opponentLiveSessionId: Long, val creatorId: Long, val opponentCreatorId: Long, val status: String, val durationMinutes: Int = 5)
 
 /** Authenticated mobile API for the Billd application gateway and its Revenue service. */
 class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
+    suspend fun relationCounts(token: String): Pair<Long, Long> = withContext(Dispatchers.IO) {
+        val data = request("/user/relation-counts", token = token)
+        data.getLong("following") to data.getLong("followers")
+    }
+    suspend fun creatorIncome(token: String, source: String = "", before: String = ""): JSONObject = withContext(Dispatchers.IO) {
+        request("/revenue/income?source=${java.net.URLEncoder.encode(source, "UTF-8")}&before=${java.net.URLEncoder.encode(before, "UTF-8")}", "GET", token)
+    }
+    suspend fun platformContent(key: String): JSONObject = withContext(Dispatchers.IO) {
+        require(key in setOf("announcements", "secretary", "noble"))
+        request("/platform-content/$key")
+    }
     suspend fun liveRecipient(token: String, roomId: String): ChatRecipient = withContext(Dispatchers.IO) {
         val data = request("/openim/rooms/${URLEncoder.encode(roomId, "UTF-8")}/recipient", "POST", token, JSONObject())
         ChatRecipient(data.getString("user_id"), data.getString("name"))
@@ -152,7 +187,8 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         val rows = request("/user/search", "POST", token, JSONObject().put("query", query)).getJSONArray("users")
         (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { user ->
             PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank),
-                user.optString("desc").takeIf(String::isNotBlank), user.optBoolean("is_following"))
+                user.optString("desc").takeIf(String::isNotBlank), user.optBoolean("is_following"),
+                user.optLong("public_id").takeIf { it in 100000..999999 } ?: user.getLong("id"))
         } }
     }
 
@@ -166,7 +202,8 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         val rows = request("/user/recommendations" + if (query.isEmpty()) "" else "?$query", token = token).getJSONArray("users")
         (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { user ->
             PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank),
-                user.optString("desc").takeIf(String::isNotBlank), user.optBoolean("is_following"))
+                user.optString("desc").takeIf(String::isNotBlank), user.optBoolean("is_following"),
+                user.optLong("public_id").takeIf { it in 100000..999999 } ?: user.getLong("id"))
         } }
     }
 
@@ -179,7 +216,8 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         val rows = request("/user/visitors", token = token).getJSONArray("visitors")
         (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
             val user = row.optJSONObject("user") ?: return@let null
-            ProfileVisitor(PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank), null), row.optString("last_seen_at"))
+            ProfileVisitor(PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank), null,
+                publicId = user.optLong("public_id").takeIf { it in 100000..999999 } ?: user.getLong("id")), row.optString("last_seen_at"))
         } }
     }
 
@@ -191,7 +229,10 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         val rows = data.getJSONArray("users")
         UserRelations((0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { user ->
             PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank),
-                user.optString("desc").takeIf(String::isNotBlank))
+                user.optString("desc").takeIf(String::isNotBlank),
+                isFollowing = user.optBoolean("is_following"),
+                publicId = user.optLong("public_id").takeIf { it in 100000..999999 } ?: user.getLong("id"),
+                isFollower = user.optBoolean("is_follower"))
         } }, data.optString("next_before_id"))
     }
 
@@ -203,7 +244,8 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
     suspend fun blockedUsers(token: String): List<PublicUser> = withContext(Dispatchers.IO) {
         val rows = request("/user/blocks", token = token).getJSONArray("users")
         (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.optJSONObject("user")?.let { user ->
-            PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank), user.optString("desc").takeIf(String::isNotBlank))
+            PublicUser(user.getLong("id"), user.getString("username"), user.optString("avatar").takeIf(String::isNotBlank), user.optString("desc").takeIf(String::isNotBlank),
+                publicId = user.optLong("public_id").takeIf { it in 100000..999999 } ?: user.getLong("id"))
         } }
     }
 
@@ -227,7 +269,7 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
     )
 
     suspend fun moments(token: String, scope: String, beforeId: String = "", userId: Long? = null): Pair<List<MomentPost>, String> = withContext(Dispatchers.IO) {
-        require(scope in setOf("all", "following", "mine", "user"))
+        require(scope in setOf("all", "following", "mine", "mine_post", "mine_video", "liked_post", "liked_video", "favorite_video", "user", "video"))
         require((scope == "user") == (userId != null) && (userId == null || userId > 0))
         val path = "/moments?scope=$scope" + (userId?.let { "&user_id=$it" } ?: "") + if (beforeId.isBlank()) "" else "&before_id=$beforeId"
         val data = request(path, token = token)
@@ -235,9 +277,38 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         val posts = (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
             val author = row.optJSONObject("author") ?: return@let null
             MomentPost(row.getString("id"), row.getLong("user_id"), author.getString("username"), row.getString("content"),
-                row.optString("created_at"), row.optLong("like_count"), row.optBoolean("is_liked"), row.optLong("comment_count"))
+                row.optString("created_at"), row.optLong("like_count"), row.optBoolean("is_liked"), row.optLong("comment_count"),
+                row.optString("media_kind").takeIf { it == "image" || it == "video" },
+                row.optString("media_path").takeIf { it.matches(Regex("/moments/[1-9][0-9]{0,19}/media")) },
+                row.optLong("favorite_count"), row.optBoolean("is_favorited"),
+                author.optString("avatar").takeIf(String::isNotBlank), row.optBoolean("is_following"), row.optBoolean("hidden"),
+                row.optString("review_status", "APPROVED"), row.optString("review_reason"))
         } }
         posts to data.optString("next_before_id")
+    }
+
+    suspend fun momentInteractions(token: String, before: String = "", limit: Int = 30): Pair<List<MomentInteraction>, String> = withContext(Dispatchers.IO) {
+        require(before.isBlank() || before.matches(Regex("[0-9]{13}:[lc]:[1-9][0-9]{0,19}(:[1-9][0-9]{0,9})?")))
+        require(limit == 30 || limit == 100)
+        val path = "/moments/interactions?limit=$limit" + if (before.isBlank()) "" else "&before=${URLEncoder.encode(before, "UTF-8")}"
+        val data = request(path, token = token)
+        val rows = data.getJSONArray("interactions")
+        val interactions = (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
+            val actor = row.optJSONObject("actor") ?: return@let null
+            val moment = row.optJSONObject("moment") ?: return@let null
+            val author = moment.optJSONObject("author") ?: return@let null
+            val post = MomentPost(moment.getString("id"), moment.getLong("user_id"), author.getString("username"),
+                moment.getString("content"), moment.optString("created_at"), 0, false,
+                commentCount = moment.optLong("comment_count"),
+                mediaKind = moment.optString("media_kind").takeIf { it == "image" || it == "video" },
+                mediaPath = moment.optString("media_path").takeIf { it.matches(Regex("/moments/[1-9][0-9]{0,19}/media")) },
+                authorAvatar = author.optString("avatar").takeIf(String::isNotBlank))
+            MomentInteraction(row.getString("id"), row.getString("type"), actor.getLong("id"), actor.getString("username"),
+                actor.optString("avatar").takeIf(String::isNotBlank),
+                if (row.isNull("content")) null else row.optString("content").takeIf(String::isNotBlank),
+                row.optString("created_at"), post)
+        } }
+        interactions to data.optString("next_before")
     }
 
     suspend fun momentDailyProgress(token: String): MomentDailyProgress = withContext(Dispatchers.IO) {
@@ -285,13 +356,66 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         Unit
     }
 
-    suspend fun publishMoment(token: String, content: String): MomentPost = withContext(Dispatchers.IO) {
-        val row = request("/moments", "POST", token, JSONObject().put("content", content))
-        MomentPost(row.getString("id"), row.getLong("user_id"), "我", row.getString("content"), row.optString("created_at"), 0, false)
+    suspend fun publishMoment(token: String, content: String, upload: MomentUpload? = null): MomentPost = withContext(Dispatchers.IO) {
+        val row = if (upload == null) request("/moments", "POST", token, JSONObject().put("content", content)) else {
+            require(upload.kind == "image" || upload.kind == "video")
+            val maxBytes = if (upload.kind == "image") 5 * 1024 * 1024 else 20 * 1024 * 1024
+            require(upload.bytes.size in 1..maxBytes) { if (upload.kind == "image") "图片不能超过 5MB" else "视频不能超过 20MB" }
+            val meta = JSONObject().put("kind", upload.kind).put("content", content)
+            val connection = URL("${baseUrl.trimEnd('/')}/moments").openConnection() as HttpURLConnection
+            try {
+                connection.requestMethod = "POST"
+                connection.connectTimeout = 8_000
+                connection.readTimeout = 60_000
+                connection.doOutput = true
+                connection.setFixedLengthStreamingMode(upload.bytes.size)
+                connection.setRequestProperty("Authorization", "Bearer $token")
+                connection.setRequestProperty("Content-Type", "application/octet-stream")
+                connection.setRequestProperty("X-Moment-Meta", android.util.Base64.encodeToString(meta.toString().toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP))
+                connection.outputStream.use { it.write(upload.bytes) }
+                val status = connection.responseCode
+                val raw = (if (status in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+                val root = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+                if (status !in 200..299) throw PlatformHttpException(status, root.optString("message").ifBlank { "发布失败" })
+                root.getJSONObject("data")
+            } finally { connection.disconnect() }
+        }
+        MomentPost(row.getString("id"), row.getLong("user_id"), "我", row.getString("content"), row.optString("created_at"), 0, false,
+            mediaKind = row.optString("media_kind").takeIf { it == "image" || it == "video" },
+            mediaPath = row.optString("media_path").takeIf { it.matches(Regex("/moments/[1-9][0-9]{0,19}/media")) },
+            reviewStatus = row.optString("review_status", "APPROVED"), reviewReason = row.optString("review_reason"))
+    }
+
+    suspend fun momentImage(token: String, path: String): ByteArray = withContext(Dispatchers.IO) {
+        require(path.matches(Regex("/moments/[1-9][0-9]{0,19}/media")))
+        val connection = URL("${baseUrl.trimEnd('/')}$path").openConnection() as HttpURLConnection
+        try {
+            connection.connectTimeout = 8_000
+            connection.readTimeout = 15_000
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            if (connection.responseCode != 200) throw PlatformHttpException(connection.responseCode, "图片加载失败")
+            connection.inputStream.use { input ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (output.size() <= 5 * 1024 * 1024) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                }
+                require(output.size() <= 5 * 1024 * 1024) { "图片太大" }
+                output.toByteArray()
+            }
+        } finally { connection.disconnect() }
     }
 
     suspend fun deleteMoment(token: String, id: String) = withContext(Dispatchers.IO) {
         request("/moments/$id", "DELETE", token)
+        Unit
+    }
+
+    suspend fun setMomentHidden(token: String, id: String, hidden: Boolean) = withContext(Dispatchers.IO) {
+        require(id.matches(Regex("[1-9][0-9]{0,19}")))
+        request("/moments/$id/hidden", "PUT", token, JSONObject().put("hidden", hidden))
         Unit
     }
 
@@ -300,37 +424,55 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         Unit
     }
 
+    suspend fun favoriteMoment(token: String, id: String, favorited: Boolean) = withContext(Dispatchers.IO) {
+        require(id.matches(Regex("[1-9][0-9]{0,19}")))
+        request("/moments/$id/favorite", if (favorited) "PUT" else "DELETE", token)
+        Unit
+    }
+
+    private fun parseMomentComment(row: JSONObject): MomentComment {
+        val author = row.getJSONObject("author")
+        return MomentComment(row.getString("id"), row.getLong("user_id"), author.getString("username"), row.getString("content"),
+            row.optString("created_at"), row.optBoolean("is_mine"), author.optString("avatar").takeIf(String::isNotBlank),
+            row.optString("parent_id").takeIf { it.matches(Regex("[1-9][0-9]{0,19}")) },
+            row.optString("reply_to_username").takeIf(String::isNotBlank), row.optLong("reply_count"))
+    }
+
     suspend fun momentComments(token: String, momentId: String, beforeId: String = ""): Pair<List<MomentComment>, String> = withContext(Dispatchers.IO) {
         require(momentId.matches(Regex("[1-9][0-9]{0,19}")))
         val data = request("/moments/$momentId/comments" + if (beforeId.isBlank()) "" else "?before_id=$beforeId", token = token)
         val rows = data.getJSONArray("comments")
-        val comments = (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
-            val author = row.optJSONObject("author") ?: return@let null
-            MomentComment(row.getString("id"), row.getLong("user_id"), author.getString("username"), row.getString("content"),
-                row.optString("created_at"), row.optBoolean("is_mine"))
-        } }
+        val comments = (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let(::parseMomentComment) }
         comments to data.optString("next_before_id")
     }
 
-    suspend fun publishMomentComment(token: String, momentId: String, content: String): MomentComment = withContext(Dispatchers.IO) {
-        require(momentId.matches(Regex("[1-9][0-9]{0,19}")))
-        val row = request("/moments/$momentId/comments", "POST", token, JSONObject().put("content", content)).getJSONObject("comment")
-        MomentComment(row.getString("id"), row.getLong("user_id"), row.getJSONObject("author").getString("username"),
-            row.getString("content"), row.optString("created_at"), row.optBoolean("is_mine"))
+    suspend fun momentReplies(token: String, momentId: String, rootId: String, afterId: String = ""): Pair<List<MomentComment>, String> = withContext(Dispatchers.IO) {
+        require(momentId.matches(Regex("[1-9][0-9]{0,19}")) && rootId.matches(Regex("[1-9][0-9]{0,19}")))
+        val path = "/moments/$momentId/comments/$rootId/replies" + if (afterId.isBlank()) "" else "?after_id=$afterId"
+        val data = request(path, token = token)
+        val rows = data.getJSONArray("replies")
+        (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let(::parseMomentComment) } to data.optString("next_after_id")
     }
 
-    suspend fun deleteMomentComment(token: String, momentId: String, commentId: String) = withContext(Dispatchers.IO) {
+    suspend fun publishMomentComment(token: String, momentId: String, content: String, replyToId: String? = null): MomentComment = withContext(Dispatchers.IO) {
+        require(momentId.matches(Regex("[1-9][0-9]{0,19}")))
+        require(replyToId == null || replyToId.matches(Regex("[1-9][0-9]{0,19}")))
+        val body = JSONObject().put("content", content)
+        if (replyToId != null) body.put("reply_to_comment_id", replyToId)
+        parseMomentComment(request("/moments/$momentId/comments", "POST", token, body).getJSONObject("comment"))
+    }
+
+    suspend fun deleteMomentComment(token: String, momentId: String, commentId: String): Long = withContext(Dispatchers.IO) {
         require(momentId.matches(Regex("[1-9][0-9]{0,19}")) && commentId.matches(Regex("[1-9][0-9]{0,19}")))
-        request("/moments/$momentId/comments/$commentId", "DELETE", token)
-        Unit
+        request("/moments/$momentId/comments/$commentId", "DELETE", token).optLong("deleted_count", 1)
     }
 
     suspend fun profile(token: String): UserProfile = withContext(Dispatchers.IO) {
         parseProfile(request("/revenue/profile", token = token))
     }
 
-    suspend fun saveProfile(token: String, age: Int, region: String, gender: String): UserProfile = withContext(Dispatchers.IO) {
-        parseProfile(request("/revenue/profile", "PUT", token, JSONObject().put("age_years", age).put("region_code", region).put("gender", gender)))
+    suspend fun saveProfile(token: String, age: Int, gender: String): UserProfile = withContext(Dispatchers.IO) {
+        parseProfile(request("/revenue/profile", "PUT", token, JSONObject().put("age_years", age).put("gender", gender)))
     }
 
     suspend fun identityVerificationStatus(token: String): IdentityVerificationStatus = withContext(Dispatchers.IO) {
@@ -348,27 +490,53 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         if (data.isNull("region_code")) null else data.optString("region_code"), data.optString("source"),
         if (data.isNull("gender")) null else data.optString("gender"),
     )
-    suspend fun register(username: String, password: String): UserSession = withContext(Dispatchers.IO) {
+    suspend fun register(username: String, password: String, email: String, code: String): UserSession = withContext(Dispatchers.IO) {
         val data = request("/user/create", "POST", body = JSONObject()
             .put("username", username.trim())
-            .put("password", password))
+            .put("password", password)
+            .put("email", email.trim())
+            .put("code", code))
         val id = data.optLong("id")
         check(id > 0) { "注册成功，但服务端没有返回账号 ID" }
-        UserSession(id, data.optString("username", username.trim()), "")
+        UserSession(id, data.optString("username", username.trim()), "", data.optLong("public_id").takeIf { it in 100000..999999 } ?: id)
     }
 
-    suspend fun login(userId: Long, password: String): UserSession = withContext(Dispatchers.IO) {
+    suspend fun login(username: String, password: String): UserSession = withContext(Dispatchers.IO) {
         val value = requestValue("/user/login", "POST", body = JSONObject()
-            .put("id", userId)
+            .put("username", username.trim())
             .put("password", password))
         val token = value as? String ?: error("登录响应中没有 JWT")
         check(token.isNotBlank()) { "登录响应中没有 JWT" }
-        currentAccount(token).also { check(it.id == userId) { "账号信息不符，请重新登录" } }
+        currentAccount(token).also { check(it.username == username.trim()) { "账号信息不符，请重新登录" } }
+    }
+
+    suspend fun sendEmailCode(email: String, purpose: String, token: String? = null) = withContext(Dispatchers.IO) {
+        request("/user/email/code", "POST", token, JSONObject().put("email", email.trim()).put("purpose", purpose))
+        Unit
+    }
+
+    suspend fun loginWithEmailCode(email: String, code: String): UserSession = withContext(Dispatchers.IO) {
+        val value = requestValue("/user/email/login", "POST", body = JSONObject()
+            .put("email", email.trim()).put("code", code))
+        val token = value as? String ?: error("登录响应中没有 JWT")
+        check(token.isNotBlank()) { "登录响应中没有 JWT" }
+        currentAccount(token)
+    }
+
+    suspend fun boundEmail(token: String): String? = withContext(Dispatchers.IO) {
+        request("/user/email/binding", token = token).optString("email").ifBlank { null }
+    }
+
+    suspend fun bindEmail(token: String, email: String, code: String) = withContext(Dispatchers.IO) {
+        request("/user/email/bind", "POST", token, JSONObject().put("email", email.trim()).put("code", code))
+        Unit
     }
 
     suspend fun currentAccount(token: String): UserSession = withContext(Dispatchers.IO) {
         val data = request("/user/me", token = token)
-        UserSession(data.getLong("id"), data.getString("username"), token)
+        UserSession(data.getLong("id"), data.getString("username"), token,
+            data.optLong("public_id").takeIf { it in 100000..999999 } ?: data.getLong("id"),
+            data.optString("avatar").takeIf { it.isNotBlank() && it != "null" })
     }
 
     suspend fun changePassword(token: String, oldPassword: String, newPassword: String) = withContext(Dispatchers.IO) {
@@ -415,6 +583,17 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         parseReferralProfile(request("/revenue/referrals/me", token = token))
     }
 
+    suspend fun referralRewards(token: String, beforeId: String = ""): Pair<List<ReferralReward>, String> = withContext(Dispatchers.IO) {
+        require(beforeId.isBlank() || beforeId.matches(Regex("[1-9][0-9]{0,19}")))
+        val data = request("/revenue/referrals/rewards" + if (beforeId.isBlank()) "" else "?before_id=$beforeId", token = token)
+        val rows = data.optJSONArray("rewards")
+        val rewards = (0 until (rows?.length() ?: 0)).mapNotNull { index -> rows?.optJSONObject(index)?.let {
+            ReferralReward(it.optString("id"), it.optString("source"), it.optLong("invitee_id"),
+                it.optLong("source_amount"), it.optLong("reward_coins"), it.optInt("rate_bps"), it.optString("created_at"))
+        } }
+        rewards to data.optString("next_before_id")
+    }
+
     suspend fun redeemReferral(token: String, requestId: String, code: String): ReferralReceipt = withContext(Dispatchers.IO) {
         parseReferralReceipt(request("/revenue/referrals/redeem", "POST", token, JSONObject()
             .put("request_id", requestId)
@@ -426,10 +605,23 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         Earnings(data.optLong("diamonds"), data.optLong("gifts"))
     }
 
+    suspend fun creatorDashboard(token: String): CreatorDashboard = withContext(Dispatchers.IO) {
+        val data = request("/revenue/dashboard", token = token)
+        CreatorDashboard(
+            monthlyIncomeFen = if (data.isNull("monthly_income_fen")) null else data.getLong("monthly_income_fen"),
+            totalIncomeFen = if (data.isNull("total_income_fen")) null else data.getLong("total_income_fen"),
+            monthlySessions = data.getLong("monthly_sessions"),
+            totalSessions = data.getLong("total_sessions"),
+            monthlyMinutes = data.getLong("monthly_minutes"),
+            totalMinutes = data.getLong("total_minutes"),
+        )
+    }
+
     suspend fun creatorSessions(token: String): List<CreatorLiveSession> = withContext(Dispatchers.IO) {
         val rows = request("/revenue/sessions", token = token).getJSONArray("sessions")
         (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
-            CreatorLiveSession(row.getString("live_session_id"), row.getString("status"), row.getString("started_at"), row.getLong("duration_seconds"))
+            CreatorLiveSession(row.getString("live_session_id"), row.getString("status"), row.getString("started_at"),
+                row.getLong("duration_seconds"), if (row.isNull("income_fen")) null else row.getLong("income_fen"))
         } }
     }
 
@@ -438,6 +630,31 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
             CreatorSupporter(row.getLong("user_id"), row.getLong("gift_count"), row.getLong("coins"))
         } }
+    }
+
+    suspend fun creatorApplications(token: String): List<CreatorApplication> = withContext(Dispatchers.IO) {
+        val rows = request("/revenue/creator-applications", token = token).getJSONArray("reviews")
+        (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
+            CreatorApplication(row.optString("review_id"), row.optString("status"), row.optString("decision_reason"))
+        } }
+    }
+
+    suspend fun creatorWithdrawable(token: String): CreatorWithdrawable = withContext(Dispatchers.IO) {
+        val data = request("/revenue/withdrawable", token = token)
+        CreatorWithdrawable(data.optLong("available_diamonds"), data.optLong("earned_diamonds"), data.optLong("reserved_diamonds"))
+    }
+
+    internal suspend fun creatorMoneyRules(token: String): CreatorMoneyRules? = withContext(Dispatchers.IO) {
+        val data = request("/revenue/finance-rules", token = token)
+        if (data.optBoolean("configured")) parseCreatorMoneyRules(data.optJSONObject("rules")) else null
+    }
+
+    suspend fun applyCreator(token: String, requestId: String, name: String, phone: String): CreatorApplication = withContext(Dispatchers.IO) {
+        val data = request("/revenue/creator-applications", "POST", token, JSONObject()
+            .put("request_id", requestId)
+            .put("content", "申请姓名：${name.trim()}")
+            .put("evidence_reference", "联系电话：${phone.trim()}"))
+        CreatorApplication(data.optString("review_id"), data.optString("status"), data.optString("decision_reason"))
     }
 
     suspend fun creatorRankings(token: String, period: String): List<RankingEntry> = withContext(Dispatchers.IO) {
@@ -493,11 +710,12 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         request("/revenue/matches/$matchId/close", "POST", token, JSONObject())
     }
 
-    suspend fun inviteMatch(token: String, liveSessionId: Long, opponentLiveSessionId: Long): MatchInvitation = withContext(Dispatchers.IO) {
+    suspend fun inviteMatch(token: String, liveSessionId: Long, opponentLiveSessionId: Long, durationMinutes: Int): MatchInvitation = withContext(Dispatchers.IO) {
         val data = request("/revenue/match-invitations", "POST", token, JSONObject()
             .put("live_session_id", liveSessionId)
-            .put("opponent_live_session_id", opponentLiveSessionId))
-        MatchInvitation(data.optLong("invitation_id"), data.optLong("match_id"), liveSessionId, opponentLiveSessionId, 0, 0, data.optString("status"))
+            .put("opponent_live_session_id", opponentLiveSessionId)
+            .put("duration_minutes", durationMinutes))
+        MatchInvitation(data.optLong("invitation_id"), data.optLong("match_id"), liveSessionId, opponentLiveSessionId, 0, 0, data.optString("status"), data.optInt("duration_minutes", durationMinutes))
     }
 
     suspend fun matchInvitations(token: String): List<MatchInvitation> = withContext(Dispatchers.IO) {
@@ -505,24 +723,27 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         buildList {
             for (i in 0 until rows.length()) {
                 val row = rows.optJSONObject(i) ?: continue
-                add(MatchInvitation(row.optLong("invitation_id"), row.optLong("match_id"), row.optLong("live_session_id"), row.optLong("opponent_live_session_id"), row.optLong("creator_id"), row.optLong("opponent_creator_id"), row.optString("status")))
+                add(MatchInvitation(row.optLong("invitation_id"), row.optLong("match_id"), row.optLong("live_session_id"), row.optLong("opponent_live_session_id"), row.optLong("creator_id"), row.optLong("opponent_creator_id"), row.optString("status"), row.optInt("duration_minutes", 5)))
             }
         }
     }
 
     suspend fun respondMatchInvitation(token: String, invitationId: Long, accept: Boolean): MatchInvitation = withContext(Dispatchers.IO) {
         val data = request("/revenue/match-invitations/$invitationId/respond", "POST", token, JSONObject().put("accept", accept))
-        MatchInvitation(data.optLong("invitation_id"), data.optLong("match_id"), data.optLong("live_session_id"), data.optLong("opponent_live_session_id"), data.optLong("creator_id"), data.optLong("opponent_creator_id"), data.optString("status"))
+        MatchInvitation(data.optLong("invitation_id"), data.optLong("match_id"), data.optLong("live_session_id"), data.optLong("opponent_live_session_id"), data.optLong("creator_id"), data.optLong("opponent_creator_id"), data.optString("status"), data.optInt("duration_minutes", 5))
     }
 
-    suspend fun matchScore(token: String, matchId: Long): List<MatchScore> = withContext(Dispatchers.IO) {
-        val rows = request("/revenue/matches/$matchId/score", token = token).optJSONArray("scores") ?: JSONArray()
-        buildList {
+    suspend fun matchScore(token: String, matchId: Long): MatchScoreboard = withContext(Dispatchers.IO) {
+        val data = request("/revenue/matches/$matchId/score", token = token)
+        val rows = data.optJSONArray("scores") ?: JSONArray()
+        val scores = buildList {
             for (i in 0 until rows.length()) {
                 val row = rows.optJSONObject(i) ?: continue
                 add(MatchScore(matchId, row.optLong("creator_id"), row.optLong("points")))
             }
         }
+        MatchScoreboard(scores, data.optInt("duration_minutes", 5),
+            if (data.isNull("remaining_seconds")) null else data.optInt("remaining_seconds"))
     }
 
     suspend fun startLive(token: String): Long = withContext(Dispatchers.IO) {
@@ -537,6 +758,12 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
 
     suspend fun watchAccess(token: String, liveId: Long): WatchAccess = withContext(Dispatchers.IO) {
         parseWatchAccess(request("/revenue/lives/$liveId/watch-access", token = token))
+    }
+
+    suspend fun setWatchPrice(token: String, liveId: Long, coins: Int): WatchAccess = withContext(Dispatchers.IO) {
+        require(coins in 0..1_000_000) { "观看价格需为 0 至 1000000 金币" }
+        parseWatchAccess(request("/revenue/lives/$liveId/watch-price", "PUT", token,
+            JSONObject().put("unlock_price_coins", coins)))
     }
 
     suspend fun watchHeartbeat(token: String, liveId: Long, requestId: String, deltaSeconds: Int): WatchAccess = withContext(Dispatchers.IO) {
@@ -563,16 +790,47 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         }
     }
 
-    suspend fun startDmCall(token: String, peerId: Long, mode: String): DmCallCredentials = withContext(Dispatchers.IO) {
-        parseDmCall(request("/livekit/calls", "POST", token, JSONObject().put("peer_id", peerId).put("mode", mode)))
+    suspend fun dmCallPrice(token: String, peerId: Long): Int = withContext(Dispatchers.IO) {
+        request("/livekit/call-prices/$peerId", token = token).getInt("price_coins")
+    }
+
+    suspend fun myDmCallPrice(token: String): Int = withContext(Dispatchers.IO) {
+        request("/livekit/call-price", token = token).getInt("price_coins")
+    }
+
+    suspend fun setDmCallPrice(token: String, coins: Int): Int = withContext(Dispatchers.IO) {
+        require(coins in 0..1_000_000)
+        request("/livekit/call-price", "PUT", token, JSONObject().put("price_coins", coins)).getInt("price_coins")
+    }
+
+    suspend fun startDmCall(token: String, peerId: Long, mode: String, acceptedPriceCoins: Int = 0): DmCallCredentials = withContext(Dispatchers.IO) {
+        parseDmCall(request("/livekit/calls", "POST", token, JSONObject().put("peer_id", peerId)
+            .put("mode", mode).put("accepted_price_coins", acceptedPriceCoins)))
     }
 
     suspend fun joinDmCall(token: String, callId: String): DmCallCredentials = withContext(Dispatchers.IO) {
         parseDmCall(request("/livekit/calls/join", "POST", token, JSONObject().put("call_id", callId)))
     }
 
-    suspend fun endDmCall(token: String, callId: String) = withContext(Dispatchers.IO) {
-        request("/livekit/calls/end", "POST", token, JSONObject().put("call_id", callId))
+    suspend fun confirmDmCallConnected(token: String, callId: String) = withContext(Dispatchers.IO) {
+        request("/livekit/calls/connected", "POST", token, JSONObject().put("call_id", callId))
+    }
+
+    suspend fun endDmCall(token: String, callId: String, reason: String = "ended") = withContext(Dispatchers.IO) {
+        request("/livekit/calls/end", "POST", token, JSONObject().put("call_id", callId).put("reason", reason))
+    }
+
+    suspend fun dmCallStatus(token: String, callId: String): JSONObject = withContext(Dispatchers.IO) {
+        require(callId.matches(Regex("[0-9a-f]{32}")))
+        request("/livekit/calls/$callId", "GET", token)
+    }
+
+    suspend fun incomingDmCall(token: String): JSONObject? = withContext(Dispatchers.IO) {
+        request("/livekit/calls/incoming", "GET", token).optJSONObject("call")
+    }
+
+    suspend fun secretaryFollowing(token: String, follow: Boolean? = null): Boolean = withContext(Dispatchers.IO) {
+        request("/platform-content/secretary/follow", if (follow == null) "GET" else if (follow) "PUT" else "DELETE", token).optBoolean("following")
     }
 
     private fun parseDmCall(data: JSONObject): DmCallCredentials {
@@ -603,11 +861,12 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
     }
 
     suspend fun rechargeOrders(token: String): List<RechargeOrder> = withContext(Dispatchers.IO) {
-        val rows = request("/alipay/orders", token = token).optJSONArray("orders") ?: JSONArray()
+        val rows = request("/revenue/recharges", token = token).optJSONArray("records") ?: JSONArray()
         buildList {
             for (i in 0 until rows.length()) {
                 val row = rows.optJSONObject(i) ?: continue
-                add(RechargeOrder(row.optString("requestId"), row.optInt("coins"), row.optInt("amountFen"), row.optString("status")))
+                add(RechargeOrder(row.optString("request_id"), row.optInt("coins"), 0, "CREDITED",
+                    row.optString("created_at"), row.optLong("balance_after"), row.optString("source")))
             }
         }
     }
@@ -615,15 +874,23 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
     suspend fun cohosts(token: String, liveId: Long): List<CohostRequest> = withContext(Dispatchers.IO) {
         val data = request("/revenue/cohosts/$liveId", token = token)
         val rows = data.optJSONArray("requests") ?: JSONArray()
-        buildList { for (i in 0 until rows.length()) { val row=rows.getJSONObject(i); add(CohostRequest(row.getLong("cohost_id"),row.getString("request_id"),row.getLong("live_session_id"),row.getLong("user_id"),row.getString("mode"),row.getString("status"))) } }
+        buildList { for (i in 0 until rows.length()) { val row=rows.getJSONObject(i); add(CohostRequest(row.getLong("cohost_id"),row.getString("request_id"),row.getLong("live_session_id"),row.getLong("user_id"),row.getString("mode"),row.getString("status"),row.optString("username", "用户"),row.optString("avatar").takeIf { it.isNotBlank() && it != "null" },row.optInt("queue_position"))) } }
     }
     suspend fun requestCohost(token: String, liveId: Long, mode: String) = withContext(Dispatchers.IO) { request("/revenue/cohosts/$liveId", "POST", token, JSONObject().put("request_id", UUID.randomUUID().toString()).put("mode", mode)) }
     suspend fun cohostAction(token: String, liveId: Long, id: Long, action: String) = withContext(Dispatchers.IO) { request("/revenue/cohosts/$liveId/$id", "POST", token, JSONObject().put("request_id", UUID.randomUUID().toString()).put("action", action)) }
 
     suspend fun uploadCover(token: String, bytes: ByteArray): String = withContext(Dispatchers.IO) {
+        uploadCoverImage(token, bytes, "/live/cover")
+    }
+
+    suspend fun uploadProfileCover(token: String, bytes: ByteArray): String = withContext(Dispatchers.IO) {
+        uploadCoverImage(token, bytes, "/user/profile-cover")
+    }
+
+    private fun uploadCoverImage(token: String, bytes: ByteArray, path: String): String {
         require(bytes.size <= 3*1024*1024){"图片不能超过 3MB"}
-        val connection=URL("${baseUrl.trimEnd('/')}/live/cover").openConnection() as HttpURLConnection
-        try{connection.requestMethod="PUT";connection.connectTimeout=8000;connection.readTimeout=15000;connection.doOutput=true
+        val connection=URL("${baseUrl.trimEnd('/')}$path").openConnection() as HttpURLConnection
+        return try{connection.requestMethod="PUT";connection.connectTimeout=8000;connection.readTimeout=15000;connection.doOutput=true
             connection.setRequestProperty("Authorization","Bearer $token");connection.setRequestProperty("Content-Type","application/octet-stream")
             connection.outputStream.use{it.write(bytes)}
             val status=connection.responseCode
@@ -631,6 +898,11 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
             val result=JSONObject(raw);if(status !in 200..299)throw PlatformHttpException(status,result.optString("message","上传失败"))
             result.getJSONObject("data").getString("cover_path")
         }finally{connection.disconnect()}
+    }
+
+    suspend fun myLiveCover(token: String): String? = withContext(Dispatchers.IO) {
+        request("/live/cover/me", token = token).optString("cover_path")
+            .takeIf { it.matches(Regex("/live/covers/[1-9][0-9]{0,9}")) }
     }
 
     suspend fun openImSupport(token: String): ChatRecipient = withContext(Dispatchers.IO) {
@@ -789,7 +1061,8 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
 class BilldRoomRegistration(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
     private var socket: Socket? = null
 
-    suspend fun register(token: String, userId: Long, username: String, roomId: String, roomName: String) {
+    suspend fun register(token: String, userId: Long, username: String, roomId: String,
+        draft: RoomCreateConfig) {
         val activeSocket = IO.socket(baseUrl, IO.Options.builder()
             .setAuth(mapOf("token" to token))
             .setReconnection(false)
@@ -800,7 +1073,10 @@ class BilldRoomRegistration(private val baseUrl: String = BuildConfig.BILLD_API_
             activeSocket.once(Socket.EVENT_CONNECT) {
                 val payload = JSONObject()
                     .put("roomId", roomId)
-                    .put("roomName", roomName)
+                    .put("roomName", draft.title)
+                    .put("roomType", draft.roomType)
+                    .put("welcomeText", draft.welcomeText)
+                    .put("backgroundId", draft.backgroundId)
                     .put("isAdmin", true)
                     .put("data", JSONObject().put("userId", userId).put("username", username))
                 activeSocket.emit("join", payload)

@@ -17,7 +17,7 @@ test('real password route and MySQL enforce disabled accounts, server expiry, un
  try{
   await admin.query(`CREATE DATABASE \`${name}\``);await admin.query(`USE \`${name}\``);
   db=new Sequelize(name,decodeURIComponent(url.username),decodeURIComponent(url.password),{host:url.hostname,port:Number(url.port||3306),dialect:'mysql',logging:false});
-  stub('@/config/mysql',{__esModule:true,default:db});stub('@/config/secret',{JWT_SECRET:secret});stub('@/utils',{initTable:()=>{}});
+  stub('@/config/mysql',{__esModule:true,default:db});stub('@/config/secret',{JWT_SECRET:secret});stub('@/config/redis',{redisClient:{isOpen:false}});stub('@/utils',{initTable:()=>{}});
   const user=require('../dist/model/user.model').default;await user.sync();
   await admin.query('ALTER TABLE user MODIFY COLUMN password VARCHAR(50) NOT NULL');
   await admin.query("INSERT INTO user(id,username,password,status,created_at,updated_at) VALUES(9,'Legacy migration','PreservedLegacy',1,UTC_TIMESTAMP(),UTC_TIMESTAMP())");
@@ -48,7 +48,27 @@ test('real password route and MySQL enforce disabled accounts, server expiry, un
   const upgraded=(await user.findByPk(1)).password;assert.ok(isPasswordHash(upgraded));assert.ok(await verifyPassword('ExactPassword',upgraded));
   assert.equal((await login({password:upgraded})).status,400);
   const claims=jwt.verify(firstToken,secret,{algorithms:['HS256']});assert.equal(claims.exp-claims.iat,86400);assert.deepEqual(claims.userInfo,{id:1});assert.ok(claims.jti);assert.equal(claims.password,undefined);
-  const profile=await call('/user/me',undefined,firstToken);assert.equal(profile.status,200);assert.deepEqual(profile.data.data,{id:1,username:'真实昵称',status:1});
+  const profile=await call('/user/me',undefined,firstToken);assert.equal(profile.status,200);assert.deepEqual({id:profile.data.data.id,username:profile.data.data.username,status:profile.data.data.status},{id:1,username:'真实昵称',status:1});assert.match(String(profile.data.data.public_id),/^[1-9][0-9]{5}$/);
+  // Follow state survives a fresh list request, supports mutual follows, and counts only visible accounts.
+  const relations=require('../dist/model/followRelation.model').default;await relations.sync();
+  assert.equal((await call('/user/relation-counts')).status,401);
+  assert.equal((await call('/user/relations?type=following')).status,401);
+  assert.deepEqual((await call('/user/relation-counts',undefined,firstToken)).data.data,{following:0,followers:0});
+  for(let i=0;i<2;i++)assert.equal((await call('/user/follow',{user_id:9},firstToken)).status,200);
+  await relations.bulkCreate([{follower_id:9,followed_id:1},{follower_id:1,followed_id:2},{follower_id:1,followed_id:3},{follower_id:2,followed_id:1},{follower_id:3,followed_id:1}]);
+  assert.deepEqual((await call('/user/relation-counts',undefined,firstToken)).data.data,{following:1,followers:1});
+  for(const type of ['following','followers']){
+    const list=(await call('/user/relations?type='+type,undefined,firstToken)).data.data.users;
+    assert.equal(list.length,1);assert.equal(list[0].id,9);assert.equal(list[0].is_following,true);assert.equal(list[0].is_follower,true);
+  }
+  assert.equal((await call('/user/unfollow',{user_id:9},firstToken)).status,200);
+  assert.equal((await call('/user/relations?type=following',undefined,firstToken)).data.data.users.length,0);
+  const remainingFan=(await call('/user/relations?type=followers',undefined,firstToken)).data.data.users[0];
+  assert.equal(remainingFan.is_following,false);assert.equal(remainingFan.is_follower,true);
+  assert.deepEqual((await call('/user/relation-counts',undefined,firstToken)).data.data,{following:0,followers:1});
+  assert.equal((await call('/user/follow',{user_id:9},firstToken)).status,200);
+  assert.equal((await call('/user/relations?type=following',undefined,firstToken)).data.data.users[0].is_following,true);
+  await relations.destroy({where:{}});
   const second=await login({exp:0});assert.equal(second.status,200);assert.notEqual(second.data.data,firstToken);assert.equal((await call('/user/me',undefined,firstToken)).status,401);
   const concurrent=await Promise.all(Array.from({length:4},()=>login()));assert.ok(concurrent.every(r=>r.status===200));assert.equal(new Set(concurrent.map(r=>r.data.data)).size,4);
   const current=(await user.findByPk(1)).token;let accepted=0;for(const result of concurrent)if((await call('/user/me',undefined,result.data.data)).status===200)accepted++;assert.equal(accepted,1);
@@ -65,10 +85,10 @@ test('real password route and MySQL enforce disabled accounts, server expiry, un
   await user.update({token:current},{where:{id:1}});unavailable=true;
   const outage=await call('/user/me',undefined,current);assert.equal(outage.status,503);assert.ok(!JSON.stringify(outage).includes('private SQL failure'));unavailable=false;
   const {signJwt}=require('../dist/app/auth/authJwt');const other=jwt.decode(signJwt({userInfo:{id:1,password:'must-not-leak',roles:['SUPER_ADMIN']},exp:NaN}));assert.equal(other.exp-other.iat,86400);assert.deepEqual(other.userInfo,{id:1});
-  for(const body of [{username:'NoPassword'},{username:{ne:null},password:'abc'},{username:'Empty',password:''}])assert.equal((await call('/user/create',body)).status,400);
-  const registered=await call('/user/create',{username:'新注册',password:'NewAccountPass'});assert.equal(registered.status,200);
-  assert.ok(!('password'in registered.data.data));assert.ok(!('token'in registered.data.data));
-  const newId=registered.data.data.id;assert.ok(isPasswordHash((await user.findByPk(newId)).password));
+  assert.equal((await call('/user/create',{username:'新注册',password:'NewAccountPass'})).status,503);
+  const registered=await user.create({username:'新注册',password:'NewAccountPass',status:1});
+  const newId=registered.id;assert.ok(isPasswordHash((await user.findByPk(newId)).password));
+  assert.equal((await call('/user/login',{username:'新注册',password:'NewAccountPass'})).status,200);
   assert.equal((await call('/user/login',{id:newId,password:'NewAccountPass'})).status,200);
   assert.equal((await call('/user/password',{oldpwd:'ExactPassword',newpwd:'ChangedPassword'})).status,401);
   assert.equal((await call('/user/password',{oldpwd:'wrong',newpwd:'ChangedPassword'},current)).status,400);

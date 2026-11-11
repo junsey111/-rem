@@ -11,6 +11,38 @@ import (
 	"testing"
 )
 
+func TestCohostQueuePositionAdvances(t *testing.T) {
+	db := newOperationsTestDB(t)
+	s := &Server{db: db, svc: service.New(db)}
+	if _, err := db.Exec(`INSERT INTO users(user_id,age_years,region_code,profile_source,account_standing,can_go_live,live_gifts_enabled,account_type) VALUES(1,25,'US','SELF_REPORTED','GOOD',1,1,'NORMAL'),(2,25,'US','SELF_REPORTED','GOOD',1,1,'NORMAL'),(3,25,'US','SELF_REPORTED','GOOD',1,1,'NORMAL'); INSERT INTO live_sessions(live_session_id,creator_id,status,started_at) VALUES(11,1,'OPEN',UTC_TIMESTAMP(6));`); err != nil {
+		t.Fatal(err)
+	}
+	call := func(user uint64, method, path, body string) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req = req.WithContext(context.WithValue(req.Context(), authUserIDKey, user))
+		res := httptest.NewRecorder()
+		s.handleCohost(res, req)
+		if res.Code != 200 {
+			t.Fatalf("queue: %d %s", res.Code, res.Body.String())
+		}
+		var data map[string]any
+		json.Unmarshal(res.Body.Bytes(), &data)
+		return data
+	}
+	first := call(2, "POST", "/v1/cohosts/11", `{"request_id":"10000000-0000-4000-8000-000000000002","mode":"AUDIO"}`)
+	call(3, "POST", "/v1/cohosts/11", `{"request_id":"10000000-0000-4000-8000-000000000003","mode":"VIDEO"}`)
+	own := call(3, "GET", "/v1/cohosts/11", "")["requests"].([]any)
+	if len(own) != 1 || own[0].(map[string]any)["queue_position"] != float64(2) {
+		t.Fatalf("viewer queue: %+v", own)
+	}
+	call(2, "POST", "/v1/cohosts/11/"+first["cohost_id"].(string), `{"request_id":"20000000-0000-4000-8000-000000000002","action":"LEAVE"}`)
+	own = call(3, "GET", "/v1/cohosts/11", "")["requests"].([]any)
+	if own[0].(map[string]any)["queue_position"] != float64(1) {
+		t.Fatal("queue did not advance")
+	}
+}
+
 func TestCohostPermissionsAndLifecycle(t *testing.T) {
 	db := newOperationsTestDB(t)
 	s := &Server{db: db, svc: service.New(db)}

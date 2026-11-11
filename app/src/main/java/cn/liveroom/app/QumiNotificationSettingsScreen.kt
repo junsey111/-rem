@@ -21,8 +21,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-private val NotificationInk = Color(0xFF19191F)
-private val NotificationMuted = Color(0xFF858A98)
+private val NotificationInk = LiveStyle.ink
+private val NotificationMuted = LiveStyle.muted
 
 @Composable
 internal fun QumiNotificationSettingsScreen(token: String, onBack: () -> Unit) {
@@ -56,7 +56,7 @@ internal fun QumiNotificationSettingsScreen(token: String, onBack: () -> Unit) {
         }
     }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFFF5F6FA))) {
+    Column(Modifier.fillMaxSize().background(LiveStyle.canvas)) {
         Row(Modifier.fillMaxWidth().height(56.dp).background(Color.White), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = NotificationInk) }
             Text("通知设置", Modifier.weight(1f), color = NotificationInk, fontSize = 19.sp, fontWeight = FontWeight.Medium)
@@ -75,7 +75,7 @@ internal fun QumiNotificationSettingsScreen(token: String, onBack: () -> Unit) {
             val value = preferences ?: NotificationPreferences(true, true, true, false)
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 item {
-                    Surface(color = Color.White, shape = RoundedCornerShape(10.dp)) {
+                    Surface(color = Color.White, shape = RoundedCornerShape(8.dp)) {
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text("消息提醒", color = NotificationInk, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                             Text("选择你希望接收的通知类型", color = NotificationMuted, fontSize = 13.sp)
@@ -88,10 +88,10 @@ internal fun QumiNotificationSettingsScreen(token: String, onBack: () -> Unit) {
                 item { PreferenceRow("marketing", "活动通知", "接收活动与服务更新信息", value.marketing, saving) { update("marketing", it) } }
                 if (error != null) item { Text(error!!, Modifier.padding(horizontal = 4.dp), color = Color(0xFFB4233B), fontSize = 13.sp) }
                 item {
-                    Surface(color = Color.White, shape = RoundedCornerShape(10.dp)) {
+                    Surface(color = Color.White, shape = RoundedCornerShape(8.dp)) {
                         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                                Icon(Icons.Rounded.NotificationsActive, contentDescription = null, tint = Color(0xFF7864E8))
+                                Icon(Icons.Rounded.NotificationsActive, contentDescription = null, tint = LiveStyle.live)
                                 Text("设备通知权限", color = NotificationInk, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                             }
                             Text("推送送达还需要平台推送服务和设备通知权限。", color = NotificationMuted, fontSize = 13.sp)
@@ -108,7 +108,7 @@ internal fun QumiNotificationSettingsScreen(token: String, onBack: () -> Unit) {
 
 @Composable
 private fun PreferenceRow(key: String, title: String, description: String, enabled: Boolean, saving: String?, onChange: (Boolean) -> Unit) {
-    Surface(color = Color.White, shape = RoundedCornerShape(10.dp)) {
+    Surface(color = Color.White, shape = RoundedCornerShape(8.dp)) {
         Row(
             Modifier.fillMaxWidth().clickable(enabled = saving == null) { onChange(!enabled) }.padding(start = 16.dp, end = 10.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -118,7 +118,12 @@ private fun PreferenceRow(key: String, title: String, description: String, enabl
                 Text(description, color = NotificationMuted, fontSize = 12.sp)
             }
             if (saving == key) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-            else Switch(checked = enabled, onCheckedChange = onChange)
+            else Switch(checked = enabled, onCheckedChange = onChange, colors = SwitchDefaults.colors(
+                checkedTrackColor = LiveStyle.teal,
+                uncheckedTrackColor = LiveStyle.raised,
+                uncheckedThumbColor = Color.White,
+                uncheckedBorderColor = LiveStyle.line,
+            ))
         }
     }
 }

@@ -44,7 +44,8 @@ internal fun viewerUsesSrsPlayback(isHost: Boolean, matchId: Long?, cohostMode: 
  * [HOST_LIVEKIT] is PK or a co-host seat: RTMP has stopped, then LiveKit publishes.
  */
 internal enum class LiveMediaRoute {
-    IDLE, PENDING, VIEWER_HLS, VIEWER_PK, VIEWER_COHOST, HOST_RTMP, HOST_LIVEKIT,
+    IDLE, PENDING, VIEWER_HLS, VIEWER_PK, VIEWER_COHOST, VIEWER_VOICE,
+    HOST_RTMP, HOST_LIVEKIT, HOST_VOICE,
 }
 
 internal fun liveMediaRoute(
@@ -54,13 +55,16 @@ internal fun liveMediaRoute(
     viewerCohostKnown: Boolean,
     viewerCohostMode: String?,
     hostCohostSeat: Boolean,
+    roomType: String = "SINGLE",
 ): LiveMediaRoute = when {
     !hasRoom -> LiveMediaRoute.IDLE
+    isHost && roomType == "VOICE" -> LiveMediaRoute.HOST_VOICE
     isHost && hostPublishesOrdinarySrs(true, matchId, hostCohostSeat) -> LiveMediaRoute.HOST_RTMP
     isHost -> LiveMediaRoute.HOST_LIVEKIT
     matchId != null -> LiveMediaRoute.VIEWER_PK
     !viewerCohostKnown -> LiveMediaRoute.PENDING
     viewerCohostMode != null -> LiveMediaRoute.VIEWER_COHOST
+    roomType == "VOICE" -> LiveMediaRoute.VIEWER_VOICE
     else -> LiveMediaRoute.VIEWER_HLS
 }
 

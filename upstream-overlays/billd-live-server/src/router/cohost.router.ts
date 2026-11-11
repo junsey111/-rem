@@ -5,6 +5,8 @@ import axios from '@/utils/request';
 import { REVENUE_API_URL } from '@/config/secret';
 import { CustomError } from '@/model/customError.model';
 import successHandler from '@/app/handler/success-handle';
+import User from '@/model/user.model';
+import { Op } from 'sequelize';
 const router = new Router();
 for (const path of ['/revenue/cohosts/:liveId', '/revenue/cohosts/:liveId/:id'])
   for (const method of ['get', 'post'] as const)
@@ -23,7 +25,7 @@ for (const path of ['/revenue/cohosts/:liveId', '/revenue/cohosts/:liveId/:id'])
         if (!/^[1-9][0-9]{0,19}$/.test(id))
           throw new CustomError('连麦编号无效', 400, 400);
       try {
-        const result = await axios.request({
+        const result: any = await axios.request({
           url: `${REVENUE_API_URL}/v1/cohosts/${ctx.params.liveId}${
             ctx.params.id ? '/' + ctx.params.id : ''
           }`,
@@ -32,6 +34,11 @@ for (const path of ['/revenue/cohosts/:liveId', '/revenue/cohosts/:liveId/:id'])
           data: method === 'post' ? ctx.request.body : undefined,
           timeout: 10000,
         });
+        if (method === 'get' && Array.isArray(result?.requests)) {
+          const users = await User.findAll({ where: { id: { [Op.in]: result.requests.map(row => Number(row.user_id)) } }, attributes: ['id', 'username', 'avatar'] });
+          const profiles = new Map(users.map(row => [Number(row.get('id')), row.get()] as [number, any]));
+          result.requests = result.requests.map(row => ({ ...row, username: profiles.get(Number(row.user_id))?.username || `用户${row.user_id}`, avatar: profiles.get(Number(row.user_id))?.avatar || null }));
+        }
         successHandler({ ctx, data: result });
       } catch (e) {
         if (!axiosClient.isAxiosError(e)) throw e;

@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS platform_content_image (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  operator_id INT UNSIGNED NOT NULL,
+  image MEDIUMBLOB NOT NULL,
+  created_at DATETIME NOT NULL
+);

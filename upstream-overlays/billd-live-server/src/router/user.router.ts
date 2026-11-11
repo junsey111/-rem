@@ -2,6 +2,7 @@ import Router from 'koa-router';
 import { Op, literal } from 'sequelize';
 
 import userController from '@/controller/user.controller';
+import { registerWithEmail } from './email-login.router';
 import { authJwt } from '@/app/auth/authJwt';
 import { CustomError } from '@/model/customError.model';
 import successHandler from '@/app/handler/success-handle';
@@ -12,13 +13,14 @@ import { RequestRateLimiter } from '@/app/request-rate';
 import FollowRelation from '@/model/followRelation.model';
 import ProfileVisit from '@/model/profileVisit.model';
 import UserBlock from '@/model/userBlock.model';
+import { ensurePublicId } from '@/service/public-id';
 import axiosClient from 'axios';
 import { REVENUE_API_URL } from '@/config/secret';
 
 const userRouter = new Router({ prefix: '/user' });
 const searchRate = new RequestRateLimiter();
 
-userRouter.post('/create', userController.create);
+userRouter.post('/create', registerWithEmail);
 userRouter.post('/login', userController.login);
 userRouter.post('/password', changePassword);
 userRouter.post('/logout', async ctx => {
@@ -34,7 +36,10 @@ userRouter.post('/logout', async ctx => {
 userRouter.get('/me', async ctx => {
   const { code, userInfo, message } = await authJwt(ctx);
   if (code !== 200 || !userInfo) throw new CustomError(message, code, code);
-  successHandler({ ctx, data: { id: userInfo.id, username: userInfo.username, status: userInfo.status } });
+  const user: any = await User.findByPk(userInfo.id, { attributes: ['id', 'public_id', 'username', 'status', 'avatar'] });
+  if (!user) throw new CustomError('账号不存在', 404, 404);
+  const publicId = await ensurePublicId(user);
+  successHandler({ ctx, data: { id: user.id, public_id: publicId, username: user.username, status: user.status, avatar: user.avatar || null } });
 });
 
 userRouter.post('/search', async ctx => {
@@ -46,15 +51,17 @@ userRouter.post('/search', async ctx => {
   if (!query || Array.from(query).length > 20)
     throw new CustomError('请输入 1 到 20 个字符', 400, 400);
   const users = await User.findAll({
-    attributes: ['id', 'username', 'avatar', 'desc'],
+    attributes: ['id', 'public_id', 'username', 'avatar', 'desc'],
     where: {
       [Op.and]: [
         { status: 1 },
         { id: { [Op.ne]: userInfo.id } },
         { id: { [Op.notIn]: literal(`(SELECT blocked_id FROM user_block_relation WHERE blocker_id = ${Number(userInfo.id)})`) } },
         { id: { [Op.notIn]: literal(`(SELECT blocker_id FROM user_block_relation WHERE blocked_id = ${Number(userInfo.id)})`) } },
-        /^[0-9]{1,10}$/.test(query)
-          ? { id: Number(query) }
+        /^[1-9][0-9]{5}$/.test(query)
+          ? { public_id: Number(query) }
+          : /^[1-9][0-9]{0,9}$/.test(query)
+            ? { id: Number(query) }
           : { username: { [Op.like]: `%${query.replace(/[\\%_]/g, '\\$&')}%` } },
       ],
     },
@@ -66,7 +73,9 @@ userRouter.post('/search', async ctx => {
     where: { follower_id: userInfo.id, followed_id: { [Op.in]: users.map(user => user.id) } },
     raw: true,
   })).map((row: any) => Number(row.followed_id)));
-  successHandler({ ctx, data: { users: users.map((user: any) => ({ ...user.get(), is_following: followedIds.has(Number(user.id)) })) } });
+  successHandler({ ctx, data: { users: await Promise.all(users.map(async (user: any) => ({
+    ...user.get(), public_id: await ensurePublicId(user), is_following: followedIds.has(Number(user.id)),
+  }))) } });
 });
 
 userRouter.get('/recommendations', async ctx => {
@@ -100,7 +109,7 @@ userRouter.get('/recommendations', async ctx => {
     }
   }
   const users = await User.findAll({
-    attributes: ['id', 'username', 'avatar', 'desc'],
+    attributes: ['id', 'public_id', 'username', 'avatar', 'desc'],
     where: { [Op.and]: [
       { status: 1 },
       { id: { [Op.ne]: userInfo.id } },
@@ -112,7 +121,19 @@ userRouter.get('/recommendations', async ctx => {
     order: [['id', 'DESC']],
     limit: 20,
   });
-  successHandler({ ctx, data: { users: users.map((user: any) => ({ ...user.get(), is_following: false })) } });
+  successHandler({ ctx, data: { users: await Promise.all(users.map(async (user: any) => ({
+    ...user.get(), public_id: await ensurePublicId(user), is_following: false,
+  }))) } });
+});
+
+userRouter.get('/relation-counts', async ctx => {
+  const { code, userInfo, message } = await authJwt(ctx);
+  if (code !== 200 || !userInfo?.id) throw new CustomError(message || '请重新登录', code || 401, code || 401);
+  const [rows]: any = await sequelize.query(`SELECT
+    (SELECT COUNT(*) FROM user_follow_relation r JOIN user u ON u.id=r.followed_id AND u.status=1 AND u.deleted_at IS NULL WHERE r.follower_id=:id) following,
+    (SELECT COUNT(*) FROM user_follow_relation r JOIN user u ON u.id=r.follower_id AND u.status=1 AND u.deleted_at IS NULL WHERE r.followed_id=:id) followers`,
+    { replacements: { id: Number(userInfo.id) } });
+  successHandler({ ctx, data: { following: Number(rows[0].following), followers: Number(rows[0].followers) } });
 });
 
 userRouter.get('/relations', async ctx => {
@@ -134,10 +155,19 @@ userRouter.get('/relations', async ctx => {
   const page = relations.slice(0, 50);
   const userIds = page.map(row => Number(row[opposite]));
   const users: any[] = userIds.length ? await User.findAll({
-    attributes: ['id', 'username', 'avatar', 'desc'], where: { id: { [Op.in]: userIds }, status: 1 }, raw: true,
+    attributes: ['id', 'public_id', 'username', 'avatar', 'desc'], where: { id: { [Op.in]: userIds }, status: 1 }, raw: true,
   }) : [];
+  await Promise.all(users.map(async user => { user.public_id = await ensurePublicId(user); }));
   const byId = new Map(users.map(user => [Number(user.id), user]));
-  const result = page.map(row => byId.get(Number(row[opposite]))).filter(Boolean);
+  const following = new Set((await FollowRelation.findAll({
+    attributes: ['followed_id'], where: { follower_id: userInfo.id, followed_id: { [Op.in]: userIds } }, raw: true,
+  })).map((row: any) => Number(row.followed_id)));
+  const followers = new Set((await FollowRelation.findAll({
+    attributes: ['follower_id'], where: { followed_id: userInfo.id, follower_id: { [Op.in]: userIds } }, raw: true,
+  })).map((row: any) => Number(row.follower_id)));
+  const result = page.map(row => byId.get(Number(row[opposite]))).filter(Boolean).map(user => ({
+    ...user, is_following: following.has(Number(user.id)), is_follower: followers.has(Number(user.id)),
+  }));
   successHandler({ ctx, data: { users: result, next_before_id: hasMore ? String(page[page.length - 1].id) : '' } });
 });
 
@@ -159,7 +189,8 @@ userRouter.get('/visitors', async ctx => {
   if (code !== 200 || !userInfo?.id) throw new CustomError(message || '请重新登录', code || 401, code || 401);
   const visits: any[] = await ProfileVisit.findAll({ where: { viewed_user_id: userInfo.id }, order: [['last_seen_at', 'DESC']], limit: 100, raw: true });
   const visitorIds = visits.map(visit => Number(visit.visitor_id));
-  const users: any[] = visitorIds.length ? await User.findAll({ attributes: ['id', 'username', 'avatar'], where: { id: { [Op.in]: visitorIds }, status: 1 }, raw: true }) : [];
+  const users: any[] = visitorIds.length ? await User.findAll({ attributes: ['id', 'public_id', 'username', 'avatar'], where: { id: { [Op.in]: visitorIds }, status: 1 }, raw: true }) : [];
+  await Promise.all(users.map(async user => { user.public_id = await ensurePublicId(user); }));
   const byId = new Map(users.map((visitor: any): [number, any] => [Number(visitor.id), visitor]));
   successHandler({ ctx, data: { visitors: visits.map(visit => ({
     user: byId.get(Number(visit.visitor_id)) || null,
@@ -196,7 +227,8 @@ userRouter.get('/blocks', async ctx => {
   if (code !== 200 || !userInfo?.id) throw new CustomError(message || '请重新登录', code || 401, code || 401);
   const blocks: any[] = await UserBlock.findAll({ where: { blocker_id: userInfo.id }, order: [['created_at', 'DESC']], limit: 100, raw: true });
   const ids = blocks.map(row => Number(row.blocked_id));
-  const users: any[] = ids.length ? await User.findAll({ attributes: ['id', 'username', 'avatar', 'desc'], where: { id: { [Op.in]: ids }, status: 1 }, raw: true }) : [];
+  const users: any[] = ids.length ? await User.findAll({ attributes: ['id', 'public_id', 'username', 'avatar', 'desc'], where: { id: { [Op.in]: ids }, status: 1 }, raw: true }) : [];
+  await Promise.all(users.map(async user => { user.public_id = await ensurePublicId(user); }));
   const byId = new Map(users.map((item: any): [number, any] => [Number(item.id), item]));
   successHandler({ ctx, data: { users: blocks.map(row => ({ user: byId.get(Number(row.blocked_id)) || null, blocked_at: row.created_at })).filter(row => row.user) } });
 });

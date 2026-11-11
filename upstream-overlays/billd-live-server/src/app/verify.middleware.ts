@@ -24,6 +24,8 @@ const frontendWhiteList = [
   '/visitor_log/create', // 访客记录，这个接口是post的
   '/user/login', // 登录，这个接口是post的
   '/user/create', // 用户注册
+  '/user/email/code', // 邮箱验证码
+  '/user/email/login', // 邮箱验证码登录
   '/qq_user/login', // 登录，这个接口是post的
   '/email_user/login', // 登录，这个接口是post的
   '/github_user/login', // 登录，这个接口是post的

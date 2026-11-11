@@ -7,7 +7,7 @@ import (
 )
 
 func profileAgeEligible(age sql.NullInt64, region sql.NullString, source string) bool {
-	if source != "SELF_REPORTED" || !age.Valid || !region.Valid {
+	if source != "SELF_REPORTED" || !age.Valid {
 		return false
 	}
 	if strings.EqualFold(region.String, "KR") {

@@ -70,6 +70,21 @@ func (s *Server) handleFinanceAdmin(w http.ResponseWriter, r *http.Request) {
 		financeReply(w, result, err)
 	case path == "audit" && r.Method == http.MethodGet:
 		s.writeFinanceAudit(w, r)
+	case path == "manual-recharges" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		s.handleManualRecharges(w, r)
+	case path == "recharges" && r.Method == http.MethodGet:
+		userID := uint64(0)
+		if raw := r.URL.Query().Get("user_id"); raw != "" {
+			id, err := strconv.ParseUint(raw, 10, 64)
+			if err != nil || id == 0 { httpx.WriteError(w, 400, "INVALID_USER", "用户编号无效"); return }
+			userID = id
+		}
+		before, ok := rechargeCursor(r)
+		if !ok { httpx.WriteError(w, 400, "INVALID_CURSOR", "分页无效"); return }
+		records, next, err := s.listRecharges(r.Context(), userID, false, before)
+		financeReply(w, map[string]any{"records": records, "next_before_id": next}, err)
+	case path == "balance-adjustments" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		s.handleAdminBalance(w, r)
 	case path == "withdrawals" && r.Method == http.MethodGet:
 		s.writeWithdrawals(w, r, 0)
 	case path == "refunds" && r.Method == http.MethodGet:

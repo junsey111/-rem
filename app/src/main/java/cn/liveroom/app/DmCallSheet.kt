@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -36,6 +37,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -55,18 +58,21 @@ import kotlin.coroutines.resume
 @Composable
 fun DmCallActions(
     canStart: Boolean,
+    showLaunchButtons: Boolean = true,
     incoming: DmCallInvite?,
     onVideo: () -> Unit,
     onVoice: () -> Unit,
     onJoin: (String) -> Unit,
     onAccept: (DmCallInvite) -> Unit,
+    onPriceSettings: () -> Unit,
 ) {
     var callId by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (showLaunchButtons) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onVoice, enabled = canStart, modifier = Modifier.weight(1f)) { Text("语音通话") }
             OutlinedButton(onClick = onVideo, enabled = canStart, modifier = Modifier.weight(1f)) { Text("视频通话") }
         }
+        TextButton(onClick = onPriceSettings) { Text("设置我的视频通话价格") }
         incoming?.let { invite ->
             Button(onClick = { onAccept(invite) }, modifier = Modifier.fillMaxWidth()) {
                 Text(if (invite.mode == "video") "接听视频" else "接听语音")
@@ -102,6 +108,9 @@ fun DmCallSheet(
     var signalNote by remember { mutableStateOf<String?>(null) }
     var remoteCount by remember { mutableIntStateOf(0) }
     var sawPeer by remember { mutableStateOf(false) }
+    var connectionConfirmed by remember { mutableStateOf(false) }
+    var quotedPrice by remember(peerId, requestedMode, callId) { mutableStateOf<Int?>(null) }
+    var acceptedPrice by remember(peerId, requestedMode, callId) { mutableStateOf<Int?>(null) }
     val connection by gateway.connection.collectAsState()
     val permissionWaiter = remember { mutableStateOf<kotlinx.coroutines.CancellableContinuation<Boolean>?>(null) }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -110,12 +119,26 @@ fun DmCallSheet(
         if (waiter != null && waiter.isActive) waiter.resume(grants.values.all { it })
     }
     LaunchedEffect(peerId, requestedMode, callId) {
+        if (!callId.isNullOrBlank() || requestedMode != "video") { acceptedPrice = 0; return@LaunchedEffect }
+        try {
+            val price = api.dmCallPrice(session.token, peerId.toLongOrNull() ?: error("对方账号无效"))
+            quotedPrice = price
+            if (price == 0) acceptedPrice = 0
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { error = failure.message ?: "暂时无法确认视频通话价格" }
+    }
+    LaunchedEffect(peerId, requestedMode, callId, acceptedPrice) {
+        val confirmed = acceptedPrice ?: return@LaunchedEffect
         var issued: DmCallCredentials? = null
         try {
             val created = if (callId.isNullOrBlank()) {
                 val id = peerId.toLongOrNull() ?: kotlin.error("请先选择对方账号")
-                api.startDmCall(session.token, id, requestedMode)
+                api.startDmCall(session.token, id, requestedMode, confirmed)
             } else {
+                if (!ensureCallPermissions(requestedMode, context, permissionWaiter, permissions)) {
+                    error = "通话需要麦克风权限，视频还需要摄像头权限"
+                    return@LaunchedEffect
+                }
                 api.joinDmCall(session.token, callId)
             }
             issued = created
@@ -127,7 +150,7 @@ fun DmCallSheet(
             if (callId.isNullOrBlank()) {
                 launch {
                     val sent = runCatching { onSignal(created) }.getOrDefault(false)
-                    signalNote = if (sent) "已通过私信发送通话号" else "私信未发出，请把通话号告诉对方"
+                    signalNote = if (sent) "已向对方发出通话邀请" else "通话邀请暂未送达，正在等待对方接听"
                 }
             }
             gateway.connect(created.url, created.token, created.mode == "video")
@@ -151,14 +174,53 @@ fun DmCallSheet(
             delay(500)
         }
     }
+    LaunchedEffect(creds?.callId) {
+        val currentCall = creds ?: return@LaunchedEffect
+        while (true) {
+            try {
+                val state = api.dmCallStatus(session.token, currentCall.callId)
+                val status = state.optString("status")
+                if (status !in listOf("ringing", "connected")) {
+                    error = dmCallStatusText(status, state.optBoolean("connected"), state.optLong("duration_seconds"))
+                    gateway.hangUp()
+                    return@LaunchedEffect
+                }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) { /* A transient status failure must not interrupt an active call. */ }
+            delay(2000)
+        }
+    }
+    LaunchedEffect(creds?.callId) {
+        val active = creds ?: return@LaunchedEffect
+        while (connection != MediaConnectionState.CONNECTED || remoteCount == 0) {
+            if (error != null) return@LaunchedEffect
+            delay(200)
+        }
+        if (connectionConfirmed) return@LaunchedEffect
+        connectionConfirmed = true
+        try {
+            api.confirmDmCallConnected(session.token, active.callId)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) {
+            error = failure.message ?: "通话连接或结算失败"
+            runCatching { api.endDmCall(session.token, active.callId) }
+            gateway.hangUp()
+        }
+    }
     val current = creds
     val mode = current?.mode ?: requestedMode
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        Box(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing)) {
-            if (mode == "video" && current != null && error == null) {
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF60408B), Color(0xFF171020)))).windowInsetsPadding(WindowInsets.safeDrawing)) {
+            if (remoteCount == 0 || mode != "video") Column(Modifier.align(Alignment.Center).padding(bottom = 80.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                ChatOnlineAvatar(peerName ?: "用户", null, false, Modifier.size(108.dp))
+                Text(peerName?.ifBlank { null } ?: "对方", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
+                Text(if (error != null) error!! else if (remoteCount > 0) "通话已接通" else if (sawPeer) "对方已挂断" else "正在呼叫，等待对方接听…", color = Color(0xFFDFD2EC), fontSize = 14.sp)
+            }
+            if (mode == "video" && current != null && error == null && remoteCount > 0) {
                 val remoteId = if (current.callerId == session.id.toString()) current.peerId else current.callerId
                 AndroidView(
                     factory = { gateway.createVideoRenderer(it, remoteId) },
@@ -181,7 +243,6 @@ fun DmCallSheet(
                 Text(peerName?.takeIf { it.isNotBlank() } ?: peerId.ifBlank { "对方" }, color = Color.White)
                 Text(callStatus(connection, remoteCount, sawPeer && remoteCount == 0, error), color = Color(0xFFDDDEE2))
                 signalNote?.let { Text(it, color = Color(0xFFDDDEE2), style = MaterialTheme.typography.bodySmall) }
-                current?.let { Text("通话号 ${it.callId}", color = Color(0xFFDDDEE2), style = MaterialTheme.typography.bodySmall) }
                 if (error == null && connection == MediaConnectionState.IDLE) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
@@ -193,6 +254,13 @@ fun DmCallSheet(
             }
         }
     }
+    if (quotedPrice != null && quotedPrice!! > 0 && acceptedPrice == null && error == null) AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("确认视频通话价格") },
+        text = { Text("对方设置的视频通话价格为 ${quotedPrice} 金币。双方接通后按本次通话收取一次，重复接听不会再次扣费。") },
+        confirmButton = { TextButton(onClick = { acceptedPrice = quotedPrice }) { Text("同意并呼叫") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 private suspend fun ensureCallPermissions(
@@ -229,7 +297,7 @@ private fun callStatus(connection: MediaConnectionState, remoteCount: Int, peerL
         MediaConnectionState.CONNECTED -> when {
             remoteCount > 0 -> "通话中"
             peerLeft -> "对方已离开"
-            else -> "已连接，等待对方加入"
+                    else -> "正在呼叫，等待对方接听"
         }
         MediaConnectionState.IDLE -> "正在连接"
     }

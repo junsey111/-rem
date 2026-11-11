@@ -36,9 +36,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-private val MissingPaper = Color(0xFFF4F5FA)
-private val MissingInk = Color(0xFF19191E)
-private val MissingPurple = Color(0xFF6650E8)
+private val MissingPaper = LiveStyle.canvas
+private val MissingInk = LiveStyle.ink
+private val MissingPurple = LiveStyle.accent
 
 @Composable
 private fun MissingTitle(title: String, onBack: () -> Unit, dark: Boolean = false) {
@@ -106,70 +106,6 @@ internal fun QumiGuildScreen(onBack: () -> Unit) {
 }
 
 @Composable
-internal fun QumiNobleScreen(session: UserSession, onBack: () -> Unit) {
-    val tiers = listOf("骑士", "子爵", "侯爵", "伯爵", "公爵", "国王")
-    var tier by remember { mutableIntStateOf(0) }
-    var dialog by remember { mutableStateOf<String?>(null) }
-    dialog?.let { AlertDialog(onDismissRequest = { dialog = null }, title = { Text(it) },
-        text = { Text("贵族等级、权益和支付尚未接入平台服务。不会发起购买，也不会复制其他账号的等级或余额。") },
-        confirmButton = { TextButton(onClick = { dialog = null }) { Text("知道了") } }) }
-    Column(Modifier.fillMaxSize().background(Color(0xFF1D1036))) {
-        Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) { Icon(Icons.Rounded.ArrowBack, "返回", tint = Color.White) }
-            Text("贵族中心", Modifier.weight(1f), color = Color.White, fontSize = 20.sp, textAlign = TextAlign.Center)
-            TextButton(onClick = { dialog = "贵族说明" }) { Text("说明", color = Color(0xFFD9C8F3)) }
-        }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).clip(RoundedCornerShape(18.dp))
-                .background(Color(0xFFBBDCE7)).padding(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("账号 ${session.id}", color = Color(0xFF356D7A), fontSize = 20.sp, fontWeight = FontWeight.Medium)
-                        Text("等级状态由平台服务确认", Modifier.padding(top = 8.dp), color = Color(0xFF356D7A), fontSize = 14.sp)
-                    }
-                    Button(onClick = { dialog = "开通贵族" }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFE49A))) {
-                        Text("了解开通", color = Color(0xFF50371B))
-                    }
-                }
-                Text("专属身份、进场展示等权益", Modifier.padding(top = 15.dp), color = Color(0xFF356D7A), fontSize = 18.sp)
-            }
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                tiers.forEachIndexed { index, name ->
-                    Column(Modifier.clickable { tier = index }.padding(horizontal = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(name, color = if (tier == index) Color.White else Color(0xFFA69CB6), fontSize = 18.sp,
-                            fontWeight = if (tier == index) FontWeight.Bold else FontWeight.Normal)
-                        if (tier == index) Spacer(Modifier.padding(top = 8.dp).width(24.dp).height(3.dp).clip(CircleShape).background(Color.White))
-                    }
-                }
-            }
-            if (tier < 2) {
-                Image(painterResource(if (tier == 0) R.drawable.qumi_noble_knight else R.drawable.qumi_noble_viscount),
-                    "${tiers[tier]}等级展示", modifier = Modifier.fillMaxWidth().height(200.dp).padding(horizontal = 65.dp), contentScale = ContentScale.Fit)
-            } else {
-                Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Star, "${tiers[tier]}等级占位图标", tint = Color(0xFFE6C267), modifier = Modifier.size(100.dp))
-                }
-            }
-            Text("${tiers[tier]}专属权益", Modifier.fillMaxWidth().padding(top = 10.dp), color = Color.White,
-                fontSize = 22.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
-            Text("权益内容与资格待平台服务配置", Modifier.fillMaxWidth().padding(top = 8.dp), color = Color(0xFFC2B6D4),
-                fontSize = 14.sp, textAlign = TextAlign.Center)
-            listOf("贵族身份展示" to "个人资料中的专属标识", "进场效果" to "进入直播间时展示", "专属名片" to "身份与礼物权益").forEach { (title, detail) ->
-                Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 5.dp).clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF170B2B)).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Star, null, tint = Color(0xFFF2CC79), modifier = Modifier.size(28.dp))
-                    Column(Modifier.padding(start = 12.dp)) {
-                        Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                        Text(detail, color = Color(0xFFA69CB6), fontSize = 13.sp)
-                    }
-                }
-            }
-            Spacer(Modifier.height(20.dp))
-        }
-    }
-}
-
-@Composable
 internal fun QumiCloseFriendsScreen(session: UserSession, onBack: () -> Unit, onFindUser: () -> Unit) {
     var showRules by remember { mutableStateOf(false) }
     var relations by remember { mutableStateOf<CloseFriendRelations?>(null) }
@@ -201,16 +137,20 @@ internal fun QumiCloseFriendsScreen(session: UserSession, onBack: () -> Unit, on
             Column(Modifier.fillMaxSize().clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
                 .background(Color(0xFFFFF8F6)).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 16.dp)) {
                 Text("亲密关系", color = Color(0xFF9F3C59), fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                Text("账号 ${session.id}", Modifier.padding(top = 3.dp), color = Color(0xFF936B72), fontSize = 13.sp)
+                Text("账号 ${session.publicId}", Modifier.padding(top = 3.dp), color = Color(0xFF936B72), fontSize = 13.sp)
                 Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(value = targetId, onValueChange = { value -> targetId = value.filter(Char::isDigit).take(20) },
                         modifier = Modifier.weight(1f), singleLine = true, label = { Text("输入对方用户 ID") })
-                    Button(enabled = !busy && targetId.toLongOrNull()?.let { it > 0 && it != session.id } == true,
+                    Button(enabled = !busy && targetId.matches(Regex("[1-9][0-9]{5}")) && targetId.toLongOrNull() != session.publicId,
                         onClick = {
-                            val id = targetId.toLongOrNull() ?: return@Button
+                            val code = targetId
                             busy = true
                             scope.launch {
-                                runCatching { api.inviteCloseFriend(session.token, id) }
+                                runCatching {
+                                    val id = api.searchUsers(session.token, code).firstOrNull { it.publicId.toString() == code }?.id
+                                        ?: kotlin.error("没有找到这个现场号")
+                                    api.inviteCloseFriend(session.token, id)
+                                }
                                     .onSuccess { targetId = ""; refresh++ }
                                     .onFailure { error = it.message ?: "邀请发送失败" }
                                 busy = false
@@ -298,7 +238,12 @@ internal fun QumiBeautyScreen(
                     Text("自然磨皮", color = MissingInk, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     Text("柔化皮肤细节", color = Color(0xFF858997), fontSize = 13.sp)
                 }
-                Switch(checked = settings.smoothing, onCheckedChange = { onSettingsChange(settings.copy(smoothing = it)) })
+                Switch(checked = settings.smoothing, onCheckedChange = { onSettingsChange(settings.copy(smoothing = it)) }, colors = androidx.compose.material3.SwitchDefaults.colors(
+                    checkedTrackColor = LiveStyle.teal,
+                    uncheckedTrackColor = LiveStyle.raised,
+                    uncheckedThumbColor = Color.White,
+                    uncheckedBorderColor = LiveStyle.line,
+                ))
             }
             HorizontalDivider(color = Color(0xFFF0F1F4), modifier = Modifier.padding(vertical = 12.dp))
             BeautySliderRow(

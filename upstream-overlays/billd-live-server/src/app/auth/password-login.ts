@@ -2,17 +2,25 @@ import sequelize from '@/config/mysql';
 import User from '@/model/user.model';
 import { CustomError } from '@/model/customError.model';
 import successHandler from '@/app/handler/success-handle';
+import { literal, where } from 'sequelize';
 import { authJwt, signJwt } from './authJwt';
 import { hashPassword, isPasswordHash, validPassword, verifyPassword } from './password';
 
 export async function passwordLogin(ctx, next) {
-  const { id, password } = ctx.request.body || {};
-  if ((typeof id !== 'number' && typeof id !== 'string') || !/^[1-9][0-9]{0,9}$/.test(String(id))
-    || !Number.isSafeInteger(Number(id)) || typeof password !== 'string' || password.length < 1 || password.length > 1024) {
+  const { id, username, password } = ctx.request.body || {};
+  const validId = (typeof id === 'number' || typeof id === 'string')
+    && /^[1-9][0-9]{0,9}$/.test(String(id)) && Number.isSafeInteger(Number(id));
+  const validUsername = typeof username === 'string' && username.trim() === username
+    && Array.from(username).length >= 1 && Array.from(username).length <= 20;
+  if ((username === undefined ? !validId : !validUsername || id !== undefined)
+    || typeof password !== 'string' || password.length < 1 || password.length > 1024) {
     throw new CustomError('账号或密码格式有误', 400, 400);
   }
   const token = await sequelize.transaction(async transaction => {
-    const user: any = await User.findOne({ where: { id: Number(id) }, attributes: ['id', 'password', 'status'], transaction, lock: transaction.LOCK.UPDATE });
+    const user: any = username !== undefined
+      ? await User.findOne({ where: where(literal('BINARY username'), username), attributes: ['id', 'password', 'status'], transaction, lock: transaction.LOCK.UPDATE })
+      : await User.findOne({ where: { public_id: Number(id) }, attributes: ['id', 'password', 'status'], transaction, lock: transaction.LOCK.UPDATE })
+        || await User.findOne({ where: { id: Number(id) }, attributes: ['id', 'password', 'status'], transaction, lock: transaction.LOCK.UPDATE });
     if (!user || !await verifyPassword(password, user.password)) throw new CustomError('账号或密码错误', 400, 400);
     if (user.status === 2) throw new CustomError('账号已禁用，请联系平台处理', 403, 403);
     const issued = signJwt({ userInfo: { id: Number(user.id) }, exp: 24 });

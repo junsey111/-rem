@@ -343,5 +343,21 @@ func (s *Service) ReviewWithdrawal(ctx context.Context, id uint64, c WithdrawalA
 	}
 	w.Status = next
 	w.PaymentRef = c.PaymentRef
+	if next == "PAID" {
+		var inviterID uint64
+		err = tx.QueryRowContext(ctx, `SELECT inviter_id FROM referral_redemptions WHERE invitee_id=?`, w.UserID).Scan(&inviterID)
+		if err != nil && err != sql.ErrNoRows {
+			return w, err
+		}
+		if inviterID != 0 {
+			balance, err := lockCoinBalance(ctx, tx, inviterID)
+			if err != nil {
+				return w, err
+			}
+			if err := s.postReferralReward(ctx, tx, "WITHDRAWAL", w.ID, w.UserID, inviterID, w.PayoutFen, balance); err != nil {
+				return w, err
+			}
+		}
+	}
 	return w, tx.Commit()
 }

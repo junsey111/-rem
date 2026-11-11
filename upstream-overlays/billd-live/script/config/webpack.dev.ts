@@ -40,7 +40,6 @@ export default new Promise((resolve) => {
           level: 'none',
         },
         devServer: {
-          host: '127.0.0.1',
           client: {
             logging: 'none', // https://webpack.js.org/configuration/dev-server/#devserverclient
           },
@@ -49,18 +48,7 @@ export default new Promise((resolve) => {
           compress: true, // 为所有服务启用gzip 压缩
           port, // 开发服务器端口，默认8080
           open: false, // 告诉 dev-server 在服务器启动后打开浏览器。
-          historyApiFallback: {
-            rewrites: [
-              /**
-               * 如果publicPath设置了/abc，就不能直接设置historyApiFallback: true，这样会重定向到vue3-blog-admin根目录下的index.html
-               * publicPath设置了/abc，就重定向到/abc，这样就可以了
-               */
-              {
-                from: new RegExp(outputStaticUrl(false)),
-                to: outputStaticUrl(false),
-              },
-            ],
-          },
+          historyApiFallback: true,
           /**
            * devServer.static提供静态文件服务器，默认是 'public' 文件夹。static: false禁用
            * 即访问localhost:8080/a.js，其实访问的是public目录的a.js
@@ -73,7 +61,7 @@ export default new Promise((resolve) => {
           },
           proxy: {
             '/backend': {
-              target: process.env.BILLD_API_URL || 'http://127.0.0.1:24300',
+              target: process.env.BILLD_API_URL || 'http://127.0.0.1:4300',
               changeOrigin: true,
               pathRewrite: { '^/backend': '' },
             },
@@ -131,7 +119,6 @@ export default new Promise((resolve) => {
                 syntactic: false,
               },
             },
-            issue: { exclude: [{ file: '**/src/assets/js/**' }] },
             /**
              * devServer如果设置为false，则不会向 Webpack Dev Server 报告错误。
              * 但是控制台还是会打印错误。

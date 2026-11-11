@@ -61,7 +61,9 @@ test('real Socket.IO and MySQL enforce account token, live ownership, committed 
   const directory=await model.findAndCountAll();
   assert.equal(directory.count,1);
   assert.equal(directory.rows[0].roomId,'11');
-  assert.deepEqual(JSON.parse(directory.rows[0].data),{roomId:'11',roomName:'Real room',isAdmin:true,data:{userId:1,username:'Actual host'}});
+  assert.deepEqual(JSON.parse(directory.rows[0].data),{roomId:'11',roomName:'Real room',roomType:'SINGLE',welcomeText:'',backgroundId:0,isAdmin:true,data:{userId:1,username:'Actual host'}});
+  const {roomPresence}=require('../dist/service/room-presence');
+  assert.equal(roomPresence.activity('11').viewer_count,0);
   await owner.join(input());assert.equal(await model.count(),1);
   const clone=await connect(ownerToken);await clone.join(input(),'joinRejected');assert.equal(await model.count(),1);
   const visitor=await connect();await visitor.join(input(),'joinRejected');assert.equal(visitor.events.includes('joined'),false);
@@ -84,6 +86,7 @@ test('real Socket.IO and MySQL enforce account token, live ownership, committed 
   }
   await blocked(visitor,'sendBlob',{data:{timestamp:'../../probe',blob:'must-not-write'}});
   await other.join({roomId:'11'});
+  assert.equal(roomPresence.activity('11').viewer_count,1);
   await blocked(other,'roomNoLive',{roomId:'11'});
   const liveNotice=other.wait('roomLiveing');owner.send('roomLiveing',{roomId:'11'});assert.deepEqual(await liveNotice,{roomId:'11'});
   await admin.query('UPDATE user SET token=? WHERE id=1',['revoked-notice']);

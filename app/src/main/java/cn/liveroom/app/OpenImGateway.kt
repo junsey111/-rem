@@ -1,6 +1,8 @@
 package cn.liveroom.app
 
 import android.content.Context
+import android.graphics.BitmapFactory
+import android.net.Uri
 import open_im_sdk.Open_im_sdk
 import open_im_sdk_callback.Base
 import open_im_sdk_callback.OnAdvancedMsgListener
@@ -68,10 +70,52 @@ class OpenImGateway(private val context: Context) {
         awaitBase { callback -> Open_im_sdk.getAllConversationList(callback, "android-${UUID.randomUUID()}") }
     }
 
+    suspend fun onlineUsers(userIds: List<String>): Set<String> = withContext(Dispatchers.IO) {
+        check(_connection.value == MessageConnection.CONNECTED)
+        parseOnlineChatUsers(awaitBase { callback ->
+            Open_im_sdk.getUserStatus(callback, "android-${UUID.randomUUID()}", JSONArray(userIds).toString())
+        })
+    }
+
     suspend fun sendText(recipientId: String, text: String): String = withContext(Dispatchers.IO) {
         val operationId = "android-${UUID.randomUUID()}"
         val message = Open_im_sdk.createTextMessage(operationId, text)
         awaitSend { callback -> Open_im_sdk.sendMessage(callback, operationId, message, recipientId, "", "", false) }
+    }
+
+    suspend fun sendImage(recipientId: String, uri: Uri): String = withContext(Dispatchers.IO) {
+        val suffix = when (context.contentResolver.getType(uri)) {
+            "image/jpeg" -> ".jpg"
+            "image/png" -> ".png"
+            "image/webp" -> ".webp"
+            else -> error("请选择 JPEG、PNG 或 WebP 图片")
+        }
+        val directory = java.io.File(context.cacheDir, "dm-images").apply { mkdirs() }
+        val file = java.io.File.createTempFile("upload-", suffix, directory)
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                file.outputStream().use { output ->
+                    val buffer = ByteArray(8192)
+                    var total = 0
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        require(total <= 8 * 1024 * 1024) { "图片不能超过 8MB" }
+                        output.write(buffer, 0, count)
+                    }
+                }
+            } ?: error("无法读取图片")
+            require(file.length() > 0 && BitmapFactory.Options().let { options ->
+                options.inJustDecodeBounds = true
+                BitmapFactory.decodeFile(file.absolutePath, options)
+                options.outWidth > 0 && options.outHeight > 0
+            }) { "图片格式无效" }
+            val operationId = "android-${UUID.randomUUID()}"
+            val message = Open_im_sdk.createImageMessageFromFullPath(operationId, file.absolutePath)
+            check(message.isNotBlank()) { "无法创建图片消息" }
+            awaitSend { callback -> Open_im_sdk.sendMessage(callback, operationId, message, recipientId, "", "", false) }
+        } finally { file.delete() }
     }
 
     /** operationID, data, extension, description — same order as the SDK binding used for text. */
