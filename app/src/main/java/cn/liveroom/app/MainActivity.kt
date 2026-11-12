@@ -17,6 +17,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.animation.core.animateFloatAsState
@@ -34,6 +37,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -119,6 +123,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -194,6 +199,7 @@ private data class LiveRoom(
     val roomType: String = "SINGLE",
     val welcomeText: String = "",
     val backgroundId: Int = 0,
+    val announcementText: String = "",
 )
 
 private data class FinishedLiveRoom(val room: LiveRoom, val startedAtMillis: Long,
@@ -208,7 +214,7 @@ private data class WatchGateUi(
 )
 
 private data class OpenImConversation(val userId: String, val name: String, val latestMessage: String, val avatar: String = "")
-private data class PendingDmCall(val peerId: String, val peerName: String?, val requestedMode: String, val callId: String?)
+private data class PendingDmCall(val peerId: String, val peerName: String?, val requestedMode: String, val callId: String?, val offeredPrice: Int? = null)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -279,7 +285,7 @@ private fun LiveRoomApp() {
             kotlinx.coroutines.delay(30_000)
         }
     }
-    MaterialTheme(colorScheme = LiveStyle.colors, shapes = LiveStyle.shapes) {
+    LiveAppTheme {
         if (session == null) {
             AuthScreen(onAuthenticated = {
                 saveSession(context, it)
@@ -538,6 +544,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
     var discoveryComposerVisible by remember { mutableStateOf(false) }
     var approvedVideoPublisher by remember(session.token) { mutableStateOf(false) }
     var sampleRoomIndex by remember { mutableStateOf<Int?>(null) }
+    var sampleLivePreview by remember { mutableStateOf(false) }
     var openVideoFromLiveSignal by remember { mutableIntStateOf(0) }
     var handledVideoOpenSignal by remember { mutableIntStateOf(0) }
     var closeVideoForLiveSignal by remember { mutableIntStateOf(0) }
@@ -567,7 +574,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
     var roomsLoading by remember { mutableStateOf(true) }
     var roomsError by remember { mutableStateOf<String?>(null) }
     var gifts by remember { mutableStateOf(emptyList<Gift>()) }
-    var giftCelebration by remember { mutableStateOf<Pair<String, Gift>?>(null) }
+    var giftCelebration by remember { mutableStateOf<Pair<String, GiftSendPresentation>?>(null) }
     var giftCelebrationNonce by remember { mutableIntStateOf(0) }
     var dmCelebration by remember { mutableStateOf<Gift?>(null) }
     var dmCelebrationNonce by remember { mutableIntStateOf(0) }
@@ -577,9 +584,10 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
     var dailyEarnings by remember { mutableStateOf<Earnings?>(null) }
     var monthlyEarnings by remember { mutableStateOf<Earnings?>(null) }
     var activeRoom by remember { mutableStateOf<LiveRoom?>(null) }
+    var previewRoom by remember { mutableStateOf<LiveRoom?>(null) }
     var switchToLiveAfterViewer by remember { mutableStateOf(false) }
-    LaunchedEffect(activeRoom?.stream, sampleRoomIndex, switchToLiveAfterViewer) {
-        if (switchToLiveAfterViewer && (activeRoom != null || sampleRoomIndex != null)) {
+    LaunchedEffect(activeRoom?.stream, previewRoom?.stream, sampleRoomIndex, switchToLiveAfterViewer) {
+        if (switchToLiveAfterViewer && (activeRoom != null || previewRoom != null || sampleRoomIndex != null)) {
             withFrameNanos { }
             discoverySection = 1
             withFrameNanos { }
@@ -627,6 +635,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
     var openImBusy by remember { mutableStateOf(false) }
     var openImReady by remember { mutableStateOf(false) }
     var activeCall by remember { mutableStateOf<PendingDmCall?>(null) }
+    val demoCallSession = remember(session.id) { DemoCallSession() }
     var showDmCallPrice by remember { mutableStateOf(false) }
     var incomingCall by remember { mutableStateOf<JSONObject?>(null) }
     var incomingCallBusy by remember { mutableStateOf(false) }
@@ -703,7 +712,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                 val fresh = api.liveRooms()
                 val room = fresh.firstOrNull { it.creatorId == user.id }
                 if (room != null) activeRoom = LiveRoom(room.host, room.title, room.creatorId, room.roomId,
-                    room.coverPath, room.roomType, room.welcomeText, room.backgroundId)
+                    room.coverPath, room.roomType, room.welcomeText, room.backgroundId, room.announcementText)
                 else {
                     val demo = demoLiveIndex(user)
                     if (demo != null) sampleRoomIndex = demo else notify("主播已下播")
@@ -733,16 +742,26 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
         }
     }
 
-    fun showConfirmedGift(roomId: String, requestId: String, giftId: String) {
+    fun showConfirmedGift(roomId: String, requestId: String, giftId: String, senderId: Long = session.id, quantity: Int = 1) {
         if (activeRoom?.stream != roomId || requestId.isBlank()) return
         val gift = gifts.firstOrNull { it.id == giftId } ?: return
-        if (gift.coinPrice < 500 || gift.yyevaSource() != null) return
         if (!celebratedGiftRequests.add(requestId)) return
         if (celebratedGiftRequests.size > 200) {
             celebratedGiftRequests.remove(celebratedGiftRequests.first())
         }
-        giftCelebration = roomId to gift
+        giftCelebration = roomId to GiftSendPresentation(gift,
+            if (senderId == session.id) session.username else "用户$senderId",
+            if (senderId == session.id) session.avatar else null, quantity)
         giftCelebrationNonce++
+        val nonce = giftCelebrationNonce
+        if (senderId != session.id) scope.launch {
+            runCatching { api.searchUsers(session.token, senderId.toString()).firstOrNull { it.id == senderId } }
+                .onSuccess { sender ->
+                    if (sender != null && giftCelebrationNonce == nonce && activeRoom?.stream == roomId) {
+                        giftCelebration = roomId to GiftSendPresentation(gift, sender.username, sender.avatar, quantity)
+                    }
+                }
+        }
     }
 
     val submitGift: (PendingGift) -> Unit = { intent ->
@@ -763,7 +782,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                     val giftPayload = JSONObject(intent.payload)
                     activeRoom?.stream?.let { roomId ->
                         showConfirmedGift(roomId, giftPayload.optString("request_id"),
-                            giftPayload.optString("gift_id"))
+                            giftPayload.optString("gift_id"), quantity = giftPayload.optInt("quantity", 1))
                     }
                     notify("礼物已由服务端确认")
                     // A replay returns the original post-debit balance; refresh the current wallet.
@@ -1067,7 +1086,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
             channel.listen(session.token, roomId) { broadcast ->
                 effectSession.offerBroadcast(broadcast)
                 scope.launch {
-                    showConfirmedGift(broadcast.roomId, broadcast.requestId, broadcast.giftId)
+                    showConfirmedGift(broadcast.roomId, broadcast.requestId, broadcast.giftId, broadcast.viewerId, broadcast.quantity)
                 }
             }
             awaitCancellation()
@@ -1084,7 +1103,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
             try {
                 val result = api.liveRooms()
                 rooms = result.map { item -> LiveRoom(item.host, item.title, item.creatorId, item.roomId,
-                    item.coverPath, item.roomType, item.welcomeText, item.backgroundId) }
+                    item.coverPath, item.roomType, item.welcomeText, item.backgroundId, item.announcementText) }
             } catch (error: CancellationException) { throw error
             } catch (_: Exception) {
                 roomsError = if (rooms.isEmpty()) "暂时无法加载直播，请检查网络后重试" else "更新失败，以下是上次加载的直播，可能已结束"
@@ -1112,7 +1131,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
         while (true) {
             try {
                 rooms = api.liveRooms().map { item -> LiveRoom(item.host, item.title, item.creatorId, item.roomId,
-                    item.coverPath, item.roomType, item.welcomeText, item.backgroundId) }
+                    item.coverPath, item.roomType, item.welcomeText, item.backgroundId, item.announcementText) }
                 roomsError = null
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Exception) { roomsError = "直播状态暂时无法更新" }
@@ -1386,7 +1405,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
         val isHost = room.creatorId == session.id
         // Ordinary host video is the SRS RTMP publish. LiveKit camera starts only after that publish stops.
         val ordinarySrs = mediaRoute == LiveMediaRoute.HOST_RTMP
-        val gateway = LiveKitRoomGateway(context)
+        val gateway = LiveKitRoomGateway(context, cameraBeauty)
         roomGateway = gateway
         if (!ordinarySrs) activeRoomStatus = "正在连接直播"
         try {
@@ -1416,7 +1435,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
 
     LaunchedEffect(activeRoom?.stream, session.id, session.token, activeMatchId, hostCohostLiveKit) {
         val room = activeRoom ?: return@LaunchedEffect
-        if (room.roomType == "VOICE" || !hostPublishesOrdinarySrs(room.creatorId == session.id, activeMatchId, hostCohostLiveKit)) return@LaunchedEffect
+        if (room.roomType in setOf("VOICE", "MULTI") || !hostPublishesOrdinarySrs(room.creatorId == session.id, activeMatchId, hostCohostLiveKit)) return@LaunchedEffect
         val url = srsIngestUrl(BuildConfig.SRS_RTMP_URL, room.stream)
         if (url == null) {
             activeRoomStatus = "推流地址不可用，观众将看不到画面"
@@ -1449,7 +1468,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
     }
 
     val ordinaryHostIngest by rememberUpdatedState(
-        activeRoom?.let { it.roomType != "VOICE" && hostPublishesOrdinarySrs(it.creatorId == session.id, activeMatchId, hostCohostLiveKit) } == true,
+        activeRoom?.let { it.roomType !in setOf("VOICE", "MULTI") && hostPublishesOrdinarySrs(it.creatorId == session.id, activeMatchId, hostCohostLiveKit) } == true,
     )
     LaunchedEffect(roomGateway, playbackStream) {
         val gateway = roomGateway ?: return@LaunchedEffect
@@ -1468,7 +1487,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
     LaunchedEffect(activeRoom?.stream, session.token, session.id, activeMatchId) {
         hostCohostLiveKit = false
         val room = activeRoom ?: return@LaunchedEffect
-        if (room.creatorId != session.id || activeMatchId != null) return@LaunchedEffect
+        if (activeMatchId != null) return@LaunchedEffect
         val liveId = room.stream.toLongOrNull() ?: return@LaunchedEffect
         while (true) {
             try {
@@ -1552,7 +1571,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                     }
                     roomRegistration = registration
                     activeRoom = LiveRoom(session.username, draft.title, session.id, sessionId.toString(),
-                        draft.coverPath, draft.roomType, draft.welcomeText, draft.backgroundId)
+                        draft.coverPath, draft.roomType, draft.welcomeText, draft.backgroundId, draft.announcementText)
                     liveStartedAtMillis = System.currentTimeMillis()
                     showCreateRoom = false
                     pendingRoomConfig = null
@@ -1700,8 +1719,8 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
         }
     }
 
-    fun beginCall(peerId: String, peerName: String?, requestedMode: String, callId: String?) {
-        if (activeCall != null) {
+    fun beginCall(peerId: String, peerName: String?, requestedMode: String, callId: String?, offeredPrice: Int? = null) {
+        if (activeCall != null || demoCallSession.active != null) {
             notify("请先挂断当前通话")
             return
         }
@@ -1719,7 +1738,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
             notify("通话号无效")
             return
         }
-        activeCall = PendingDmCall(peerId, peerName, requestedMode, callId)
+        activeCall = PendingDmCall(peerId, peerName, requestedMode, callId, offeredPrice)
     }
 
     var checkingCreator by remember { mutableStateOf(false) }
@@ -1793,14 +1812,8 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
     if (showCreateRoom) Dialog(onDismissRequest = {
         if (showCreateRoomBeauty) showCreateRoomBeauty = false else if (!startingLive) showCreateRoom = false
     }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        if (showCreateRoomBeauty) QumiBeautyScreen(
-            settings = cameraBeauty,
-            onSettingsChange = { settings ->
-                cameraBeauty = settings
-                CameraBeautyPreferences.save(context, session.id, settings)
-            },
-            onBack = { showCreateRoomBeauty = false },
-        ) else QumiCreateRoomScreen(
+        Box(Modifier.fillMaxSize()) {
+        QumiCreateRoomScreen(
             token = session.token,
             username = session.username,
             api = api,
@@ -1814,6 +1827,15 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                 else arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
             },
         )
+        if (showCreateRoomBeauty) QumiBeautyScreen(
+            settings = cameraBeauty,
+            onSettingsChange = { settings ->
+                cameraBeauty = settings
+                CameraBeautyPreferences.save(context, session.id, settings)
+            },
+            onBack = { showCreateRoomBeauty = false },
+        )
+        }
     }
 
     Scaffold(
@@ -1877,7 +1899,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                     error = roomsError,
                     onJoin = { activeRoom = it },
                     onHost = { hostProfile = it },
-                    onSample = { sampleRoomIndex = it },
+                    onSample = { sampleLivePreview = false; sampleRoomIndex = it },
                     onRefresh = { refreshKey++ },
                   )
                   QumiVideoFeed(
@@ -1893,6 +1915,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                     showGrid = discoverySection == 0,
                     onViewerOpened = {
                         sampleRoomIndex = null
+                        previewRoom = null
                         if (switchToVideoAfterRoom) {
                             switchToVideoAfterRoom = false
                             leaveRoom()
@@ -1900,6 +1923,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                     },
                     onViewerUnavailable = {
                         sampleRoomIndex = null
+                        previewRoom = null
                         if (switchToVideoAfterRoom) {
                             switchToVideoAfterRoom = false
                             leaveRoom()
@@ -1907,20 +1931,20 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                     },
                     onOpenLive = {
                         switchToLiveAfterViewer = true
-                        if (rooms.isNotEmpty()) activeRoom = rooms.first() else sampleRoomIndex = 0
+                        if (rooms.isNotEmpty()) previewRoom = rooms.first() else { sampleLivePreview = true; sampleRoomIndex = 0 }
                     },
                     onOpenCreatorLive = { creatorId ->
                         scope.launch {
                             try {
                                 val fresh = api.liveRooms().map { item -> LiveRoom(item.host, item.title, item.creatorId, item.roomId,
-                                    item.coverPath, item.roomType, item.welcomeText, item.backgroundId) }
+                                    item.coverPath, item.roomType, item.welcomeText, item.backgroundId, item.announcementText) }
                                 rooms = fresh
                                 roomsError = null
                                 val creatorRoom = fresh.firstOrNull { it.creatorId == creatorId }
                                 if (creatorRoom == null) notify("主播已下播")
                                 else {
                                     switchToLiveAfterViewer = true
-                                    activeRoom = creatorRoom
+                                    previewRoom = creatorRoom
                                 }
                             } catch (cancelled: CancellationException) { throw cancelled
                             } catch (_: Exception) { notify("直播状态暂时无法更新，请重试") }
@@ -1931,7 +1955,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                 1 -> QumiMomentsScreen(
                     token = session.token,
                     currentUserId = session.id,
-                    conversationIds = openImConversations.map { it.userId }.toSet(),
                     onMessages = { selectedTab = 3; accountPage = QumiAccountPage.MINE },
                     onOpenAnnouncements = { openAnnouncements() },
                     onOpenUser = { id, name -> openPublicProfile(id, name) },
@@ -1946,7 +1969,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                     onStart = startLive,
                     onJoin = { activeRoom = it },
                     onHost = { hostProfile = it },
-                    onSample = { sampleRoomIndex = it },
+                    onSample = { sampleLivePreview = false; sampleRoomIndex = it },
                     showStartButton = true,
                     onRefresh = { refreshKey++ },
                 )
@@ -1971,7 +1994,8 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                         onSettings = { accountPage = QumiAccountPage.SECRETARY_SETTINGS },
                     )
                     QumiAccountPage.DEMO_CHAT -> DemoDirectChatScreen(if (demoPeer == null) demoChatState else peerDemoChatState,
-                        session.username, session.avatar, onBack = { accountPage = QumiAccountPage.MINE }, token = session.token, peerId = demoPeerId)
+                        session.username, session.avatar, onBack = { accountPage = QumiAccountPage.MINE }, token = session.token, peerId = demoPeerId, ownId = session.id,
+                        onStartCall = { chat, mode, price -> if (activeCall == null) demoCallSession.start(chat, mode, price) else notify("请先挂断当前通话") })
                     QumiAccountPage.SECRETARY_SETTINGS -> QumiSecretarySettingsScreen(
                         onBack = { accountPage = QumiAccountPage.SECRETARY_CHAT },
                         onOpenProfile = { accountPage = QumiAccountPage.SECRETARY_PROFILE },
@@ -2033,6 +2057,9 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                     status = openImStatus,
                     ownUserId = session.id.toString(),
                     ownAvatar = session.avatar,
+                    ownName = session.username,
+                    celebrationGift = dmCelebration, celebrationNonce = dmCelebrationNonce,
+                    onCelebrationFinished = { dmCelebration = null },
                     onChatVisibility = { chatVisible = it },
                     history = history.takeIf { historyRecipient == openImRecipient },
                     historyLoading = historyLoading,
@@ -2078,6 +2105,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                     },
                     onConnect = { messageConnectionAttempt++ },
                     onVideoCall = { beginCall(openImRecipient, openImRecipientName, "video", null) },
+                    onPaidVideoCall = { price -> beginCall(openImRecipient, openImRecipientName, "video", null, price) },
                     onVoiceCall = { beginCall(openImRecipient, openImRecipientName, "voice", null) },
                     onJoinCall = { beginCall(openImRecipient, openImRecipientName, "", it) },
                     onAcceptCall = { invite -> beginCall(invite.fromUserId.toString(), openImRecipientName ?: "用户 ${invite.fromUserId}", invite.mode, invite.callId) },
@@ -2218,6 +2246,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                             cameraBeauty = settings
                             CameraBeautyPreferences.save(context, session.id, settings)
                             srsIngest?.updateBeauty(settings)
+                            roomGateway?.updateBeauty(settings)
                         },
                         onBack = { accountPage = QumiAccountPage.MINE },
                     )
@@ -2349,6 +2378,14 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
             peerName = call.peerName,
             requestedMode = call.requestedMode,
             callId = call.callId,
+            offeredPrice = call.offeredPrice,
+            gifts = gifts, balance = wallet?.balance, giftBusy = openImBusy,
+            celebrationGift = dmCelebration, celebrationNonce = dmCelebrationNonce,
+            onCelebrationFinished = { dmCelebration = null },
+            onGift = { peerId, peerName, gift ->
+                openDirectMessage(peerId, peerName ?: "用户")
+                sendDmGift(gift.id)
+            },
             onSignal = { creds ->
                 // OpenIM hook: one C2C text on the existing conversation. Swap this send for a custom
                 // call message later; the media path still works if the callee joins with call_id.
@@ -2364,6 +2401,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
             onDismiss = { activeCall = null },
         )
     }
+    DemoCallOverlay(demoCallSession, session.username, session.avatar)
     if (showDmCallPrice) DmCallPriceSheet(session, api, onDismiss = { showDmCallPrice = false })
     incomingCall?.takeIf { activeCall == null }?.let { invite ->
         DmIncomingCallPrompt(invite.optString("caller_name", "用户"), invite.optString("caller_avatar"), invite.optString("mode"), incomingCallBusy,
@@ -2374,7 +2412,12 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
             }, onReject = {
                 if (!incomingCallBusy) scope.launch {
                     incomingCallBusy = true
-                    try { api.endDmCall(session.token, invite.optString("call_id"), "rejected"); incomingCall = null
+                    try {
+                        val rejectedId = invite.optString("call_id")
+                        api.endDmCall(session.token, rejectedId, "rejected")
+                        incomingCall = null
+                        runCatching { cacheDmCallReceipt(context, session.id.toString(), rejectedId, invite.optString("mode"),
+                            api.dmCallStatus(session.token, rejectedId)) }
                     } catch (cancelled: CancellationException) { throw cancelled
                     } catch (_: Exception) { notify("拒接未成功，请重试")
                     } finally { incomingCallBusy = false }
@@ -2385,9 +2428,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
         showGiftRecharge = false; showGiftRechargeQr = true
     })
     if (showGiftRechargeQr) DisplayQrDialog(DisplayQrKind.SUPPORT, onDismiss = { showGiftRechargeQr = false })
-    dmCelebration?.let { gift -> Dialog(onDismissRequest = { dmCelebration = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        QumiGiftCelebration(gift, dmCelebrationNonce, false) { dmCelebration = null }
-    } }
     if (showPasswordChange) PasswordSheet(session.token, onDismiss = { showPasswordChange = false }, onChanged = onLogout)
     blockTarget?.let { target ->
         AlertDialog(
@@ -2428,7 +2468,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
             onDismissRequest = { leaveRoom() },
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         ) {
-            MaterialTheme(colorScheme = darkColorScheme(primary = LiveStyle.accent, onPrimary = Color.White, primaryContainer = Color(0xFF3D2869), onPrimaryContainer = Color.White, surface = Color(0xFF202126), background = Color.Black)) {
+            LiveAppTheme(colorScheme = darkColorScheme(primary = LiveStyle.accent, onPrimary = Color.White, primaryContainer = Color(0xFF3D2869), onPrimaryContainer = Color.White, surface = Color(0xFF202126), background = Color.Black)) {
             RoomSheet(
                 session = session,
                 api = api,
@@ -2455,6 +2495,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                 scores = matchScores,
                 remainingSeconds = matchRemainingSeconds,
                 onHostProfile = { hostProfile = room },
+                onMessageParticipant = { id, name -> leaveRoom(); openDirectMessage(id, name) },
                 onMessageHost = {
                     scope.launch {
                         try {
@@ -2536,8 +2577,26 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
             }
         }
     }
+    previewRoom?.let { preview ->
+        Dialog(onDismissRequest = { previewRoom = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            val previewRooms = remember(rooms, preview.stream) {
+                if (rooms.any { it.stream == preview.stream }) rooms else listOf(preview) + rooms
+            }
+            val previewPager = rememberPagerState(
+                initialPage = previewRooms.indexOfFirst { it.stream == preview.stream }.coerceAtLeast(0),
+                pageCount = { previewRooms.size },
+            )
+            VerticalPager(previewPager, Modifier.fillMaxSize(), key = { previewRooms[it].stream }) { index ->
+                val room = previewRooms[index]
+                LiveRoomPreview(room, onBack = { previewRoom = null }, onVideo = {
+                    selectedTab = 0; discoverySection = 0; openVideoFromLiveSignal++
+                }, onEnter = { activeRoom = room; previewRoom = null })
+            }
+        }
+    }
     sampleRoomIndex?.let { index ->
-        QumiSampleLiveViewer(index, session.id, session.token,
+        QumiSampleLiveViewer(index, session.id, session.token, initialPreview = sampleLivePreview,
+            senderName = session.username, senderAvatar = session.avatar,
             onBack = { sampleRoomIndex = null },
             onMessage = { id, name -> sampleRoomIndex = null; openDirectMessage(id, name) },
             onOpenVideo = {
@@ -2895,6 +2954,7 @@ private fun RoomSheet(
     pendingGift: PendingGift?,
     onRetryGift: () -> Unit,
     onHostProfile: () -> Unit,
+    onMessageParticipant: (String, String) -> Unit,
     isHost: Boolean,
     matchId: Long?,
     scores: List<MatchScore>,
@@ -2912,12 +2972,26 @@ private fun RoomSheet(
     onRespondInvitation: (MatchInvitation, Boolean) -> Unit,
     onEndMatch: () -> Unit,
     effectSession: GiftEffectSession,
-    celebrationGift: Gift?,
+    celebrationGift: GiftSendPresentation?,
     celebrationNonce: Int,
     onCelebrationFinished: () -> Unit,
     onGift: (Gift) -> Unit,
     onInviteMatch: (LiveRoom, Int) -> Unit,
 ) {
+    val roomScope = rememberCoroutineScope()
+    var participantProfile by remember(room.stream) { mutableStateOf<Long?>(null) }
+    val participantNames = remember(room.stream) { mutableStateMapOf<Long, String>() }
+    var hostUser by remember(room.stream) { mutableStateOf<PublicUser?>(null) }
+    var followBusy by remember(room.stream) { mutableStateOf(false) }
+    var followNotice by remember(room.stream) { mutableStateOf<String?>(null) }
+    var showLiveRank by remember(room.stream) { mutableStateOf(false) }
+    var showLiveViewers by remember(room.stream) { mutableStateOf(false) }
+    var showAnnouncement by remember(room.stream) { mutableStateOf(false) }
+    val roomLeaders by rememberRoomLeaders(session.token, room.stream)
+    LaunchedEffect(room.stream, participantProfile) {
+        runCatching { api.searchUsers(session.token, room.creatorId.toString()).firstOrNull { it.id == room.creatorId } }
+            .onSuccess { hostUser = it }
+    }
     var panel by remember(room.stream) { mutableStateOf<String?>(null) }
     var selectedGiftId by remember(room.stream) { mutableStateOf<String?>(null) }
     var confirmClose by remember { mutableStateOf(false) }
@@ -2948,23 +3022,27 @@ private fun RoomSheet(
             SrsPlaybackView(playbackUrl, playbackToken, onPlaybackStatus, Modifier.fillMaxSize())
         } else if (ingest != null && isHost && matchId == null) {
             SrsHostStage(ingest, gateway, room)
-        } else if (gateway != null && !watchBlocked) {
+        } else if (gateway != null && !watchBlocked && room.roomType != "VOICE") {
             val videoIds by gateway.videoIdentities.collectAsState()
             val opponentId = scores.firstOrNull { it.creatorId != room.creatorId }?.creatorId
-            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                val visibleIds = if (matchId != null) listOf(room.creatorId, opponentId) else (listOf(room.creatorId) + videoIds.mapNotNull { it.toLongOrNull() }).distinct().take(4)
-                visibleIds.forEach { participantId ->
-                    androidx.compose.runtime.key(gateway, participantId, matchId) {
-                        if (participantId == null) Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                            Text("正在等待对方画面", color = Color.White)
-                        } else AndroidView(
-                            factory = { context -> gateway.createVideoRenderer(context, participantId.toString()) },
-                            update = { gateway.attachVideoRenderer(it) },
-                            onRelease = { gateway.releaseVideoRenderer(it); it.release() },
-                            modifier = Modifier.weight(1f).then(if (matchId != null) Modifier.fillMaxHeight(0.6f) else Modifier.fillMaxHeight()),
-                        )
-                    }
+            val visibleIds = if (matchId != null) listOfNotNull(room.creatorId, opponentId)
+                else (listOf(room.creatorId) + videoIds.mapNotNull { it.toLongOrNull() }).distinct()
+            LiveMosaic(visibleIds, identity = { it }, onProfile = { participantProfile = it },
+                modifier = if (visibleIds.size > 1) Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 155.dp).fillMaxWidth().fillMaxHeight(.48f)
+                    else Modifier.fillMaxSize()) { participantId ->
+                androidx.compose.runtime.key(gateway, participantId, matchId) {
+                    AndroidView(factory = { context -> gateway.createVideoRenderer(context, participantId.toString()) },
+                        update = { gateway.attachVideoRenderer(it) },
+                        onRelease = { gateway.releaseVideoRenderer(it); it.release() }, modifier = Modifier.fillMaxSize())
                 }
+                Text(participantNames[participantId] ?: if (participantId == room.creatorId) room.host else "连麦主播",
+                    Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = .3f)).padding(7.dp, 4.dp), color = Color.White, fontSize = 12.sp)
+            }
+            LaunchedEffect(videoIds) {
+                visibleIds.forEach { id -> if (!participantNames.containsKey(id)) {
+                    runCatching { api.searchUsers(session.token, id.toString()).firstOrNull { it.id == id } }
+                        .getOrNull()?.let { participantNames[id] = it.username }
+                } }
             }
         }
         if (room.roomType == "VOICE" && !watchBlocked) Column(
@@ -2987,48 +3065,25 @@ private fun RoomSheet(
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)))
                 .windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
-            if (!isHost) Row(Modifier.align(Alignment.CenterHorizontally).padding(bottom = 5.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("视频", Modifier.clickable(onClick = onOpenVideo).padding(horizontal = 12.dp, vertical = 5.dp),
-                    color = Color.White.copy(alpha = .72f), fontSize = 15.sp)
-                Text("直播", Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                    color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(
-                    onClick = onHostProfile,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                ) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Box(Modifier.size(40.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) {
-                            Image(painterResource(LivePlaceholderCovers[Math.floorMod(room.stream.hashCode(), LivePlaceholderCovers.size)]),
-                                contentDescription = "查看${room.host}的介绍", contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize().padding(2.dp).clip(CircleShape))
-                            room.coverPath?.let { LiveCoverImage(it) }
-                        }
-                        Column(Modifier.weight(1f)) {
-                            Text(room.host, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(room.title, color = Color(0xFFDDDEE2), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("点击头像查看主播介绍", color = Color(0xFFDDDEE2), style = MaterialTheme.typography.labelSmall)
-                        }
+            LiveRoomHeader(
+                host = LiveHeaderPerson(room.host, hostUser?.avatar), subtitle = room.title,
+                followed = hostUser?.isFollowing == true, followBusy = followBusy || hostUser == null,
+                showFollow = !isHost, viewers = activity.viewers?.toString() ?: "…", leaders = roomLeaders,
+                onProfile = { participantProfile = room.creatorId }, onFollow = {
+                    val user = hostUser
+                    if (user != null && !followBusy) roomScope.launch {
+                        followBusy = true
+                        try { api.setFollowing(session.token, room.creatorId, !user.isFollowing)
+                            hostUser = user.copy(isFollowing = !user.isFollowing)
+                            followNotice = if (user.isFollowing) "已取消关注" else "已关注"
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { followNotice = "关注失败，请重试" }
+                        finally { followBusy = false }
                     }
-                }
-                if (!isHost) TextButton(onClick = onMessageHost) { Text("私信") }
-                if (!isHost) TextButton(onClick = onReport) { Text("举报") }
-                IconButton(onClick = requestClose) {
-                    Icon(Icons.Rounded.Close, contentDescription = if (isHost) "结束直播" else "离开直播间", tint = Color.White)
-                }
-            }
-            Row(Modifier.padding(start = 8.dp, top = 5.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("在线 ${activity.viewers?.toString() ?: "…"} 人", Modifier.clip(RoundedCornerShape(14.dp))
-                    .background(Color.Black.copy(alpha = .3f)).padding(horizontal = 10.dp, vertical = 5.dp), color = Color.White, fontSize = 12.sp)
-                if (isHost) Text("本场礼物 ${activity.giftCoins?.toString() ?: "…"} 金币", Modifier.clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF7550BA).copy(alpha = .55f)).padding(horizontal = 10.dp, vertical = 5.dp), color = Color(0xFFFFDEA2), fontSize = 12.sp)
-            }
-            if (!isHost) Text("上滑切换直播", Modifier.padding(start = 8.dp),
-                color = Color.White.copy(alpha = .7f), style = MaterialTheme.typography.labelSmall)
+                }, onRank = { showLiveRank = true }, onViewers = { showLiveViewers = true }, onClose = requestClose,
+                onAnnouncement = { showAnnouncement = true })
+            if (isHost) Text("本场礼物 " + (activity.giftCoins?.toString() ?: "…") + " 金币", Modifier.padding(top = 6.dp),
+                color = Color(0xFFFFDEA2), fontSize = 12.sp)
             if (watchGate?.phase == WatchPhase.PREVIEW) {
                 Text(
                     "免费试看还剩 ${watchGate.shownRemaining} 秒",
@@ -3072,7 +3127,7 @@ private fun RoomSheet(
         ) {
             feedback?.let { Text(it, color = Color.White, style = MaterialTheme.typography.bodyMedium) }
             effectFailure?.let { Text(it, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodyMedium) }
-            LiveRoomComments(activity, room.welcomeText)
+            LiveRoomComments(activity, room.welcomeText, room.announcementText, room.stream)
             Text(status, color = Color(0xFFDDDEE2), style = MaterialTheme.typography.bodySmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f).clip(CircleShape).background(Color.White.copy(alpha = .15f))
@@ -3088,11 +3143,20 @@ private fun RoomSheet(
                 }
             }
         }
-        celebrationGift?.let { gift ->
-            QumiGiftCelebration(gift, celebrationNonce, demo = false,
+        celebrationGift?.let { event ->
+            QumiGiftCelebration(event.gift, celebrationNonce, demo = false,
+                senderName = event.senderName, senderAvatar = event.senderAvatar, quantity = event.quantity,
                 onFinished = onCelebrationFinished)
         }
     }
+    participantProfile?.let { id -> DirectChatProfile(session.token, id, session.id,
+        participantNames[id] ?: if (id == room.creatorId) room.host else "主播", onBack = { participantProfile = null },
+        onMessage = onMessageParticipant) }
+    if (showAnnouncement) LiveRoomAnnouncementDialog(room.host,
+        room.announcementText.ifBlank { room.welcomeText }, onDismiss = { showAnnouncement = false })
+    if (showLiveRank) LiveRoomRankDialog(session.token, room.stream, onDismiss = { showLiveRank = false })
+    if (showLiveViewers) LiveRoomViewersDialog(session.token, room.stream, session.id, onDismiss = { showLiveViewers = false })
+    QumiActionNotice(followNotice) { followNotice = null }
     if (confirmEndMatch) AlertDialog(
         onDismissRequest = { confirmEndMatch = false },
         title = { Text("结束本场 PK？") },
@@ -3223,6 +3287,7 @@ private fun MessagesScreen(
     onRefresh: () -> Unit,
     onConnect: () -> Unit,
     onVideoCall: () -> Unit,
+    onPaidVideoCall: (Int) -> Unit,
     onVoiceCall: () -> Unit,
     onJoinCall: (String) -> Unit,
     onAcceptCall: (DmCallInvite) -> Unit,
@@ -3250,6 +3315,8 @@ private fun MessagesScreen(
     onPlay: (String) -> Unit,
     onVerifyGift: (ChatBody.Gift) -> Unit,
     ownAvatar: String? = null,
+    ownName: String,
+    celebrationGift: Gift?, celebrationNonce: Int, onCelebrationFinished: () -> Unit,
 ) {
     var composeOpen by remember { mutableStateOf(false) }
     var enteringAccount by remember { mutableStateOf(false) }
@@ -3379,11 +3446,13 @@ private fun MessagesScreen(
         history, historyLoading, historyError, ready, busy, message, gifts, balance, playable,
         pendingGift != null, pendingVideoPhase,
         onBack = { composeOpen = false; onExit() }, onDraft = onMessage, onSend = onSend,
-        onVoice = onVoiceCall, onVideo = onVideoCall, onPrices = onCallPriceSettings,
+        onVoice = onVoiceCall, onVideo = onVideoCall, onPaidVideo = onPaidVideoCall, onPrices = onCallPriceSettings,
         onImage = onSendImage, onSendVideo = onSendVideo, onGift = onSendGift, onRetryGift = onRetryGift,
         onVerifyGift = onVerifyGift, onUnlock = onUnlock, onPlay = onPlay, onOlder = onOlderMessages,
         onRetry = onHistoryRetry, onConnect = onConnect, onVerifyCreator = onCreatorVerification,
         ownAvatar = ownAvatar,
+        ownName = ownName, celebrationGift = celebrationGift, celebrationNonce = celebrationNonce,
+        onCelebrationFinished = onCelebrationFinished,
     )
     if (composeOpen && recipientId.isBlank()) ModalBottomSheet(onDismissRequest = { composeOpen = false }) {
         Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -3785,3 +3854,29 @@ private fun parseOpenImConversations(raw: String): List<OpenImConversation> = ru
         }
     }
 }.getOrDefault(emptyList())
+
+@Composable
+private fun LiveRoomPreview(room: LiveRoom, onBack: () -> Unit, onVideo: () -> Unit, onEnter: () -> Unit) {
+    BackHandler(onBack = onBack)
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Image(painterResource(LivePlaceholderCovers[Math.floorMod(room.stream.hashCode(), LivePlaceholderCovers.size)]), null,
+            Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        room.coverPath?.let { LiveCoverImage(it) }
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .4f), Color.Transparent, Color.Black.copy(alpha = .7f))))
+            .clickable(onClickLabel = "进入直播间", onClick = onEnter))
+        Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = Color.White) }
+            Spacer(Modifier.weight(1f))
+            Text("视频", Modifier.clickable(onClick = onVideo).padding(15.dp), color = Color.White.copy(alpha = .7f), fontSize = 16.sp)
+            Text("直播", Modifier.padding(15.dp), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(48.dp))
+        }
+        LiveEnterButton(onEnter, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 158.dp))
+        Column(Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("直播中", Modifier.clip(RoundedCornerShape(5.dp)).background(Color(0xFF8251E9)).padding(8.dp, 4.dp), color = Color.White, fontSize = 12.sp)
+            Text("@" + room.host, color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+            Text(room.title, color = Color.White, fontSize = 15.sp)
+        }
+    }
+}

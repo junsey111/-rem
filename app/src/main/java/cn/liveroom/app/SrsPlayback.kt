@@ -59,12 +59,13 @@ internal fun liveMediaRoute(
 ): LiveMediaRoute = when {
     !hasRoom -> LiveMediaRoute.IDLE
     isHost && roomType == "VOICE" -> LiveMediaRoute.HOST_VOICE
-    isHost && hostPublishesOrdinarySrs(true, matchId, hostCohostSeat) -> LiveMediaRoute.HOST_RTMP
+    isHost && roomType != "MULTI" && hostPublishesOrdinarySrs(true, matchId, hostCohostSeat) -> LiveMediaRoute.HOST_RTMP
     isHost -> LiveMediaRoute.HOST_LIVEKIT
     matchId != null -> LiveMediaRoute.VIEWER_PK
     !viewerCohostKnown -> LiveMediaRoute.PENDING
     viewerCohostMode != null -> LiveMediaRoute.VIEWER_COHOST
     roomType == "VOICE" -> LiveMediaRoute.VIEWER_VOICE
+    roomType == "MULTI" || hostCohostSeat -> LiveMediaRoute.VIEWER_COHOST
     else -> LiveMediaRoute.VIEWER_HLS
 }
 

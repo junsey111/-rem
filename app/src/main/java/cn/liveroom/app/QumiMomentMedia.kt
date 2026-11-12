@@ -38,6 +38,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @Composable
+@Suppress("ProduceStateDoesNotAssignValue") // Image and video producers both explicitly assign value.
 internal fun QumiMomentMedia(post: MomentPost, token: String, modifier: Modifier = Modifier) {
     val path = post.mediaPath ?: return
     if (post.mediaKind == "image") {
@@ -98,6 +99,7 @@ internal fun QumiMomentMedia(post: MomentPost, token: String, modifier: Modifier
 }
 
 @Composable
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun QumiMomentVideoViewer(path: String, token: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val player = remember(path, token) {

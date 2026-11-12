@@ -137,28 +137,9 @@ fun DmGiftSheet(
     onSend: (Gift) -> Unit,
 ) {
     var selected by remember { mutableStateOf(gifts.firstOrNull()?.id) }
-    val gift = gifts.firstOrNull { it.id == selected }
-    val enough = gift == null || balance == null || balance >= gift.coinPrice
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("私信送礼", style = MaterialTheme.typography.titleLarge)
-            Text("选择一份心意送给对方", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (gifts.isEmpty()) Text("暂时没有可赠送的礼物")
-            else LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.fillMaxWidth().height(220.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(gifts, key = { it.id }) { item ->
-                    Surface(onClick = { if (!busy) selected = item.id }, color = if (selected == item.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface) {
-                        Column(Modifier.padding(5.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-                            GiftArtwork(item, Modifier.size(52.dp), item.name)
-                            Text(item.name)
-                            Text("${item.coinPrice} 金币", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-            }
-            Button(onClick = { gift?.let(onSend) }, enabled = !busy && gift != null, modifier = Modifier.fillMaxWidth()) {
-                Text(if (busy) "正在确认结算…" else if (!enough) "余额不足" else "确认赠送")
-            }
-            TextButton(onClick = onDismiss, enabled = !busy) { Text("返回聊天") }
-        }
+    QumiGiftPicker(gifts, selected, balance, busy, demo = false,
+        appearance = GiftPickerAppearance.DirectMessage, onSelect = { selected = it },
+        onSend = { gifts.firstOrNull { it.id == selected }?.let(onSend) }, onDismiss = onDismiss)
 }
 
 @Composable

@@ -259,11 +259,24 @@ liveKitRouter.post('/calls', async (ctx, next) => {
     ? { id: peerId, disabled: false }
     : await loadCallPeer(peerId);
   let priceCoins = 0;
+  let priceOwnerId = peerId;
   if (mode === 'video' && peer) {
     const result = await axios.get(`${REVENUE_API_URL}/v1/dm/call-prices/${peerId}`, {
       headers: { Authorization: ctx.headers.authorization || '' },
     });
     priceCoins = callPriceFrom(result);
+  }
+  const offeredPrice = ctx.request.body?.offered_price_coins;
+  if (offeredPrice !== undefined) {
+    if (mode !== 'video' || !Number.isInteger(offeredPrice) || offeredPrice < 1 || offeredPrice > 1_000_000)
+      throw new CustomError('本次视频通话价格需为 1 至 1000000 金币', 400, 400);
+    const applications: any = await axios.get(`${REVENUE_API_URL}/v1/users/me/creator-applications`, {
+      headers: { Authorization: ctx.headers.authorization || '' }, timeout: 10000,
+    });
+    if (!applications?.reviews?.some(row => row.status === 'APPROVED'))
+      throw new CustomError('只有认证通过的主播才能发起付费视频通话', 403, 403);
+    priceCoins = offeredPrice;
+    priceOwnerId = String(userInfo.id);
   }
   const acceptedPriceCoins = ctx.request.body?.accepted_price_coins;
   if (!Number.isInteger(acceptedPriceCoins) || acceptedPriceCoins < 0) {
@@ -278,6 +291,7 @@ liveKitRouter.post('/calls', async (ctx, next) => {
         peer,
         mode,
         priceCoins,
+        priceOwnerId,
         acceptedPriceCoins,
         loginToken: bearerToken(ctx),
         url: liveKitPublicUrl(),
@@ -298,6 +312,7 @@ liveKitRouter.post('/calls/join', async (ctx, next) => {
     const joined = await joinDmCall({
       userId: String(userInfo.id),
       callId: String(ctx.request.body?.call_id ?? '').trim(),
+      acceptedPriceCoins: ctx.request.body?.accepted_price_coins,
       loginToken: bearerToken(ctx),
       url: liveKitPublicUrl(),
       apiKey: LIVEKIT_API_KEY,

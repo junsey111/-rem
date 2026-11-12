@@ -45,7 +45,7 @@ import java.util.UUID
 
 @Composable
 internal fun DemoDirectChatScreen(state: DemoChatState, ownName: String, ownAvatar: String?,
-    onBack: () -> Unit, token: String, peerId: String? = null) {
+    onBack: () -> Unit, token: String, peerId: String? = null, ownId: Long, onStartCall: (DemoChatState, String, Int?) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var draft by remember(state) { mutableStateOf("") }
@@ -56,22 +56,23 @@ internal fun DemoDirectChatScreen(state: DemoChatState, ownName: String, ownAvat
     var selectedGift by remember { mutableStateOf(demoGiftCatalog.firstOrNull()?.id) }
     var celebration by remember { mutableStateOf<Gift?>(null) }
     var effectNonce by remember { mutableIntStateOf(0) }
-    var call by remember { mutableStateOf<String?>(null) }
-    var incoming by remember { mutableStateOf(false) }
-    var connected by remember { mutableStateOf(false) }
-    var seconds by remember { mutableIntStateOf(0) }
-    fun finishCall(rejected: Boolean = false) {
-        val mode = call ?: return
-        state.append(!incoming, "${if (mode == "video") "视频" else "语音"}通话 · ${if (connected) "通话时长 ${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}" else if (rejected) "已拒绝 · 未接通" else "已取消 · 未接通"}", "call")
-        call = null
-    }
-    fun startCall(mode: String, fromPeer: Boolean = false) {
-        panel = null; seconds = 0; incoming = fromPeer; connected = false; call = mode
-    }
-    LaunchedEffect(call, connected, incoming) {
-        if (call == null) return@LaunchedEffect
-        if (!connected) { if (!incoming) { delay(2500); connected = true }; return@LaunchedEffect }
-        while (true) { delay(1000); seconds++ }
+    var videoChoice by remember { mutableStateOf(false) }
+    var profileId by remember(state) { mutableStateOf<Long?>(null) }
+    var profileLoading by remember(state) { mutableStateOf(false) }
+    fun openPeerProfile() {
+        if (profileLoading) return
+        val id = peerId?.toLongOrNull()?.takeIf { it > 0 }
+        if (id != null) { profileId = id; return }
+        scope.launch {
+            profileLoading = true
+            try {
+                val publicId = (state.peer ?: demoProfiles.first()).publicId
+                profileId = LivePlatformApi().searchUsers(token, publicId.toString()).firstOrNull { it.publicId == publicId }?.id
+                    ?: error("演示资料暂不可用，请稍后重试")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (failure: Exception) { notice = failure.message ?: "资料加载失败" }
+            finally { profileLoading = false }
+        }
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch {
@@ -104,25 +105,17 @@ internal fun DemoDirectChatScreen(state: DemoChatState, ownName: String, ownAvat
     }
     Box(Modifier.fillMaxSize()) {
         DirectChatLayout(state.name, state.avatar, true, demo = true,
+            onOpenProfile = ::openPeerProfile,
             subtitle = if (importing) "正在读取文件…" else "单人演示聊天", draft = draft, sending = importing,
             onDraft = { draft = it }, onBack = onBack, onSend = { state.send(draft); draft = ""; panel = null },
-            onVoice = { startCall("voice") }, onVideo = { startCall("video") },
+            onVoice = { panel = null; onStartCall(state, "voice", null) }, onVideo = { panel = null; videoChoice = true },
             onGift = { panel = if (panel == "gift") null else "gift" }, onEmoji = { panel = if (panel == "emoji") null else "emoji" },
             onMore = { panel = if (panel == "media") null else "media" }, panel = {
                 when (panel) {
                     "emoji" -> QumiEmojiStrip { draft = (draft + it).take(500) }
-                    "media" -> Column(Modifier.padding(12.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { picker.launch("image/*") }) { Text("图片") }
-                            OutlinedButton(onClick = { picker.launch("video/*") }) { Text("视频") }
-                            OutlinedButton(onClick = { startCall("video", true) }) { Text("演示来电") }
-                        }
-                        Row {
-                            TextButton(onClick = { state.append(true, "图片", "image", "sample"); panel = null }) { Text("示例图片") }
-                            TextButton(onClick = { state.append(true, "视频", "video", "sample"); panel = null }) { Text("示例视频") }
-                        }
-                    }
+                    "media" -> DirectChatMediaActions(onImage = { picker.launch("image/*") }, onVideo = { picker.launch("video/*") })
                     "gift" -> QumiGiftPicker(demoGiftCatalog, selectedGift, null, false, demo = true,
+                        appearance = GiftPickerAppearance.DirectMessage,
                         onSelect = { selectedGift = it }, onSend = {
                             demoGiftCatalog.firstOrNull { it.id == selectedGift }?.let { gift ->
                                 state.append(true, gift.name, "gift", gift.id); celebration = gift; effectNonce++; panel = null
@@ -136,10 +129,14 @@ internal fun DemoDirectChatScreen(state: DemoChatState, ownName: String, ownAvat
                     Column(Modifier.fillMaxWidth()) {
                         Text(SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(message.at)), Modifier.align(Alignment.CenterHorizontally).padding(bottom = 9.dp), color = Color(0xFFB4A9C2), fontSize = 10.sp)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.own) Arrangement.End else Arrangement.Start) {
-                            if (!message.own) { ChatOnlineAvatar(state.name, state.avatar, false, demo = state.avatar == null); Spacer(Modifier.width(8.dp)) }
+                            if (!message.own) { ChatOnlineAvatar(state.name, state.avatar, false, Modifier.clickable(onClickLabel = "查看个人主页", onClick = ::openPeerProfile), demo = state.avatar == null); Spacer(Modifier.width(8.dp)) }
                             Surface(color = if (message.own) Color(0xFF7044D8) else Color(0xFFF5F3F8), contentColor = if (message.own) Color.White else Color(0xFF42384F),
                                 shape = RoundedCornerShape(14.dp), modifier = Modifier.widthIn(max = 235.dp)) {
                                 when (message.kind) {
+                                    "call" -> {
+                                        val record = demoCallRecord(message)
+                                        Box(Modifier.padding(13.dp, 11.dp)) { CallRecordContent(record.mode, record.label(message.own), message.own) }
+                                    }
                                     "image" -> DemoChatImage(message, state.poster, Modifier.size(190.dp, 170.dp).clickable { preview = message })
                                     "video" -> Column(Modifier.clickable { preview = message }) {
                                         Box(Modifier.size(190.dp, 170.dp), contentAlignment = Alignment.Center) {
@@ -155,14 +152,16 @@ internal fun DemoDirectChatScreen(state: DemoChatState, ownName: String, ownAvat
                                     else -> Text(message.text, Modifier.padding(13.dp, 11.dp), fontSize = 15.sp, lineHeight = 23.sp)
                                 }
                             }
-                            if (message.own) { Spacer(Modifier.width(8.dp)); ChatOnlineAvatar(ownName, ownAvatar, false) }
+                            if (message.own) { Spacer(Modifier.width(8.dp)); ChatOnlineAvatar(ownName, ownAvatar, false, Modifier.clickable(onClickLabel = "查看个人主页") { profileId = ownId }) }
                         }
                     }
                 }
             }
         }
-        celebration?.let { gift -> QumiGiftCelebration(gift, effectNonce, true) { celebration = null } }
+        celebration?.let { gift -> QumiGiftCelebration(gift, effectNonce, true, ownName, ownAvatar, bottomPadding = 140.dp) { celebration = null } }
     }
+    profileId?.let { id -> DirectChatProfile(token, id, ownId,
+        if (id == ownId) ownName else state.name, onBack = { profileId = null }) }
     notice?.let { AlertDialog(onDismissRequest = { notice = null }, title = { Text("温馨提示") }, text = { Text(it) }, confirmButton = { TextButton(onClick = { notice = null }) { Text("知道了") } }) }
     preview?.let { message -> Dialog(onDismissRequest = { preview = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
@@ -171,26 +170,13 @@ internal fun DemoDirectChatScreen(state: DemoChatState, ownName: String, ownAvat
             TextButton(onClick = { preview = null }, modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) { Text("返回", color = Color.White) }
         }
     } }
-    call?.let { mode ->
-        if (incoming && !connected) DmIncomingCallPrompt(state.name, state.avatar, mode, false, onAccept = { connected = true }, onReject = { finishCall(true) })
-        else Dialog(onDismissRequest = { finishCall() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF60408B), Color(0xFF171020))))) {
-                if (connected && mode == "video") DemoChatVideo(Uri.parse("android.resource://${context.packageName}/${R.raw.qumi_demo_live_51287}"))
-                Column(Modifier.fillMaxSize().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("演示${if (mode == "video") "视频" else "语音"}通话", color = Color.White)
-                    Spacer(Modifier.weight(1f))
-                    if (!connected || mode == "voice") { ChatOnlineAvatar(state.name, state.avatar, false, Modifier.size(108.dp), demo = state.avatar == null); Text(state.name, color = Color.White, fontSize = 25.sp, modifier = Modifier.padding(20.dp)) }
-                    Text(if (connected) "已接通 ${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}" else "正在呼叫，等待对方接听…", color = Color.White)
-                    Spacer(Modifier.weight(1f))
-                    CallRoundAction(if (connected) "挂断" else "取消呼叫", Color(0xFFE34D6C), true, { finishCall() })
-                    Text("本机模拟 · 不使用摄像头麦克风 · 不扣费", color = Color(0xFFD9CDE8), fontSize = 11.sp, modifier = Modifier.padding(top = 20.dp))
-                }
-            }
-        }
+    if (videoChoice) DirectVideoCallOptions(token, onDismiss = { videoChoice = false }) { price ->
+        videoChoice = false; onStartCall(state, "video", price)
     }
 }
 
 @Composable
+@Suppress("ProduceStateDoesNotAssignValue") // The non-sample branch explicitly assigns the produced bitmap.
 private fun DemoChatImage(message: DemoChatMessage, poster: Int, modifier: Modifier) {
     val bitmap by produceState<android.graphics.Bitmap?>(null, message.media) {
         if (message.media != "sample") value = withContext(Dispatchers.IO) {
@@ -205,7 +191,7 @@ private fun DemoChatImage(message: DemoChatMessage, poster: Int, modifier: Modif
 }
 
 @Composable
-private fun DemoChatVideo(uri: Uri) {
+internal fun DemoChatVideo(uri: Uri, controls: Boolean = true) {
     val context = LocalContext.current
     var failed by remember(uri) { mutableStateOf(false) }
     val player = remember(uri) { ExoPlayer.Builder(context).build().apply {
@@ -215,6 +201,6 @@ private fun DemoChatVideo(uri: Uri) {
         }); prepare(); playWhenReady = true
     } }
     DisposableEffect(player) { onDispose { player.release() } }
-    AndroidView(factory = { PlayerView(it).apply { this.player = player; useController = true } }, modifier = Modifier.fillMaxSize())
+    AndroidView(factory = { PlayerView(it).apply { this.player = player; useController = controls } }, modifier = Modifier.fillMaxSize())
     if (failed) Text("视频暂无法播放，请选择其他文件", color = Color.White)
 }

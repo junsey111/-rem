@@ -145,4 +145,25 @@ test('expired, unknown, self, disabled and missing peers do not receive a token'
   await assert.rejects(openDmCall({ ...base, callerId: '1', peer: peer(2), mode: 'video', apiSecret: '' }), (error) => error.status === 503);
   await assert.rejects(joinDmCall({ ...base, userId: '1', callId: 'nope' }), (error) => error.status === 400);
 });
+test('a host offer requires explicit payer consent; changed offers cannot reuse a grant; settlement runs once', async () => {
+  resetDmCalls();
+  const offer = await open(1, 2, 'video', { priceCoins: 60, priceOwnerId: '1', acceptedPriceCoins: 60 });
+  assert.equal(offer.payer_id, '2');
+  assert.equal(offer.price_owner_id, '1');
+  await assert.rejects(joinDmCall({ ...base, userId: '2', callId: offer.call_id }), e => e.status === 409);
+  await assert.rejects(joinDmCall({ ...base, userId: '2', callId: offer.call_id, acceptedPriceCoins: 59 }), e => e.status === 409);
+  await assert.rejects(open(2, 1, 'video', { acceptedPriceCoins: 0 }), e => e.status === 409);
+  await assert.rejects(open(1, 2, 'video', { priceCoins: 90, priceOwnerId: '1', acceptedPriceCoins: 90 }), e => e.status === 409);
+  let charges = 0;
+  const settlement = {userId: '1', callId: offer.call_id, now: base.now + 1000,
+    participants: async () => ['1','2'], settle: async (id, payer, owner, coins) => {
+      assert.equal(id, offer.call_id); assert.equal(payer, '2'); assert.equal(owner, '1'); assert.equal(coins, 60); charges++;
+    }};
+  await assert.rejects(confirmDmCall(settlement), e => e.status === 409);
+  assert.equal(charges, 0);
+  const joined = await joinDmCall({ ...base, userId: '2', callId: offer.call_id, acceptedPriceCoins: 60 });
+  assert.equal(joined.price_coins, 60);
+  await Promise.all([confirmDmCall(settlement), confirmDmCall(settlement)]);
+  assert.equal(charges, 1);
+});
 });

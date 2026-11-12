@@ -98,4 +98,30 @@ func TestCreatorIncomeIncludesPrivateSourcesWithOwnershipAndStablePaging(t *test
 	if err := s.svc.SetDmCallPrice(context.Background(), 1, 10); err != nil {
 		t.Fatal(err)
 	}
+	// All charged private sources are withdrawable, while un-reconciled live
+	// gifts and another creator's income must never enter this balance.
+	available, err := s.svc.Withdrawable(context.Background(), 1)
+	if err != nil || available.Earned != 76 || available.Available != 76 || available.Reserved != 0 {
+		t.Fatalf("private earnings omitted or live gifts counted early: %+v %v", available, err)
+	}
+	rules := service.FinanceRules{WithdrawalsEnabled: true, DiamondUnits: 10, FiatFen: 100, MinimumDiamonds: 1, PayoutMethods: []string{"bank"}}
+	if _, err = s.svc.UpdateFinanceSettings(context.Background(), service.SettingsCommand{RequestID: "4ba90f10-04dd-465d-8d84-ae703bfbdb36", OperatorID: 9, Reason: "test", Rules: rules}); err != nil {
+		t.Fatal(err)
+	}
+	request := service.WithdrawalRequest{RequestID: "9e40fb27-b524-41c0-9b13-58e08ccf12d7", Diamonds: 76, PayoutMethod: "bank", PayoutAccount: "test-only", PayoutName: "test"}
+	if _, err = s.svc.CreateWithdrawal(context.Background(), 1, request); err != nil {
+		t.Fatal("private earnings cannot be withdrawn", err)
+	}
+	if _, err = s.svc.CreateWithdrawal(context.Background(), 1, request); err != nil {
+		t.Fatal("replay", err)
+	}
+	available, err = s.svc.Withdrawable(context.Background(), 1)
+	if err != nil || available.Available != 0 || available.Reserved != 76 {
+		t.Fatalf("reservation double counted: %+v %v", available, err)
+	}
+	request.RequestID = "b834830b-de2b-4c55-a6c7-a5670bafae8a"
+	request.Diamonds = 1
+	if _, err = s.svc.CreateWithdrawal(context.Background(), 1, request); err == nil {
+		t.Fatal("reserved income withdrawn twice")
+	}
 }

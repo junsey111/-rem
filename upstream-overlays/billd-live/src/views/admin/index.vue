@@ -1,42 +1,12 @@
 <template>
-  <div
+  <AdminLogin
     v-if="!authorized"
-    class="login-page"
-  >
-    <form
-      class="settings login-form"
-      @submit.prevent="login"
-    >
-      <h1>现场运营后台</h1>
-      <p>使用具备运营权限的平台账号登录</p>
-      <label
-        >管理员用户名<input
-          v-model="credentials.username"
-          autocomplete="username"
-          required
-      /></label>
-      <label
-        >密码<input
-          v-model="credentials.password"
-          type="password"
-          autocomplete="current-password"
-          required
-      /></label>
-      <button
-        class="primary"
-        :disabled="saving"
-      >
-        {{ saving ? '登录中…' : '登录后台' }}
-      </button>
-      <p
-        v-if="error"
-        role="alert"
-        class="error-banner"
-      >
-        {{ error }}
-      </p>
-    </form>
-  </div>
+    v-model:username="credentials.username"
+    v-model:password="credentials.password"
+    :saving="saving"
+    :error="error"
+    @submit="login"
+  />
   <div
     v-else
     class="admin-shell"
@@ -548,6 +518,14 @@
               maxlength="64"
           /></label>
           <div class="form-grid">
+            <label>前台分类
+              <select v-model="giftEditor.category" required>
+                <option value="recommend">推荐</option>
+                <option value="heart">心意</option>
+                <option value="party">派对</option>
+                <option value="premium">典藏</option>
+              </select>
+            </label>
             <label
               >金币价格<input
                 v-model.number="giftEditor.coin_price"
@@ -602,6 +580,7 @@
               <tr>
                 <th>标识 / 名称</th>
                 <th>金币价格</th>
+                <th>前台分类</th>
                 <th>钻石 / PK 积分</th>
                 <th>状态</th>
                 <th>操作</th>
@@ -619,6 +598,7 @@
                   </div>
                 </td>
                 <td>{{ gift.coin_price }}</td>
+                <td>{{ giftCategoryLabel(gift.category) }}</td>
                 <td>{{ gift.diamond_reward }} / {{ gift.match_points }}</td>
                 <td>{{ gift.enabled ? '已上架' : '已下架' }}</td>
                 <td>
@@ -634,7 +614,7 @@
               <tr v-if="!gifts.length">
                 <td
                   class="empty"
-                  colspan="5"
+                  colspan="6"
                 >
                   {{ error ? '加载失败，请刷新' : '暂无礼物' }}
                 </td>
@@ -1276,6 +1256,7 @@
 <script lang="ts" setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import axios from 'axios';
+import AdminLogin from './AdminLogin.vue';
 import ExtendedAdmin from './ExtendedAdmin.vue';
 const apiBase = '/backend';
 const notice = ref('');
@@ -1997,7 +1978,7 @@ async function saveAdmission() {
 }
 function editGift(gift?: any) {
   giftEditor.value = gift
-    ? { ...gift, reason: '', existing: true }
+    ? { ...gift, category: gift.category || 'recommend', reason: '', existing: true }
     : {
         gift_id: '',
         display_name: '',
@@ -2006,10 +1987,14 @@ function editGift(gift?: any) {
         match_points: null,
         enabled: false,
         effect_type: 'none',
+        category: 'recommend',
         icon_url: '',
         reason: '',
         existing: false,
       };
+}
+function giftCategoryLabel(category: string) {
+  return ({ recommend: '推荐', heart: '心意', party: '派对', premium: '典藏' } as Record<string, string>)[category] || '推荐';
 }
 async function saveGift() {
   if (iconUploading.value) return;
@@ -2057,8 +2042,7 @@ onMounted(async () => {
   display: flex;
   font-family: 'Segoe UI', 'Microsoft YaHei', -apple-system, sans-serif;
 }
-.admin-shell *,
-.login-page * {
+.admin-shell * {
   box-sizing: border-box;
 }
 .settings label,
@@ -2069,28 +2053,6 @@ onMounted(async () => {
 .settings input:not([type='checkbox']),
 .command-panel input {
   width: 100%;
-}
-.login-page {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: #f6f5f8;
-  padding: 24px;
-  box-sizing: border-box;
-  color: #282234;
-  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-}
-.login-form {
-  width: min(100%, 420px);
-  box-sizing: border-box;
-}
-.login-form h1 {
-  margin: 0;
-  font-size: 24px;
-}
-.login-form p {
-  color: #425972;
-  line-height: 1.6;
 }
 .command-panel {
   padding: 24px;

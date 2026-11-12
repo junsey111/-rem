@@ -394,6 +394,7 @@ private fun VideoAction(icon: androidx.compose.ui.graphics.vector.ImageVector, l
 }
 
 @Composable
+@Suppress("ProduceStateDoesNotAssignValue") // The poster producer explicitly assigns value.
 internal fun VideoPoster(path: String, token: String, index: Int, modifier: Modifier = Modifier) {
     val bitmap by produceState<Bitmap?>(null, path, token) {
         value = withContext(Dispatchers.IO) {
@@ -416,6 +417,7 @@ internal fun VideoPoster(path: String, token: String, index: Int, modifier: Modi
 }
 
 @Composable
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 private fun FeedVideoPlayer(path: String, token: String, canPlay: Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var paused by remember(path) { mutableStateOf(false) }

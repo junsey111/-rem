@@ -21,6 +21,7 @@ internal fun parseLiveDirectory(data: JSONObject): List<BilldRoom> {
                 roomType = details.optString("roomType").takeIf { it in setOf("SINGLE", "MULTI", "VOICE") } ?: "SINGLE",
                 welcomeText = details.optString("welcomeText").take(120),
                 backgroundId = details.optInt("backgroundId", 0).coerceIn(0, 3),
+                announcementText = details.optString("announcementText").take(300),
             )
     }
     check(rooms.map { it.roomId }.distinct().size == rooms.size) { "直播目录存在重复房间" }

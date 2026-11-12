@@ -124,7 +124,7 @@ dependency('module-alias').addAlias('@', path.join(backend, 'dist'));
   app.use(userRouter.routes()).use(userRouter.allowedMethods());
   app.use(emailRouter.routes()).use(emailRouter.allowedMethods());
   app.use(momentsRouter.routes()).use(momentsRouter.allowedMethods());
-  for (const file of ['live', 'cover', 'operations', 'moment-review', 'finance', 'revenue', 'room-chat', 'platform-content', 'business-settings', 'account-moderation', 'cohost', 'openim', 'livekit']) {
+  for (const file of ['live', 'cover', 'operations', 'moment-review', 'finance', 'revenue', 'room-chat', 'platform-content', 'business-settings', 'account-moderation', 'cohost', 'openim', 'livekit', 'identity', 'notification-preferences']) {
     const router = dependency(`@/router/${file}.router`).default;
     app.use(router.routes()).use(router.allowedMethods());
   }

@@ -17,8 +17,8 @@ internal object LiveStyle {
     val liveSoft = Color(0xFFFFE9EC)
     val accent = Color(0xFF7044D8)
     val accentSoft = Color(0xFFF0EAFF)
-    val dialogSurface = Color(0xFFF5F0FF)
-    val sheetSurface = Color(0xFFFAF8FF)
+    val dialogSurface = Color(0xFFFDFCFF)
+    val sheetSurface = Color.White
     val teal = Color(0xFF087F78)
     val tealSoft = Color(0xFFE5F4F1)
     val gold = Color(0xFFA96B13)

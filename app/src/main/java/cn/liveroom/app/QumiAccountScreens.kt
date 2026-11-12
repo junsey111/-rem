@@ -391,12 +391,8 @@ internal fun QumiContactsScreen(token: String, initialTab: Int, onBack: () -> Un
             } finally { if (selectedTab == tab && listRefresh == revision) loadingMore = false }
         }
     }
-    Column(Modifier.fillMaxSize().background(Brush.verticalGradient(
-        0f to Color(0xFFEAE2FF),
-        0.38f to Color(0xFFF3EEFF),
-        1f to Color(0xFFFAF8FF),
-    ))) {
-        Row(Modifier.fillMaxWidth().height(56.dp),
+    Column(Modifier.fillMaxSize().background(Color.White)) {
+        Row(Modifier.fillMaxWidth().background(Color(0xFFF7F3FF)).height(56.dp),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = QumiText) }
             listOf("关注", "粉丝").forEachIndexed { index, title ->
@@ -405,8 +401,9 @@ internal fun QumiContactsScreen(token: String, initialTab: Int, onBack: () -> Un
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
-                    Text(title, color = if (selectedTab == index) QumiText else QumiSubtle, fontSize = 17.sp, fontWeight = if (selectedTab == index) FontWeight.SemiBold else FontWeight.Normal)
-                    if (selectedTab == index) Spacer(Modifier.padding(top = 5.dp).width(24.dp).height(3.dp).clip(CircleShape).background(accent))
+                    Text(title, color = if (selectedTab == index) accent else QumiSubtle, fontSize = 17.sp, fontWeight = if (selectedTab == index) FontWeight.SemiBold else FontWeight.Normal)
+                    Spacer(Modifier.padding(top = 5.dp).width(24.dp).height(3.dp).clip(CircleShape)
+                        .background(if (selectedTab == index) accent else Color.Transparent))
                 }
             }
             IconButton(onClick = { refresh() }, enabled = !loading && !followBusy) {
@@ -415,7 +412,9 @@ internal fun QumiContactsScreen(token: String, initialTab: Int, onBack: () -> Un
         }
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).height(52.dp)
-                .clip(RoundedCornerShape(14.dp)).background(Color(0xFFF2EDFF)).clickable { onSearch(selectedTab) }.padding(horizontal = 14.dp),
+                .clip(RoundedCornerShape(14.dp)).background(Color(0xFFF6F5F8))
+                .border(1.dp, Color(0xFFEEEAF4), RoundedCornerShape(14.dp))
+                .clickable { onSearch(selectedTab) }.padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -452,7 +451,8 @@ internal fun QumiContactsScreen(token: String, initialTab: Int, onBack: () -> Un
                                     .clickable { onOpenLive(user) }.padding(horizontal = 5.dp, vertical = 1.dp), color = accent, fontSize = 11.sp)
                             else Text("ID ${user.publicId}", color = QumiSubtle, fontSize = 12.sp)
                         }
-                        TextButton(enabled = !followBusy, onClick = {
+                        TextButton(enabled = !followBusy,
+                            colors = ButtonDefaults.textButtonColors(contentColor = accent), onClick = {
                             followBusy = true
                             scope.launch {
                                 runCatching { api.setFollowing(token, user.id, !user.isFollowing) }
@@ -468,7 +468,9 @@ internal fun QumiContactsScreen(token: String, initialTab: Int, onBack: () -> Un
                             user.isFollowing -> "已关注"
                             else -> "点击关注"
                         }, color = accent, fontSize = 12.sp) }
-                        TextButton(onClick = { onMessageUser(user.id.toString(), user.username) }) { Text("私信", fontSize = 12.sp) }
+                        TextButton(onClick = { onMessageUser(user.id.toString(), user.username) },
+                            colors = ButtonDefaults.textButtonColors(contentColor = accent, containerColor = LiveStyle.accentSoft),
+                            shape = RoundedCornerShape(18.dp)) { Text("私信", fontSize = 12.sp) }
                     }
                     HorizontalDivider(color = Color(0xFFF1F1F4))
                 }

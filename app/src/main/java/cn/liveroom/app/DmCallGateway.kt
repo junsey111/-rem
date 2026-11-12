@@ -27,4 +27,8 @@ class DmCallGateway(context: Context) {
     fun releaseVideoRenderer(view: SurfaceViewRenderer) = room.releaseVideoRenderer(view)
 
     fun hangUp() = room.leave()
+    suspend fun setMicrophone(enabled: Boolean) = room.setMicrophone(enabled)
+    suspend fun setCamera(enabled: Boolean) = room.setCamera(enabled)
+    fun flipCamera() = room.flipCamera()
+    fun setSpeaker(enabled: Boolean) = room.setSpeaker(enabled)
 }

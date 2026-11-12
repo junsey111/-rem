@@ -244,7 +244,7 @@ private fun FilterOptions(title: String, values: List<String>, selected: Int, on
 }
 
 @Composable
-internal fun QumiMomentsScreen(token: String, currentUserId: Long, conversationIds: Set<String>,
+internal fun QumiMomentsScreen(token: String, currentUserId: Long,
     onMessages: () -> Unit, onOpenAnnouncements: () -> Unit, onOpenUser: (String, String) -> Unit,
     onMessageUser: (String, String, Boolean) -> Unit, onComposerVisible: (Boolean) -> Unit) {
     val momentNow by rememberMomentNow()
@@ -375,13 +375,6 @@ internal fun QumiMomentsScreen(token: String, currentUserId: Long, conversationI
                                         fontWeight = FontWeight.SemiBold, maxLines = 1,
                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                     val ownPost = post.userId == currentUserId
-                                    if (!ownPost) {
-                                        val chatted = post.userId.toString() in conversationIds
-                                        if (!chatted) TextButton(
-                                            onClick = { onMessageUser(post.userId.toString(), post.username, true) },
-                                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 3.dp),
-                                        ) { Text("打招呼", color = DiscoveryAccent, fontSize = 11.sp) }
-                                    }
                                     Row(Modifier.height(27.dp).clip(CircleShape)
                                         .background(Brush.horizontalGradient(listOf(Color(0xFFDCCBFF), Color(0xFFF0E9FF))))
                                         .clickable {

@@ -95,7 +95,7 @@ test('real role associations, account sessions and MySQL protect operations and 
   const first=(await call('/operations/users',1)).data.data,second=(await call('/operations/users?page=2',1)).data.data;
   assert.equal(first.users.length,25);assert.equal(second.users.length,4);assert.equal(first.total,29);
   assert.equal(new Set([...first.users,...second.users].map(u=>u.id)).size,29);
-  assert.deepEqual(Object.keys(first.users[0]).sort(),['created_at','id','status','username']);
+  assert.deepEqual(Object.keys(first.users[0]).sort(),['avatar','created_at','id','public_id','status','username']);
   for(const page of ['0','-1','abc','1.5','1000000'])assert.equal((await call('/operations/users?page='+page,1)).status,400);
   const command={request_id:randomUUID(),reason:'Isolated policy violation',operator_id:999};
   for(const endpoint of ['/operations/lives','/operations/actions','/operations/actions/'+command.request_id]){

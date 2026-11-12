@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -24,37 +25,54 @@ import kotlinx.coroutines.delay
 
 internal fun dmCallStatusText(status: String, connected: Boolean, duration: Long): String = when (status) {
     "ringing" -> "等待接通"
-    "connected" -> "通话中 ${duration / 60}:${(duration % 60).toString().padStart(2, '0')}"
+    "connected" -> "通话中 ${formatCallDuration(duration)}"
     "rejected" -> "已拒绝 · 未接通"
     "cancelled" -> "已取消 · 未接通"
     "no_answer" -> "无人接听 · 未接通"
-    else -> if (connected) "通话时长 ${duration / 60}:${(duration % 60).toString().padStart(2, '0')}" else "未接通"
+    else -> if (connected) "通话时长 ${formatCallDuration(duration)}" else "未接通"
 }
 
 @Composable
-internal fun DmCallReceipt(token: String, invite: DmCallInvite) {
+internal fun DmCallReceipt(token: String, invite: DmCallInvite, ownUserId: String) {
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("dm_call_receipts", android.content.Context.MODE_PRIVATE) }
-    var label by remember(invite.callId) { mutableStateOf(prefs.getString(invite.callId, null) ?: "通话记录") }
-    LaunchedEffect(invite.callId) {
-        repeat(22) {
+    val foreground = rememberChatForeground()
+    val prefs = remember(ownUserId) { dmReceiptPreferences(context, ownUserId) }
+    var record by remember(invite.callId, ownUserId) { mutableStateOf(parseCallRecord(prefs.getString(invite.callId, "").orEmpty())) }
+    DisposableEffect(prefs, invite.callId) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { storage, key ->
+            if (key == invite.callId) record = parseCallRecord(storage.getString(key, "").orEmpty())
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+    LaunchedEffect(invite.callId, ownUserId, foreground) {
+        if (!foreground) return@LaunchedEffect
+        while (true) {
+            if (record?.terminal == true) return@LaunchedEffect
             try {
                 val row = LivePlatformApi().dmCallStatus(token, invite.callId)
-                label = dmCallStatusText(row.optString("status"), row.optBoolean("connected"), row.optLong("duration_seconds"))
-                if (row.optString("status") !in listOf("ringing", "connected")) {
-                    prefs.edit().putString(invite.callId, label).apply(); return@LaunchedEffect
+                record = CallRecord(invite.mode, row.optString("status"), row.optLong("duration_seconds"), row.optBoolean("connected"))
+                if (record?.terminal == true) {
+                    cacheDmCallReceipt(context, ownUserId, invite.callId, invite.mode, row)
+                    return@LaunchedEffect
                 }
             } catch (cancelled: CancellationException) { throw cancelled
-            } catch (_: Exception) { return@LaunchedEffect }
+            } catch (_: Exception) { /* Keep the cached state and retry after a temporary connection loss. */ }
             delay(3_000)
         }
     }
+    CallRecordContent(invite.mode, record?.label(invite.fromUserId.toString() == ownUserId) ?: "正在读取通话记录",
+        own = invite.fromUserId.toString() == ownUserId)
+}
+
+@Composable
+internal fun CallRecordContent(mode: String, label: String, own: Boolean) {
+    val icon = if (mode == "video") Icons.Rounded.Videocam else Icons.Rounded.PhoneInTalk
+    val description = if (mode == "video") "视频通话" else "语音通话"
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Icon(if (invite.mode == "video") Icons.Rounded.Videocam else Icons.Rounded.PhoneInTalk, null, modifier = Modifier.size(25.dp))
-        Column {
-            Text(if (invite.mode == "video") "视频通话" else "语音通话", fontWeight = FontWeight.Medium)
-            Text(label, fontSize = 11.sp)
-        }
+        if (!own) Icon(icon, description, modifier = Modifier.size(24.dp))
+        Text(label, fontSize = 15.sp, lineHeight = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+        if (own) Icon(icon, description, modifier = Modifier.size(24.dp))
     }
 }
 

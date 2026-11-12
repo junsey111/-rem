@@ -57,13 +57,15 @@ private val giftAccent = Color(0xFFAB8AF6)
 private val giftMuted = Color(0xFF9795A6)
 private val giftGold = Color(0xFFF1CF84)
 
+internal enum class GiftPickerAppearance { Live, DirectMessage }
+
 internal val demoGiftCatalog = listOf(
-    Gift("ROSE", "玫瑰", 1, 0), Gift("HEART", "爱心泡泡", 52, 0),
-    Gift("PANDA", "爱心熊猫", 33, 0), Gift("ROCKET", "爱心火箭", 1314, 0),
-    Gift("RING", "爱心钻戒", 3344, 0), Gift("CROWN", "璀璨皇冠", 5200, 0),
-    Gift("CASTLE", "梦幻城堡", 5200, 0), Gift("GEM", "海洋之心", 11000, 0),
-    Gift("FIREWORK", "星光烟火", 399, 0), Gift("CAKE", "生日派对", 1888, 0),
-    Gift("AIRPLANE", "浪漫告白", 520, 0), Gift("BOUQUET", "桃花运", 1314, 0),
+    Gift("ROSE", "玫瑰", 1, 0), Gift("HEART", "爱心泡泡", 52, 0, category = "heart"),
+    Gift("PANDA", "爱心熊猫", 33, 0), Gift("ROCKET", "爱心火箭", 1314, 0, category = "party"),
+    Gift("RING", "爱心钻戒", 3344, 0, category = "premium"), Gift("CROWN", "璀璨皇冠", 5200, 0, category = "premium"),
+    Gift("CASTLE", "梦幻城堡", 5200, 0, category = "premium"), Gift("GEM", "海洋之心", 11000, 0, category = "premium"),
+    Gift("FIREWORK", "星光烟火", 399, 0, category = "party"), Gift("CAKE", "生日派对", 1888, 0, category = "party"),
+    Gift("AIRPLANE", "浪漫告白", 520, 0, category = "heart"), Gift("BOUQUET", "桃花运", 1314, 0, category = "heart"),
 )
 
 internal fun giftArt(gift: Gift): Int {
@@ -98,6 +100,7 @@ internal fun giftArt(gift: Gift): Int {
 }
 
 @Composable
+@Suppress("ProduceStateDoesNotAssignValue") // The producer explicitly assigns value; Compose lint misses the Kotlin setter.
 internal fun GiftArtwork(gift: Gift, modifier: Modifier = Modifier, contentDescription: String? = null) {
     val bitmap by produceState<Bitmap?>(null, gift.iconUrl) {
         value = withContext(Dispatchers.IO) {
@@ -139,29 +142,35 @@ internal fun QumiGiftPicker(
     balance: Long?,
     busy: Boolean,
     demo: Boolean,
+    appearance: GiftPickerAppearance = GiftPickerAppearance.Live,
     onSelect: (String) -> Unit,
     onSend: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val directMessage = appearance == GiftPickerAppearance.DirectMessage
+    val textColor = if (directMessage) Color(0xFF42384F) else Color(0xFFF7F6FC)
+    val mutedColor = if (directMessage) Color(0xFF91809F) else giftMuted
+    val highlightColor = if (directMessage) Color(0xFF7044D8) else giftGold
+    val accentColor = if (directMessage) Color(0xFF7044D8) else giftAccent
+    val dividerColor = if (directMessage) Color(0xFFE9E1F1) else Color.White.copy(alpha = .08f)
+    val backgroundColors = if (directMessage) listOf(Color(0xFFFCFAFF), Color(0xFFF5F0FC))
+        else listOf(Color(0xFF22232F), Color(0xFF171820))
     val selected = gifts.firstOrNull { it.id == selectedId }
     val enough = demo || (balance != null && selected != null && balance >= selected.coinPrice)
     var category by remember(gifts) { mutableIntStateOf(0) }
-    val categories = listOf("推荐", "心意", "派对", "典藏")
-    val visibleGifts = when (category) {
-        1 -> gifts.filter { it.coinPrice < 100 }
-        2 -> gifts.filter { it.coinPrice in 100..999 }
-        3 -> gifts.filter { it.coinPrice >= 1000 }
-        else -> gifts
-    }
+    val categories = listOf("全部", "推荐", "心意", "派对", "典藏")
+    val categoryKeys = listOf("all", "recommend", "heart", "party", "premium")
+    val visibleGifts = if (category == 0) gifts else gifts.filter { it.category == categoryKeys[category] }
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
-        .background(Brush.verticalGradient(listOf(Color(0xFF22232F), Color(0xFF171820))))) {
-        Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 7.dp),
+        .background(Brush.verticalGradient(backgroundColors))) {
+        if (!directMessage) Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 7.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Text("礼物", color = Color(0xFFF7F6FC), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("礼物", color = textColor, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            if (demo) Text("演示房间", color = giftMuted, fontSize = 11.sp)
+            if (demo) Text(if (directMessage) "演示会话" else "演示房间", color = mutedColor, fontSize = 11.sp)
             IconButton(onClick = onDismiss, enabled = !busy) {
-                Icon(Icons.Rounded.Close, contentDescription = "关闭礼物", tint = Color(0xFFB8B6C5))
+                Icon(Icons.Rounded.Close, contentDescription = "关闭礼物",
+                    tint = if (directMessage) Color(0xFF9B86AF) else Color(0xFFB8B6C5))
             }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
@@ -170,47 +179,50 @@ internal fun QumiGiftPicker(
             categories.forEachIndexed { index, label ->
                 Column(Modifier.clickable { category = index }.padding(horizontal = 13.dp, vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(label, color = if (category == index) giftGold else giftMuted,
-                        fontSize = 14.sp, fontWeight = if (category == index) FontWeight.Bold else FontWeight.Medium)
+                    Text(label, color = if (category == index) highlightColor else mutedColor,
+                        fontSize = if (directMessage) 12.sp else 14.sp, fontWeight = if (category == index) FontWeight.Bold else FontWeight.Medium)
                     Spacer(Modifier.height(5.dp))
                     Box(Modifier.size(width = 24.dp, height = 2.dp)
-                        .background(if (category == index) giftGold else Color.Transparent))
+                        .background(if (category == index) highlightColor else Color.Transparent))
                 }
             }
         }
-        HorizontalDivider(color = Color.White.copy(alpha = .08f))
-        if (visibleGifts.isEmpty()) Box(Modifier.fillMaxWidth().height(250.dp), contentAlignment = Alignment.Center) {
-            Text("暂无可赠送的礼物", color = giftMuted)
+        HorizontalDivider(color = dividerColor)
+        if (visibleGifts.isEmpty()) Box(Modifier.fillMaxWidth().height(if (directMessage) 152.dp else 250.dp), contentAlignment = Alignment.Center) {
+            Text("暂无可赠送的礼物", color = mutedColor)
         } else LazyVerticalGrid(
             columns = GridCells.Fixed(4),
-            modifier = Modifier.fillMaxWidth().height(250.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+            modifier = Modifier.fillMaxWidth().height(if (directMessage) 152.dp else 250.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = if (directMessage) 4.dp else 10.dp),
             horizontalArrangement = Arrangement.spacedBy(5.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(if (directMessage) 4.dp else 6.dp),
         ) {
             items(visibleGifts, key = { it.id }) { gift ->
                 val selectedGift = gift.id == selectedId
-                Column(Modifier.fillMaxWidth().height(112.dp).clip(RoundedCornerShape(6.dp))
-                    .then(if (selectedGift) Modifier.border(1.dp, Color(0xFFD9BD78), RoundedCornerShape(6.dp)) else Modifier)
-                    .background(if (selectedGift) Color(0xFF34303E) else Color.Transparent)
+                Column(Modifier.fillMaxWidth().height(if (directMessage) 70.dp else 112.dp).clip(RoundedCornerShape(6.dp))
+                    .then(if (selectedGift) Modifier.border(1.dp,
+                        if (directMessage) Color(0xFFA676DE) else Color(0xFFD9BD78), RoundedCornerShape(6.dp)) else Modifier)
+                    .background(if (selectedGift) {
+                        if (directMessage) Color(0xFFF0E6FC) else Color(0xFF34303E)
+                    } else Color.Transparent)
                     .clickable(enabled = !busy) { onSelect(gift.id) }
-                    .padding(horizontal = 3.dp, vertical = 5.dp),
+                    .padding(horizontal = 3.dp, vertical = if (directMessage) 2.dp else 5.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
-                    GiftArtwork(gift, modifier = Modifier.size(61.dp))
-                    Text(gift.name, color = Color(0xFFEAE8F0), fontSize = 11.sp, maxLines = 1,
+                    GiftArtwork(gift, modifier = Modifier.size(if (directMessage) 36.dp else 61.dp))
+                    Text(gift.name, color = textColor, fontSize = if (directMessage) 10.sp else 11.sp, lineHeight = 14.sp, maxLines = 1,
                         overflow = TextOverflow.Ellipsis)
-                    Text("${gift.coinPrice} 金币", color = if (selectedGift) giftGold else giftMuted,
-                        fontSize = 10.sp)
+                    Text("${gift.coinPrice} 金币", color = if (selectedGift) highlightColor else mutedColor,
+                        fontSize = if (directMessage) 9.sp else 10.sp, lineHeight = 12.sp)
                 }
             }
         }
-        HorizontalDivider(color = Color.White.copy(alpha = .08f))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = 12.dp),
+        HorizontalDivider(color = dividerColor)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 17.dp, vertical = if (directMessage) 4.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.MonetizationOn, contentDescription = null,
-                tint = giftGold, modifier = Modifier.size(19.dp))
+                tint = if (directMessage) Color(0xFFBC9149) else giftGold, modifier = Modifier.size(if (directMessage) 15.dp else 19.dp))
             Text(if (demo) " 不扣金币" else " ${balance ?: "--"} 金币",
-                color = Color(0xFFF6F4FA), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                color = textColor, fontSize = if (directMessage) 12.sp else 15.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
             val buttonLabel = when {
                 busy -> "赠送中"
@@ -221,10 +233,12 @@ internal fun QumiGiftPicker(
             }
             Text(buttonLabel,
                 Modifier.clip(CircleShape)
-                    .background(if (selected != null && enough && !busy) giftAccent else Color(0xFF4A4855))
+                    .background(if (selected != null && enough && !busy) accentColor
+                        else if (directMessage) Color(0xFFE5DDEF) else Color(0xFF4A4855))
                     .clickable(enabled = selected != null && !busy, onClick = onSend)
-                    .padding(horizontal = 17.dp, vertical = 9.dp),
-                color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    .padding(horizontal = 17.dp, vertical = if (directMessage) 5.dp else 9.dp),
+                color = if (directMessage && (selected == null || !enough || busy)) Color(0xFF9786AB) else Color.White,
+                fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

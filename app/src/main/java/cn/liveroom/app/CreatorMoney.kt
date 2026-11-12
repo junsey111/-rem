@@ -26,7 +26,7 @@ internal fun creatorGrossFen(units: Long?, rules: CreatorMoneyRules?): Long? {
     if (units == null || units < 0 || rules == null || rules.diamondUnits <= 0 || rules.fiatFen <= 0) return null
     return runCatching {
         BigInteger.valueOf(units).multiply(BigInteger.valueOf(rules.fiatFen))
-            .divide(BigInteger.valueOf(rules.diamondUnits)).longValueExact()
+            .divide(BigInteger.valueOf(rules.diamondUnits)).checkedLong()
     }.getOrNull()
 }
 
@@ -46,11 +46,17 @@ internal fun withdrawalUnitsForFen(fen: Long?, rules: CreatorMoneyRules?): Long?
     return runCatching {
         val divisor = BigInteger.valueOf(rules.fiatFen)
         val numerator = BigInteger.valueOf(fen).multiply(BigInteger.valueOf(rules.diamondUnits))
-        val units = numerator.add(divisor).subtract(BigInteger.ONE).divide(divisor).longValueExact()
+        val units = numerator.add(divisor).subtract(BigInteger.ONE).divide(divisor).checkedLong()
         units.takeIf { it in rules.minimumDiamonds..1_000_000_000_000L && creatorGrossFen(it, rules) == fen }
     }.getOrNull()
 }
 
 internal fun creatorFeeFen(grossFen: Long, rules: CreatorMoneyRules): Long =
     BigInteger.valueOf(grossFen).multiply(BigInteger.valueOf(rules.platformFeeBps))
-        .divide(BigInteger.valueOf(10_000)).longValueExact()
+        .divide(BigInteger.valueOf(10_000)).checkedLong()
+
+// BigInteger.longValueExact is unavailable on Android 8–11; retain its overflow check.
+private fun BigInteger.checkedLong(): Long {
+    if (this < BigInteger.valueOf(Long.MIN_VALUE) || this > BigInteger.valueOf(Long.MAX_VALUE)) throw ArithmeticException("Long overflow")
+    return toLong()
+}

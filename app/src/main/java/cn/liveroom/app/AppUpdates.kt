@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.content.FileProvider
 import java.io.File
 import java.net.HttpURLConnection
@@ -28,7 +29,7 @@ internal suspend fun availableAppUpdate(context: Context): AppUpdate? = withCont
         val name = document.optString("versionName")
         val relativeApk = document.optString("apkUrl")
         val digest = document.optString("sha256").lowercase()
-        val installed = context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+        val installed = PackageInfoCompat.getLongVersionCode(context.packageManager.getPackageInfo(context.packageName, 0))
         if (code <= installed || name.isBlank() || !digest.matches(Regex("[0-9a-f]{64}")))
             return@withContext null
         val apk = URL(source, relativeApk)

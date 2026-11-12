@@ -26,10 +26,14 @@ type catalogCommand struct {
 	EffectVideoMode string `json:"effect_video_mode,omitempty"`
 	EffectMD5       string `json:"effect_md5,omitempty"`
 	IconURL         string `json:"icon_url,omitempty"`
+	Category        string `json:"category,omitempty"`
 	Reason          string `json:"reason"`
 }
 
 func validCatalogEffect(c *catalogCommand) bool {
+	if c.Category != "" && c.Category != "recommend" && c.Category != "heart" && c.Category != "party" && c.Category != "premium" {
+		return false
+	}
 	if len(c.EffectURL) > 512 || len(c.IconURL) > 512 || len(c.EffectVideoMode) > 64 || len(c.EffectMD5) > 64 {
 		return false
 	}
@@ -67,7 +71,7 @@ func yyevaMP4(raw string) bool {
 
 func (s *Server) handleAdminCatalog(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		rows, err := s.db.QueryContext(r.Context(), `SELECT gift_id,display_name,coin_price,match_points,diamond_reward,enabled,effect_type,effect_url,effect_video_mode,effect_md5,icon_url FROM gift_catalog ORDER BY coin_price,gift_id`)
+		rows, err := s.db.QueryContext(r.Context(), `SELECT gift_id,display_name,coin_price,match_points,diamond_reward,enabled,effect_type,effect_url,effect_video_mode,effect_md5,icon_url,category FROM gift_catalog ORDER BY coin_price,gift_id`)
 		if err != nil {
 			financeReply(w, nil, err)
 			return
@@ -76,7 +80,7 @@ func (s *Server) handleAdminCatalog(w http.ResponseWriter, r *http.Request) {
 		items := []map[string]any{}
 		for rows.Next() {
 			var c catalogCommand
-			if err = rows.Scan(&c.GiftID, &c.Name, &c.CoinPrice, &c.MatchPoints, &c.DiamondReward, &c.Enabled, &c.EffectType, &c.EffectURL, &c.EffectVideoMode, &c.EffectMD5, &c.IconURL); err != nil {
+			if err = rows.Scan(&c.GiftID, &c.Name, &c.CoinPrice, &c.MatchPoints, &c.DiamondReward, &c.Enabled, &c.EffectType, &c.EffectURL, &c.EffectVideoMode, &c.EffectMD5, &c.IconURL, &c.Category); err != nil {
 				financeReply(w, nil, err)
 				return
 			}
@@ -131,6 +135,12 @@ func (s *Server) handleAdminCatalog(w http.ResponseWriter, r *http.Request) {
 			financeReply(w, nil, err)
 			return
 		}
+		if c.Category != "" {
+			if _, err = tx.ExecContext(r.Context(), `UPDATE gift_catalog SET category=? WHERE gift_id=?`, c.Category, c.GiftID); err != nil {
+				financeReply(w, nil, err)
+				return
+			}
+		}
 		if _, err = tx.ExecContext(r.Context(), `UPDATE gift_catalog_actions SET applied=TRUE WHERE request_id=?`, c.RequestID); err != nil {
 			financeReply(w, nil, err)
 			return
@@ -159,5 +169,6 @@ func catalogGiftJSON(c catalogCommand) map[string]any {
 		"effect_video_mode": c.EffectVideoMode,
 		"effect_md5":        c.EffectMD5,
 		"icon_url":          c.IconURL,
+		"category":          c.Category,
 	}
 }

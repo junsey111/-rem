@@ -33,6 +33,7 @@ android {
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersionName
+        testInstrumentationRunner = providers.gradleProperty("deviceCheckRunner").orElse("cn.liveroom.app.BeautyDeviceCheck").get()
         buildConfigField("String", "SRS_URL", "\"http://$backendHost:$srsApiPort\"")
         buildConfigField("String", "BILLD_API_URL", "\"http://$backendHost:$billdPort\"")
         buildConfigField("String", "SRS_PLAYBACK_URL", "\"http://$backendHost:$srsPlaybackPort\"")
@@ -65,6 +66,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("io.livekit:livekit-android:2.29.2")
     implementation("com.github.pedroSG94.RootEncoder:library:2.6.7")
+    // Apache-2.0. Models are bundled for offline, on-device face/body tracking.
+    implementation("com.google.mediapipe:tasks-vision:0.10.35")
+    implementation("jp.co.cyberagent.android:gpuimage:2.1.0")
     implementation("io.socket:socket.io-client:2.1.0")
     // YYEVA-Android 1.1.73, Apache-2.0. TextureView player is EvaAnimViewV3.
     implementation("com.github.yylive.YYEVA-Android:yyeva:1.1.73")

@@ -213,7 +213,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, user uint64, c Withdrawa
 	if standing != "GOOD" {
 		return old, financeError(403, "ACCOUNT_RESTRICTED", "当前账号不能提现")
 	}
-	settings, err := scanFinanceSettings(tx.QueryRowContext(ctx, `SELECT version,rules_json FROM finance_settings WHERE singleton=1 FOR SHARE`))
+	settings, err := scanFinanceSettings(tx.QueryRowContext(ctx, `SELECT version,rules_json FROM finance_settings WHERE singleton=1 LOCK IN SHARE MODE`))
 	if err != nil {
 		return old, err
 	}
@@ -227,16 +227,16 @@ func (s *Service) CreateWithdrawal(ctx context.Context, user uint64, c Withdrawa
 	if err != nil {
 		return old, err
 	}
-	var earned, reserved int64
-	// Only reconciled, closed streams are available; pending/approved/paid orders all reserve earnings.
-	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(ss.diamond_reward_total),0) FROM stream_settlements ss JOIN live_sessions ls USING(live_session_id) JOIN reconciliation_results rr USING(live_session_id) WHERE ls.creator_id=? AND ls.status='CLOSED' AND rr.status='PASS'`, user).Scan(&earned); err != nil {
+	earned, err := earnedDiamonds(ctx, tx, user)
+	if err != nil {
 		return old, err
 	}
+	var reserved int64
 	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(diamonds),0) FROM withdrawals WHERE user_id=? AND status!='REJECTED'`, user).Scan(&reserved); err != nil {
 		return old, err
 	}
 	if c.Diamonds > earned-reserved {
-		return old, financeError(409, "INSUFFICIENT_WITHDRAWABLE", "可提现钻石不足，请等待直播结算")
+		return old, financeError(409, "INSUFFICIENT_WITHDRAWABLE", "可提现收益不足，直播礼物需等待结算")
 	}
 	raw, _ := json.Marshal(settings.Rules)
 	result, err := tx.ExecContext(ctx, `INSERT INTO withdrawals(user_id,request_id,diamonds,gross_fen,fee_fen,payout_fen,settings_version,rules_json,payout_method,payout_account,payout_name) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, user, c.RequestID, c.Diamonds, gross, fee, net, settings.Version, string(raw), c.PayoutMethod, c.PayoutAccount, c.PayoutName)

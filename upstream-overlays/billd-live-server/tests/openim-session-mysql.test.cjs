@@ -58,6 +58,7 @@ test('MySQL durable IM session intent survives lost replies, rollback, rotation,
   const imUrl=`http://127.0.0.1:${imPort}`;
   stub('@/config/mysql',{__esModule:true,default:db});stub('@/config/secret',{JWT_SECRET:secret,OPENIM_API_URL:imUrl,OPENIM_PLATFORM_ID:1,OPENIM_SECRET:'isolated-secret',OPENIM_ADMIN_USER_ID:'imAdmin',OPENIM_PUBLIC_API_URL:'http://isolated',OPENIM_WS_URL:'ws://isolated',REVENUE_API_URL:imUrl,INTERNAL_SERVICE_KEY:'isolated-revenue-key'});
   stub('@/utils',{initTable:()=>{}});
+  stub('@/config/redis',{redisClient:{isOpen:false}});
   const user=require('../dist/model/user.model').default,session=require('../dist/model/openimSession.model').default,live=require('../dist/model/live.model').default;
   await user.sync();await live.sync();
   const migration=require('node:fs').readFileSync(path.resolve(__dirname,'../migrations/20261102_openim_sessions.sql'),'utf8');

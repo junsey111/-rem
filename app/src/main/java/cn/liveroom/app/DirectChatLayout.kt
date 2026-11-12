@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AddCircleOutline
 import androidx.compose.material.icons.rounded.Mood
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.PhoneInTalk
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.*
@@ -33,6 +34,7 @@ internal fun DirectChatLayout(
     subtitle: String? = null, draft: String, sending: Boolean = false, enabled: Boolean = true,
     onDraft: (String) -> Unit, onBack: () -> Unit, onSend: () -> Unit,
     onVoice: () -> Unit, onVideo: () -> Unit, onGift: () -> Unit, onEmoji: () -> Unit, onMore: () -> Unit,
+    onOpenProfile: () -> Unit,
     panel: @Composable () -> Unit = {}, content: @Composable ColumnScope.() -> Unit,
 ) {
     val purple = Color(0xFF7044D8)
@@ -41,7 +43,7 @@ internal fun DirectChatLayout(
     Column(Modifier.fillMaxSize().background(Color.White).imePadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().height(64.dp).padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = Color(0xFF352C4B)) }
-            ChatOnlineAvatar(name, avatar, online, demo = demo)
+            ChatOnlineAvatar(name, avatar, online, Modifier.clickable(onClickLabel = "查看个人主页", onClick = onOpenProfile), demo = demo)
             Column(Modifier.weight(1f).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(name, modifier = Modifier.weight(1f, fill = false), color = Color(0xFF30273E), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
@@ -73,5 +75,23 @@ internal fun DirectChatLayout(
             QumiSecretaryTool(Icons.Rounded.AddCircleOutline, "图片和视频", Color(0xFF6F628D), Color(0xFFF4F2F9), onClick = onMore)
         }
         panel()
+    }
+}
+
+@Composable
+internal fun DirectChatMediaActions(onImage: () -> Unit, onVideo: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+        listOf(Triple(Icons.Rounded.Image, "图片", Color(0xFF35C866)) to onImage,
+            Triple(Icons.Rounded.Videocam, "视频", Color(0xFF6374EF)) to onVideo).forEach { (item, action) ->
+            Column(Modifier.width(56.dp).clickable(onClick = action), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFFF5F4F8)),
+                    contentAlignment = Alignment.Center) {
+                    Icon(item.first, "发送${item.second}", Modifier.size(27.dp), tint = item.third)
+                }
+                Text(item.second, fontSize = 12.sp, color = Color(0xFF96919F))
+            }
+        }
     }
 }

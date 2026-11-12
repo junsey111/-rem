@@ -93,6 +93,7 @@ export const connectWebSocket = (server) => {
         isAdmin?: boolean;
         roomType?: string;
         welcomeText?: string;
+        announcementText?: string;
         backgroundId?: number;
       }) =>
         enqueue(async () => {
@@ -145,6 +146,8 @@ export const connectWebSocket = (server) => {
                   ? (data as any).roomType : 'SINGLE',
                 welcomeText: typeof (data as any).welcomeText === 'string'
                   ? (data as any).welcomeText.trim().slice(0, 120) : '',
+                announcementText: typeof data.announcementText === 'string'
+                  ? data.announcementText.trim().slice(0, 300) : '',
                 backgroundId: Number.isInteger((data as any).backgroundId) &&
                   (data as any).backgroundId >= 0 && (data as any).backgroundId <= 3
                   ? (data as any).backgroundId : 0,

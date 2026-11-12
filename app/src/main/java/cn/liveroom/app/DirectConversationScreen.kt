@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -32,17 +33,23 @@ internal fun DirectConversationScreen(
     pendingGift: Boolean, pendingVideo: String?,
     onBack: () -> Unit, onDraft: (String) -> Unit, onSend: () -> Unit,
     onVoice: () -> Unit, onVideo: () -> Unit, onPrices: () -> Unit,
+    onPaidVideo: (Int) -> Unit,
     onImage: (Uri) -> Unit, onSendVideo: (String, Int, ByteArray, Int) -> Unit,
     onGift: (Gift) -> Unit, onRetryGift: () -> Unit, onVerifyGift: (ChatBody.Gift) -> Unit,
     onUnlock: (String) -> Unit, onPlay: (String) -> Unit,
     onOlder: () -> Unit, onRetry: () -> Unit, onConnect: () -> Unit, onVerifyCreator: () -> Unit,
     ownAvatar: String? = null,
+    ownName: String,
+    celebrationGift: Gift?, celebrationNonce: Int, onCelebrationFinished: () -> Unit,
 ) {
     var panel by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     var verifyNeeded by remember { mutableStateOf(false) }
     var checking by remember { mutableStateOf(false) }
+    var videoChoice by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    var profileId by remember(peerId) { mutableStateOf<Long?>(null) }
+    fun openProfile(id: String) { profileId = id.toLongOrNull()?.takeIf { it > 0 } }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { it?.let(onImage) }
     val list = rememberLazyListState()
     LaunchedEffect(history?.messages?.lastOrNull()?.id) { if (!history?.messages.isNullOrEmpty()) list.animateScrollToItem(0) }
@@ -50,8 +57,10 @@ internal fun DirectConversationScreen(
         confirmButton = { TextButton(onClick = { notice = null; if (verifyNeeded) onVerifyCreator() }) { Text(if (verifyNeeded) "去认证" else "知道了") } },
         dismissButton = { TextButton(onClick = { notice = null }) { Text("取消") } }) }
     Dialog(onDismissRequest = onBack, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize()) {
         DirectChatLayout(name, avatar, online, draft = draft, sending = busy, enabled = ready,
-            onDraft = onDraft, onBack = onBack, onSend = onSend, onVoice = onVoice, onVideo = onVideo,
+            onOpenProfile = { openProfile(peerId) },
+            onDraft = onDraft, onBack = onBack, onSend = onSend, onVoice = onVoice, onVideo = { videoChoice = true },
             onGift = { panel = if (panel == "gift") null else "gift" }, onEmoji = { panel = if (panel == "emoji") null else "emoji" },
             onMore = { panel = if (panel == "media") null else "media" },
             panel = {
@@ -59,11 +68,9 @@ internal fun DirectConversationScreen(
                     when (panel) {
                         "emoji" -> QumiEmojiStrip { onDraft((draft + it).take(500)) }
                         "gift" -> DmGiftSheet(gifts, balance, busy, onDismiss = { panel = null }) { panel = null; onGift(it) }
-                        "media" -> Row(Modifier.padding(vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            OutlinedButton(onClick = { panel = null; imagePicker.launch("image/*") }) { Text("图片") }
-                            OutlinedButton(onClick = { panel = "video" }) { Text("视频") }
-                            OutlinedButton(onClick = { panel = null; onPrices() }) { Text("通话价格") }
-                        }
+                        "media" -> DirectChatMediaActions(
+                            onImage = { panel = null; imagePicker.launch("image/*") },
+                            onVideo = { panel = "video" })
                         "video" -> Row(Modifier.padding(vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             OutlinedButton(onClick = { panel = "freeVideo" }) { Text("免费视频") }
                             Button(onClick = {
@@ -92,13 +99,13 @@ internal fun DirectConversationScreen(
                 items(history?.messages.orEmpty().asReversed(), key = { it.id }) { chat ->
                     val own = chat.senderId == ownId
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (own) Arrangement.End else Arrangement.Start) {
-                        if (!own) { ChatOnlineAvatar(name, avatar, false); Spacer(Modifier.width(8.dp)) }
+                        if (!own) { ChatOnlineAvatar(name, avatar, false, Modifier.clickable(onClickLabel = "查看个人主页") { openProfile(peerId) }); Spacer(Modifier.width(8.dp)) }
                         Column(horizontalAlignment = if (own) Alignment.End else Alignment.Start) {
                             Surface(color = if (own) Color(0xFF7044D8) else Color(0xFFF5F3F8), contentColor = if (own) Color.White else Color(0xFF42384F),
                                 modifier = Modifier.widthIn(max = 245.dp), shape = RoundedCornerShape(14.dp)) {
                                 Column(Modifier.padding(12.dp)) {
                                     val invite = parseDmCallInvite(chat.content)
-                                    if (invite != null) DmCallReceipt(token, invite)
+                                    if (invite != null) DmCallReceipt(token, invite, ownId)
                                     else {
                                         val id = (chatBody(chat) as? ChatBody.Video)?.videoId
                                         DmMessageBubble(chat, id?.let { playable[it] }, busy, onUnlock, onPlay, onVerifyGift)
@@ -108,7 +115,7 @@ internal fun DirectConversationScreen(
                             if (own) Text(when (chat.status) { 1 -> "发送中"; 2 -> "已发送"; 3 -> "发送失败"; else -> "" },
                                 color = Color(0xFFB5A9C1), fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
                         }
-                        if (own) { Spacer(Modifier.width(8.dp)); ChatOnlineAvatar("我", ownAvatar, false) }
+                        if (own) { Spacer(Modifier.width(8.dp)); ChatOnlineAvatar("我", ownAvatar, false, Modifier.clickable(onClickLabel = "查看个人主页") { openProfile(ownId) }) }
                     }
                 }
                 if (history?.isEnd == false) item { TextButton(onClick = onOlder, enabled = !loading) { Text("加载更早消息") } }
@@ -117,6 +124,15 @@ internal fun DirectConversationScreen(
             if (!ready) TextButton(onClick = onConnect) { Text("消息暂未连接 · 点击重连") }
             if (pendingGift) TextButton(onClick = onRetryGift, enabled = !busy) { Text("上一笔礼物待确认 · 重试原订单") }
             if (pendingVideo != null) TextButton(onClick = { onSendVideo("", 0, ByteArray(0), 1) }, enabled = !busy) { Text("视频待发送 · 重试") }
+        }
+        celebrationGift?.let { gift -> QumiGiftCelebration(gift, celebrationNonce, false, ownName, ownAvatar,
+            bottomPadding = 140.dp, onFinished = onCelebrationFinished) }
+        }
+        profileId?.let { id -> DirectChatProfile(token, id, ownId.toLongOrNull() ?: 0L,
+            if (id.toString() == ownId) "我" else name, onBack = { profileId = null }) }
+        if (videoChoice) DirectVideoCallOptions(token, onDismiss = { videoChoice = false }) { price ->
+            videoChoice = false
+            if (price == null) onVideo() else onPaidVideo(price)
         }
     }
 }

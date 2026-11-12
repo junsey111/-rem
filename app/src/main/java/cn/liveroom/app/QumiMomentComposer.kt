@@ -44,6 +44,7 @@ private val ComposerPurple = Color(0xFF7044D8)
 private data class SelectedMomentMedia(val uri: Uri, val kind: String)
 
 @Composable
+@Suppress("ProduceStateDoesNotAssignValue") // The preview producer explicitly assigns value.
 internal fun QumiMomentComposer(token: String, onBack: () -> Unit, onPublished: (MomentPost) -> Unit,
     videoOnly: Boolean = false) {
     val context = LocalContext.current

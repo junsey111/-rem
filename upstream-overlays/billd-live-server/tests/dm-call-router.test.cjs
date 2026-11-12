@@ -24,6 +24,7 @@ const peers = {
   2: { id: 2, status: 1 },
   3: { id: 3, status: 2 },
 };
+let approvedHost = false;
 
 stub('@/model/customError.model', { CustomError });
 stub('@/constant', { ALLOW_HTTP_CODE: { ok: 200, paramsError: 400, forbidden: 403 } });
@@ -34,6 +35,7 @@ stub('@/service/media-authority', { mediaAuthority: async () => { throw new Erro
 stub('@/utils/request', { __esModule: true, default: {
   get: async (url) => {
     if (url.endsWith('/v1/dm/call-prices/2')) return { price_coins: 0 };
+    if (url.endsWith('/v1/users/me/creator-applications')) return {reviews: approvedHost ? [{status:'APPROVED'}] : []};
     throw new Error(`unexpected GET ${url}`);
   },
   post: async (url) => {
@@ -101,6 +103,15 @@ test('authenticated pair receives publish tokens; strangers, self calls and live
     };
     assert.equal((await read(1)).status,'cancelled');
     await read(9,403);
+    await call(1, '/livekit/calls', {peer_id:2,mode:'video',offered_price_coins:60,accepted_price_coins:60},403);
+    approvedHost = true;
+    const offer = await call(1, '/livekit/calls', {peer_id:2,mode:'video',offered_price_coins:60,accepted_price_coins:60});
+    assert.equal(offer.price_owner_id,'1'); assert.equal(offer.payer_id,'2');
+    await call(2, '/livekit/calls/join', {call_id:offer.call_id},409);
+    await call(2, '/livekit/calls/join', {call_id:offer.call_id,accepted_price_coins:59},409);
+    const consent = await call(2, '/livekit/calls/join', {call_id:offer.call_id,accepted_price_coins:60});
+    assert.equal(consent.price_coins,60);
+    await call(1, '/livekit/calls/end', {call_id:offer.call_id});
     await call(2, '/livekit/calls/join', { call_id: created.call_id }, 404);
     const live = await call(1, '/livekit/token', {}, 400);
     assert.equal(live.token, undefined);

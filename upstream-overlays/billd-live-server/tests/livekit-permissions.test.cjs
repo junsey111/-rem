@@ -16,6 +16,9 @@ let liveStatus = 'OPEN';
 let activeMatch = 991;
 let cohostMode=null;
 let paidAllowed=true;
+// Call-specific storage is outside this live-room grant test's boundary.
+stub('@/model/user.model', { __esModule:true, default:{} });
+stub('@/service/dm-call-history', { snapshotDmCall:async()=>{ throw Error('unexpected call history access'); }, storedDmCall:async()=>{ throw Error('unexpected call history access'); } });
 stub('@/service/media-access',{requireMediaAccess:async()=>{if(!paidAllowed)throw Object.assign(Error('locked'),{statusCode:402});return 37;}});
 stub('@/service/media-authority', { mediaAuthority:async room=>({room,open:liveStatus==='OPEN',publishers:room.startsWith('pk-')?['1','2']:(cohostMode?['1','9']:['1']),...(cohostMode?{publish_sources:{'9':cohostMode==='AUDIO'?['microphone']:['microphone','camera']}}:{})}), mediaSessionHash:token=>'hash-'+token });
 stub('@/config/secret', { LIVEKIT_API_KEY:'fixture-key', LIVEKIT_API_SECRET:'fixture-secret', REVENUE_API_URL:'http://fixture' });

@@ -28,10 +28,10 @@ data class UpstreamServices(
 data class UserSession(val id: Long, val username: String, val token: String, val publicId: Long = id, val avatar: String? = null)
 data class BilldRoom(val roomId: String, val title: String, val host: String, val creatorId: Long,
     val coverPath: String? = null, val roomType: String = "SINGLE", val welcomeText: String = "",
-    val backgroundId: Int = 0)
+    val backgroundId: Int = 0, val announcementText: String = "")
 data class RoomCreateConfig(val title: String, val roomType: String = "SINGLE",
     val welcomeText: String = "", val backgroundId: Int = 0, val coverPath: String? = null,
-    val watchPriceCoins: Int = 0)
+    val watchPriceCoins: Int = 0, val announcementText: String = "")
 data class Gift(
     val id: String,
     val name: String,
@@ -42,6 +42,7 @@ data class Gift(
     val effectVideoMode: String = "",
     val effectMd5: String = "",
     val iconUrl: String = "",
+    val category: String = "recommend",
 )
 data class Wallet(val balance: Long)
 data class UserLevel(
@@ -803,13 +804,13 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         request("/livekit/call-price", "PUT", token, JSONObject().put("price_coins", coins)).getInt("price_coins")
     }
 
-    suspend fun startDmCall(token: String, peerId: Long, mode: String, acceptedPriceCoins: Int = 0): DmCallCredentials = withContext(Dispatchers.IO) {
+    suspend fun startDmCall(token: String, peerId: Long, mode: String, acceptedPriceCoins: Int = 0, offeredPriceCoins: Int? = null): DmCallCredentials = withContext(Dispatchers.IO) {
         parseDmCall(request("/livekit/calls", "POST", token, JSONObject().put("peer_id", peerId)
-            .put("mode", mode).put("accepted_price_coins", acceptedPriceCoins)))
+            .put("mode", mode).put("accepted_price_coins", acceptedPriceCoins).apply { offeredPriceCoins?.let { put("offered_price_coins", it) } }))
     }
 
-    suspend fun joinDmCall(token: String, callId: String): DmCallCredentials = withContext(Dispatchers.IO) {
-        parseDmCall(request("/livekit/calls/join", "POST", token, JSONObject().put("call_id", callId)))
+    suspend fun joinDmCall(token: String, callId: String, acceptedPriceCoins: Int = 0): DmCallCredentials = withContext(Dispatchers.IO) {
+        parseDmCall(request("/livekit/calls/join", "POST", token, JSONObject().put("call_id", callId).put("accepted_price_coins", acceptedPriceCoins)))
     }
 
     suspend fun confirmDmCallConnected(token: String, callId: String) = withContext(Dispatchers.IO) {
@@ -1075,6 +1076,7 @@ class BilldRoomRegistration(private val baseUrl: String = BuildConfig.BILLD_API_
                     .put("roomId", roomId)
                     .put("roomName", draft.title)
                     .put("roomType", draft.roomType)
+                    .put("announcementText", draft.announcementText)
                     .put("welcomeText", draft.welcomeText)
                     .put("backgroundId", draft.backgroundId)
                     .put("isAdmin", true)

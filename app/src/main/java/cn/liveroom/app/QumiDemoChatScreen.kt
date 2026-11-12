@@ -39,8 +39,8 @@ internal data class DemoChatMessage(val id: String, val own: Boolean, val text: 
 /** Separate local demonstration; never enters OpenIM, the gift ledger or another user's inbox. */
 internal class DemoChatState(context: Context, userId: Long, val peer: DemoProfile? = null,
     private val onUpdated: ((String) -> Unit)? = null) {
-    val name = peer?.name ?: "安然"
-    val avatar = peer?.let { "/demo-media/${it.publicId.toString().takeLast(5)}.jpg" }
+    val name = (peer ?: demoProfiles.first()).name
+    val avatar = (peer ?: demoProfiles.first()).let { "/demo-media/${it.publicId.toString().takeLast(5)}.jpg" }
     val poster = peer?.poster ?: R.drawable.qumi_demo_live_51287
     private val prefs = context.getSharedPreferences("demo_chat_${userId}${peer?.let { "_${it.publicId}" } ?: ""}", Context.MODE_PRIVATE)
     val messages = mutableStateListOf<DemoChatMessage>()
@@ -124,7 +124,12 @@ internal fun QumiDemoChatScreen(state: DemoChatState, ownName: String, onBack: (
                         Surface(color = if (message.own) purple else Color.White,
                             shape = RoundedCornerShape(topStart = if (message.own) 16.dp else 4.dp, topEnd = if (message.own) 4.dp else 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp),
                             modifier = Modifier.widthIn(max = 240.dp)) {
-                            Text(message.text, Modifier.padding(13.dp, 11.dp), color = if (message.own) Color.White else Color(0xFF42384F), fontSize = 15.sp, lineHeight = 23.sp)
+                            if (message.kind == "call") {
+                                val record = demoCallRecord(message)
+                                CompositionLocalProvider(LocalContentColor provides if (message.own) Color.White else Color(0xFF42384F)) {
+                                    Box(Modifier.padding(13.dp, 11.dp)) { CallRecordContent(record.mode, record.label(message.own), message.own) }
+                                }
+                            } else Text(message.text, Modifier.padding(13.dp, 11.dp), color = if (message.own) Color.White else Color(0xFF42384F), fontSize = 15.sp, lineHeight = 23.sp)
                         }
                         if (message.own) { Spacer(Modifier.width(9.dp)); ChatOnlineAvatar(ownName, null, false) }
                     }

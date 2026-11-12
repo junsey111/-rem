@@ -139,7 +139,7 @@ func (s *Server) handleGiftCatalog(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT gift_id, display_name, coin_price, match_points, diamond_reward, effect_type, effect_url, effect_video_mode, effect_md5, icon_url FROM gift_catalog WHERE enabled = TRUE ORDER BY coin_price`)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT gift_id, display_name, coin_price, match_points, diamond_reward, effect_type, effect_url, effect_video_mode, effect_md5, icon_url, category FROM gift_catalog WHERE enabled = TRUE ORDER BY coin_price`)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -156,11 +156,12 @@ func (s *Server) handleGiftCatalog(w http.ResponseWriter, r *http.Request) {
 		EffectVideoMode string `json:"effect_video_mode"`
 		EffectMD5       string `json:"effect_md5"`
 		IconURL         string `json:"icon_url"`
+		Category        string `json:"category"`
 	}
 	items := []gift{}
 	for rows.Next() {
 		var item gift
-		if err := rows.Scan(&item.GiftID, &item.Name, &item.Coins, &item.MatchPoints, &item.Diamonds, &item.EffectType, &item.EffectURL, &item.EffectVideoMode, &item.EffectMD5, &item.IconURL); err != nil {
+		if err := rows.Scan(&item.GiftID, &item.Name, &item.Coins, &item.MatchPoints, &item.Diamonds, &item.EffectType, &item.EffectURL, &item.EffectVideoMode, &item.EffectMD5, &item.IconURL, &item.Category); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
@@ -1128,7 +1129,34 @@ func (s *Server) handleLivesPrefix(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodGet && parts[3] == "contributors":
 		limit := parseLimit(r.URL.Query().Get("limit"))
-		rows, err := s.getLiveContributors(r.Context(), liveSessionID, limit)
+		var rows []service.ContributorSummary
+		var err error
+		if r.URL.Query().Get("period") != "" {
+			start, _, ok := requestedPeriod(r)
+			if !ok {
+				httpx.WriteError(w, http.StatusBadRequest, "INVALID_PERIOD", "period must be daily, weekly or monthly")
+				return
+			}
+			// Period rankings belong to this host across their live sessions.
+			var result *sql.Rows
+			result, err = s.db.QueryContext(r.Context(), `SELECT g.viewer_id,SUM(g.charged_coins) AS coins FROM gift_orders g JOIN live_sessions l ON l.live_session_id=g.live_session_id WHERE g.status='ACCEPTED' AND g.created_at>=? AND l.creator_id=(SELECT creator_id FROM live_sessions WHERE live_session_id=?) GROUP BY g.viewer_id ORDER BY coins DESC,g.viewer_id ASC LIMIT ?`, start, liveSessionID, limit)
+			if err == nil {
+				defer result.Close()
+				rows = []service.ContributorSummary{}
+				for result.Next() {
+					var row service.ContributorSummary
+					if err = result.Scan(&row.ViewerID, &row.Coins); err != nil {
+						break
+					}
+					rows = append(rows, row)
+				}
+				if err == nil {
+					err = result.Err()
+				}
+			}
+		} else {
+			rows, err = s.getLiveContributors(r.Context(), liveSessionID, limit)
+		}
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return

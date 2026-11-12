@@ -29,6 +29,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 @Composable
+@Suppress("ProduceStateDoesNotAssignValue") // The producer below explicitly assigns value; Compose lint misses the Kotlin setter.
 internal fun AnnouncementImage(path: String, cover: Boolean = false) {
     val bitmap by produceState<Bitmap?>(null, path) {
         value = withContext(Dispatchers.IO) {

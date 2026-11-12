@@ -21,6 +21,7 @@ export class RoomPresence {
   activity(roomId: string) {
     const members = [...this.members.values()].filter(row => row.roomId === roomId && row.userId !== row.hostId);
     return { viewer_count: new Set(members.map(row => row.userId)).size,
+      viewers: [...new Map(members.map(row => [row.userId, { user_id: row.userId, username: row.username }])).values()],
       entries: (this.entries.get(roomId) || []).filter(row => Date.parse(row.created_at) > Date.now() - 120000) };
   }
 }

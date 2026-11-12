@@ -76,11 +76,17 @@ func (s *Server) handleFinanceAdmin(w http.ResponseWriter, r *http.Request) {
 		userID := uint64(0)
 		if raw := r.URL.Query().Get("user_id"); raw != "" {
 			id, err := strconv.ParseUint(raw, 10, 64)
-			if err != nil || id == 0 { httpx.WriteError(w, 400, "INVALID_USER", "用户编号无效"); return }
+			if err != nil || id == 0 {
+				httpx.WriteError(w, 400, "INVALID_USER", "用户编号无效")
+				return
+			}
 			userID = id
 		}
 		before, ok := rechargeCursor(r)
-		if !ok { httpx.WriteError(w, 400, "INVALID_CURSOR", "分页无效"); return }
+		if !ok {
+			httpx.WriteError(w, 400, "INVALID_CURSOR", "分页无效")
+			return
+		}
 		records, next, err := s.listRecharges(r.Context(), userID, false, before)
 		financeReply(w, map[string]any{"records": records, "next_before_id": next}, err)
 	case path == "balance-adjustments" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
@@ -194,10 +200,8 @@ func (s *Server) handleWithdrawable(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 405, "METHOD_NOT_ALLOWED", "GET required")
 		return
 	}
-	user := authenticatedUserID(r)
-	var earned, reserved int64
-	err := s.db.QueryRowContext(r.Context(), `SELECT COALESCE((SELECT SUM(ss.diamond_reward_total) FROM stream_settlements ss JOIN live_sessions ls USING(live_session_id) JOIN reconciliation_results rr USING(live_session_id) WHERE ls.creator_id=? AND ls.status='CLOSED' AND rr.status='PASS'),0),COALESCE((SELECT SUM(diamonds) FROM withdrawals WHERE user_id=? AND status!='REJECTED'),0)`, user, user).Scan(&earned, &reserved)
-	financeReply(w, map[string]any{"earned_diamonds": earned, "reserved_diamonds": reserved, "available_diamonds": earned - reserved}, err)
+	result, err := s.svc.Withdrawable(r.Context(), authenticatedUserID(r))
+	financeReply(w, result, err)
 }
 func (s *Server) writeFinanceAudit(w http.ResponseWriter, r *http.Request) {
 	page := 1

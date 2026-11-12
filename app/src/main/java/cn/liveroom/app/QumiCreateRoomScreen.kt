@@ -82,6 +82,7 @@ internal fun QumiCreateRoomScreen(token: String, username: String, api: LivePlat
     var roomType by remember { mutableStateOf("SINGLE") }
     var title by remember(username) { mutableStateOf("${username} 的直播间") }
     var welcomeText by remember { mutableStateOf("欢迎来到直播间") }
+    var announcementText by remember { mutableStateOf("") }
     var paidWatching by remember { mutableStateOf(false) }
     var watchPrice by remember { mutableStateOf("10") }
     var backgroundId by remember { mutableIntStateOf(0) }
@@ -173,6 +174,18 @@ internal fun QumiCreateRoomScreen(token: String, username: String, api: LivePlat
                         } })
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("房间公告", color = Color.White.copy(alpha = .66f), fontSize = 13.sp)
+                    BasicTextField(announcementText, onValueChange = { announcementText = it.take(300) }, enabled = !starting,
+                        textStyle = TextStyle(color = Color.White, fontSize = 15.sp, lineHeight = 22.sp),
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(11.dp))
+                            .background(Color.White.copy(alpha = .13f)).padding(14.dp),
+                        decorationBox = { inner -> Box {
+                            if (announcementText.isBlank()) Text("填写本场公告，观众进入直播间时展示", color = Color.White.copy(alpha = .45f), fontSize = 14.sp)
+                            inner()
+                        } })
+                    Text("${announcementText.length}/300 · 可不填", color = Color.White.copy(alpha = .45f), fontSize = 11.sp)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("房间背景", color = Color.White.copy(alpha = .66f), fontSize = 13.sp)
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         createRoomBackgrounds.forEachIndexed { index, colors ->
@@ -221,14 +234,14 @@ internal fun QumiCreateRoomScreen(token: String, username: String, api: LivePlat
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 Button(onClick = {
                     onCreate(RoomCreateConfig(title.trim(), roomType, welcomeText.trim(), backgroundId, coverPath,
-                        if (paidWatching) watchPrice.toInt() else 0))
+                        if (paidWatching) watchPrice.toInt() else 0, announcementText.trim()))
                 }, enabled = title.isNotBlank() && !uploading && !starting && (!paidWatching || watchPrice.toIntOrNull() in 1..1_000_000),
                     modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = createRoomPurple),
                     contentPadding = PaddingValues(0.dp)) {
                     Text(if (starting) "正在开播…" else "创建房间", fontSize = 17.sp)
                 }
-                if (roomType == "SINGLE") TextButton(onClick = onBeauty, enabled = !starting) {
+                if (roomType != "VOICE") TextButton(onClick = onBeauty, enabled = !starting) {
                     Icon(Icons.Rounded.AutoFixHigh, null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(5.dp))
                     Text("美颜设置", color = Color.White, fontSize = 13.sp)

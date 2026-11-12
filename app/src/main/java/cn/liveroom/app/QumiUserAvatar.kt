@@ -23,6 +23,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 @Composable
+@Suppress("ProduceStateDoesNotAssignValue") // The bitmap producer explicitly assigns value.
 internal fun QumiUserAvatar(avatar: String?, name: String, modifier: Modifier = Modifier) {
     val bitmap by produceState<Bitmap?>(null, avatar) {
         value = withContext(Dispatchers.IO) {

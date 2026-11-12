@@ -26,6 +26,7 @@ internal data class LiveRoomActivity(val viewers: Int? = null, val giftCoins: Lo
     val lines: List<RoomActivityLine> = emptyList())
 
 @Composable
+@Suppress("ProduceStateDoesNotAssignValue") // Both polling requests assign value below; Compose lint misses the Kotlin setter.
 internal fun rememberLiveRoomActivity(session: UserSession, api: LivePlatformApi, roomId: String, isHost: Boolean): State<LiveRoomActivity> =
     produceState(LiveRoomActivity(), session.id, roomId, isHost) {
         while (true) {
@@ -52,15 +53,20 @@ internal fun rememberLiveRoomActivity(session: UserSession, api: LivePlatformApi
     }
 
 @Composable
-internal fun LiveRoomComments(activity: LiveRoomActivity, welcomeText: String) {
+internal fun LiveRoomComments(activity: LiveRoomActivity, welcomeText: String, announcementText: String, roomId: String) {
     val listState = rememberLazyListState()
+    var entryNotice by remember(roomId) { mutableStateOf(true) }
+    LaunchedEffect(roomId) { delay(12_000); entryNotice = false }
     LaunchedEffect(activity.lines.lastOrNull()?.id) {
         if (activity.lines.isNotEmpty()) listState.animateScrollToItem(activity.lines.lastIndex + if (welcomeText.isNotBlank()) 1 else 0)
     }
-    LazyColumn(state = listState, modifier = Modifier.fillMaxWidth(.88f).heightIn(max = 160.dp),
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    if (entryNotice) LiveEntryNotice(listOfNotNull(LIVE_ENTRY_NOTICE,
+        announcementText.takeIf { it.isNotBlank() }?.let { "房间公告：$it" }).joinToString("\n"), Modifier.fillMaxWidth(.88f))
+    LazyColumn(state = listState, modifier = Modifier.fillMaxWidth(.88f).heightIn(max = 140.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (welcomeText.isNotBlank()) item(key = "welcome") {
-            Text("公告 · $welcomeText", Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF7550BA).copy(alpha = .5f))
+            Text("主播 · $welcomeText", Modifier.clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = .32f))
                 .padding(horizontal = 9.dp, vertical = 5.dp), color = Color(0xFFE5D8FF), fontSize = 12.sp)
         }
         items(activity.lines, key = { it.id }) { line ->
@@ -72,4 +78,5 @@ internal fun LiveRoomComments(activity: LiveRoomActivity, welcomeText: String) {
                 fontSize = 13.sp, lineHeight = 19.sp)
         }
     }
+}
 }

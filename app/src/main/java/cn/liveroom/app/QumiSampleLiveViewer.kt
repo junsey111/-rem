@@ -1,6 +1,7 @@
 package cn.liveroom.app
 
 import android.app.Activity
+import androidx.activity.compose.LocalActivity
 import android.content.Context
 import android.view.Gravity
 import android.view.WindowManager
@@ -104,7 +105,7 @@ import kotlin.math.sin
 import kotlin.math.roundToInt
 
 private data class DemoRoom(val title: String, val host: String, val video: Int, val poster: Int,
-    val viewers: Int, val welcome: String)
+    val viewers: Int, val welcome: String, val multi: Boolean = false)
 
 private val demoRooms = listOf(
     DemoRoom("晚间聊天", "小橙", R.raw.qumi_demo_live_51287, R.drawable.qumi_demo_live_51287,
@@ -117,24 +118,29 @@ private val demoRooms = listOf(
         35, "今天一起分享好心情"),
 )
 
+private val demoMosaicRoom = DemoRoom("多人连麦演示", "小橙", R.raw.qumi_demo_live_51287, R.drawable.qumi_demo_live_51287, 128, "欢迎来到多人直播间，点击各主播画面查看主页", multi = true)
+
 private val demoPurple = Color(0xFF794BE7)
 private data class DemoLikeBurst(val id: Int, val position: Offset)
 
 @Composable
-internal fun QumiSampleLiveViewer(initialIndex: Int, userId: Long, token: String, onBack: () -> Unit, onOpenVideo: () -> Unit,
-    onMessage: (String, String) -> Unit) {
-    val window = (LocalContext.current as Activity).window
+internal fun QumiSampleLiveViewer(initialIndex: Int, userId: Long, token: String, initialPreview: Boolean = false, onBack: () -> Unit, onOpenVideo: () -> Unit,
+    onMessage: (String, String) -> Unit, senderName: String, senderAvatar: String?) {
+    val window = LocalActivity.current?.window
     DisposableEffect(window) {
-        val controller = WindowCompat.getInsetsController(window, window.decorView)
-        val previousLightStatusBar = controller.isAppearanceLightStatusBars
-        controller.isAppearanceLightStatusBars = false
-        onDispose { controller.isAppearanceLightStatusBars = previousLightStatusBar }
+        val controller = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        val previousLightStatusBar = controller?.isAppearanceLightStatusBars
+        controller?.isAppearanceLightStatusBars = false
+        onDispose { if (previousLightStatusBar != null) controller?.isAppearanceLightStatusBars = previousLightStatusBar }
     }
-    val pager = rememberPagerState(initialPage = initialIndex.coerceIn(demoRooms.indices),
-        pageCount = { demoRooms.size })
+    val liveRooms = remember { demoRooms + demoMosaicRoom }
+    var entered by remember { mutableStateOf(!initialPreview) }
+    val pager = rememberPagerState(initialPage = initialIndex.coerceIn(liveRooms.indices),
+        pageCount = { liveRooms.size })
     var panel by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var participantUser by remember { mutableStateOf<PublicUser?>(null) }
     var demoUser by remember { mutableStateOf<PublicUser?>(null) }
     var userLoading by remember { mutableStateOf(false) }
     var userError by remember { mutableStateOf<String?>(null) }
@@ -145,12 +151,12 @@ internal fun QumiSampleLiveViewer(initialIndex: Int, userId: Long, token: String
     LaunchedEffect(pager.currentPage, profileRefresh) {
         demoUser = null; userLoading = true; userError = null
         try {
-            val spec = demoProfiles[pager.currentPage]
+            val spec = demoProfiles[pager.currentPage % demoProfiles.size]
             demoUser = LivePlatformApi().searchUsers(token, spec.publicId.toString()).firstOrNull { it.publicId == spec.publicId }
                 ?: error("演示资料暂不可用，请稍后重试")
             cacheDemoProfile(context, demoUser!!)
             val legacy = context.getSharedPreferences("demo_live_follow_$userId", Context.MODE_PRIVATE)
-            val title = demoRooms[pager.currentPage].title
+            val title = liveRooms[pager.currentPage].title
             if (legacy.getBoolean(title, false)) {
                 if (demoUser?.isFollowing == false) LivePlatformApi().setFollowing(token, demoUser!!.id, true)
                 demoUser = demoUser?.copy(isFollowing = true)
@@ -173,6 +179,7 @@ internal fun QumiSampleLiveViewer(initialIndex: Int, userId: Long, token: String
     }
     LaunchedEffect(pager.currentPage) {
         panel = null
+        effectGift = null
         cohostQueued = false
         queueProgress = 0
     }
@@ -180,7 +187,15 @@ internal fun QumiSampleLiveViewer(initialIndex: Int, userId: Long, token: String
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         VerticalPager(pager, Modifier.fillMaxSize(), userScrollEnabled = panel == null) { index ->
-            DemoLiveRoom(demoRooms[index], userId = userId, active = pager.currentPage == index,
+            DemoLiveRoom(liveRooms[index], userId = userId, active = pager.currentPage == index,
+                preview = !entered, onEnter = { entered = true }, onClose = onBack, onOpenVideo = onOpenVideo,
+                onParticipant = { participant -> scope.launch {
+                    try { val spec = demoProfiles[participant]
+                        participantUser = LivePlatformApi().searchUsers(token, spec.publicId.toString()).firstOrNull { it.publicId == spec.publicId }
+                            ?: error("资料暂不可用")
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { userError = "资料暂不可用，请重试" }
+                } },
                 followed = demoUser?.isFollowing == true, followBusy = followBusy || userLoading,
                 onFollow = {
                     val target = demoUser
@@ -205,27 +220,8 @@ internal fun QumiSampleLiveViewer(initialIndex: Int, userId: Long, token: String
                     }
                 })
         }
-        Row(Modifier.align(Alignment.TopCenter).fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(start = 8.dp, end = 14.dp, top = 4.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回直播列表", tint = Color.White)
-            }
-            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically) {
-                Text("视频", Modifier.clickable(onClick = onOpenVideo)
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                    color = Color.White.copy(alpha = .7f), fontSize = 15.sp)
-                Text("直播", Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            }
-            Text("演示", Modifier.clip(CircleShape).background(Color.Black.copy(alpha = .5f))
-                .padding(horizontal = 9.dp, vertical = 4.dp),
-                color = Color.White, fontSize = 11.sp)
-        }
         panel?.let { selected ->
-            DemoLivePanel(selected, demoRooms[pager.currentPage],
+            DemoLivePanel(selected, liveRooms[pager.currentPage],
                 gifts = demoGifts,
                 selectedGiftId = demoGiftId,
                 cohostQueued = cohostQueued,
@@ -245,10 +241,12 @@ internal fun QumiSampleLiveViewer(initialIndex: Int, userId: Long, token: String
         }
         effectGift?.let { gift ->
             val nonce = effectNonce
-            QumiGiftCelebration(gift, nonce, demo = true) {
+            QumiGiftCelebration(gift, nonce, demo = true, senderName = senderName, senderAvatar = senderAvatar) {
                 if (effectNonce == nonce) effectGift = null
             }
         }
+        participantUser?.let { target -> DirectChatProfile(token, target.id, userId, target.username,
+            onBack = { participantUser = null }, onMessage = onMessage) }
         userError?.let { message -> AlertDialog(onDismissRequest = { userError = null }, title = { Text("温馨提示") },
             text = { Text(message) }, confirmButton = { TextButton(onClick = { userError = null; profileRefresh++ }) { Text("重试") } },
             dismissButton = { TextButton(onClick = { userError = null }) { Text("关闭") } }) }
@@ -268,8 +266,7 @@ internal fun QumiSampleLiveViewer(initialIndex: Int, userId: Long, token: String
 }
 
 @Composable
-internal fun QumiGiftCelebration(gift: Gift, nonce: Int, demo: Boolean,
-    onFinished: () -> Unit) {
+internal fun QumiPremiumGiftEffect(gift: Gift, nonce: Int) {
     val premium = gift.coinPrice >= 500
     val scale = remember { Animatable(.45f) }
     val opacity = remember { Animatable(0f) }
@@ -284,9 +281,8 @@ internal fun QumiGiftCelebration(gift: Gift, nonce: Int, demo: Boolean,
         scale.animateTo(1f, tween(160))
         delay(if (premium) 1_550 else 1_150)
         opacity.animateTo(0f, tween(400))
-        onFinished()
     }
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (premium) .4f else .27f)),
+    Box(Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center) {
         if (premium) Canvas(Modifier.fillMaxSize()) {
             val radius = (100 + 130 * burst.value).dp.toPx()
@@ -315,17 +311,14 @@ internal fun QumiGiftCelebration(gift: Gift, nonce: Int, demo: Boolean,
                         tint = Color(0xFFFFD66E))
                 }
             }
-            Text("赠送 ${gift.name}", color = Color.White, fontSize = if (premium) 24.sp else 21.sp,
-                fontWeight = FontWeight.Bold)
-            Text(if (demo) "演示特效 · 不扣金币" else "${gift.coinPrice} 金币 · 赠送成功",
-                color = Color(0xFFFFE6A5), fontSize = 12.sp)
         }
     }
 }
 
 @Composable
 private fun DemoLiveRoom(room: DemoRoom, userId: Long, active: Boolean, giftSendCount: Int,
-    giftSentName: String, followed: Boolean, followBusy: Boolean, onFollow: () -> Unit, onPanel: (String) -> Unit) {
+    giftSentName: String, followed: Boolean, followBusy: Boolean, onFollow: () -> Unit, onPanel: (String) -> Unit,
+    preview: Boolean, onEnter: () -> Unit, onClose: () -> Unit, onOpenVideo: () -> Unit, onParticipant: (Int) -> Unit) {
     val controlsBottom = 51.dp
     val context = LocalContext.current
     var likes by remember(room.title) { mutableIntStateOf(126) }
@@ -341,16 +334,18 @@ private fun DemoLiveRoom(room: DemoRoom, userId: Long, active: Boolean, giftSend
         likeBursts.add(DemoLikeBurst(++likeBurstId, position))
         if (likeBursts.size > 8) likeBursts.removeAt(0)
     }
+    var entryNotice by remember(room.title, preview) { mutableStateOf(!preview) }
+    LaunchedEffect(room.title, preview, active) { if (!preview && active) { entryNotice = true; delay(12_000); entryNotice = false } }
     var draft by remember(room.title) { mutableStateOf("") }
     var showCommentComposer by remember(room.title) { mutableStateOf(false) }
     var messages by remember(room.title) { mutableStateOf(listOf(
-        "系统" to "欢迎来到${room.host}的直播间",
+        "我" to "进入直播间",
         room.host to room.welcome,
         "小柚" to "主播晚上好～",
     )) }
     val incoming = listOf("这个画面好美", "今天聊什么呀？", "刚进来，先听一会儿")
     LaunchedEffect(room.title, active) {
-        if (!active) return@LaunchedEffect
+        if (!active || preview) return@LaunchedEffect
         var next = 0
         while (true) {
             delay(6_000)
@@ -373,61 +368,50 @@ private fun DemoLiveRoom(room: DemoRoom, userId: Long, active: Boolean, giftSend
     }
 
     Box(Modifier.fillMaxSize().onSizeChanged { viewportSize = it }.background(Color.Black)) {
-        Image(painterResource(room.poster), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        if (active) DemoLiveVideo(room.video)
+        if (!room.multi) {
+            Image(painterResource(room.poster), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            if (active) DemoLiveVideo(room.video)
+        } else LiveMosaic(demoRooms.indices.toList(), identity = { it }, onProfile = { if (preview) onEnter() else onParticipant(it) },
+            modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing).padding(top = if (preview) 90.dp else 145.dp).fillMaxWidth().height(330.dp)) { participant ->
+            Image(painterResource(demoRooms[participant].poster), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            if (active) DemoLiveVideo(demoRooms[participant].video)
+            Text(demoRooms[participant].host, Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = .3f)).padding(7.dp, 4.dp), color = Color.White, fontSize = 12.sp)
+        }
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
             Color.Black.copy(alpha = .5f), Color.Transparent, Color.Transparent,
-            Color.Black.copy(alpha = .82f)))))
-        Box(Modifier.fillMaxSize().pointerInput(active) {
+            Color.Black.copy(alpha = .82f))))
+            .then(if (preview) Modifier.clickable(onClickLabel = "进入直播间", onClick = onEnter) else Modifier))
+        if (!room.multi && !preview) Box(Modifier.fillMaxSize().pointerInput(active) {
             detectTapGestures(onDoubleTap = { likeAt(it) })
         })
 
-        Row(Modifier.align(Alignment.TopStart).fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(start = 15.dp, end = 15.dp, top = 60.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            Image(painterResource(room.poster), "查看主播信息", Modifier.size(36.dp)
-                .clip(CircleShape).clickable { onPanel("profile") }, contentScale = ContentScale.Crop)
-            Column(Modifier.weight(1f).padding(start = 7.dp)) {
-                Text(room.host, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                Text(room.title, color = Color.White.copy(alpha = .82f), fontSize = 10.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (preview) {
+            Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = Color.White) }
+                Spacer(Modifier.weight(1f))
+                Text("视频", Modifier.clickable(onClick = onOpenVideo).padding(14.dp), color = Color.White.copy(alpha = .7f), fontSize = 16.sp)
+                Text("直播", Modifier.padding(14.dp), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f)); Spacer(Modifier.width(48.dp))
             }
-            Text(if (followed) "已关注" else "+ 关注",
-                Modifier.clip(CircleShape)
-                    .background(if (followed) Color.Black.copy(alpha = .55f) else demoPurple)
-                    .clickable(enabled = !followBusy, onClick = onFollow)
-                    .padding(horizontal = 9.dp, vertical = 6.dp),
-                color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.width(5.dp))
-            Row(Modifier.clip(CircleShape)
-                .background(Color.Black.copy(alpha = .46f)).clickable { onPanel("rank") }
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Star, null, Modifier.size(12.dp), tint = Color(0xFFFFD25F))
-                Text("日榜", color = Color.White, fontSize = 10.sp)
+            LiveEnterButton(onEnter, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 165.dp))
+            Column(Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("直播中", Modifier.clip(RoundedCornerShape(5.dp)).background(demoPurple).padding(8.dp, 4.dp), color = Color.White, fontSize = 12.sp)
+                Text("@" + room.host, color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text(room.title, color = Color.White, fontSize = 15.sp)
             }
-            Spacer(Modifier.width(5.dp))
-            Row(Modifier.clip(CircleShape)
-                .background(Color.Black.copy(alpha = .46f)).clickable { onPanel("viewers") }
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Visibility, null, Modifier.size(12.dp), tint = Color.White)
-                Spacer(Modifier.width(3.dp))
-                Text("${room.viewers}", color = Color.White, fontSize = 10.sp)
-            }
+            return@Box
         }
-        Row(Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(start = 16.dp, top = 119.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("直播演示", Modifier.clip(RoundedCornerShape(4.dp))
-                .background(Color(0xFFE84670)).padding(horizontal = 7.dp, vertical = 3.dp),
-                color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            Text("本地示例画面", color = Color.White.copy(alpha = .82f), fontSize = 11.sp)
-        }
+        LiveRoomHeader(LiveHeaderPerson(room.host, poster = room.poster), likes.toString() + " 本场点赞",
+            followed, followBusy, true, room.viewers.toString(),
+            demoRooms.take(3).map { LiveHeaderPerson(it.host, poster = it.poster) },
+            onProfile = { onPanel("profile") }, onFollow = onFollow, onRank = { onPanel("rank") },
+            onViewers = { onPanel("viewers") }, onClose = onClose, onAnnouncement = { onPanel("announcement") },
+            modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing).padding(12.dp))
         Column(Modifier.align(Alignment.BottomStart).fillMaxWidth(.78f)
             .navigationBarsPadding()
             .padding(start = 16.dp, bottom = controlsBottom + 71.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (entryNotice) LiveEntryNotice(LIVE_ENTRY_NOTICE + "\n房间公告：" + room.welcome)
             messages.forEach { (name, content) ->
                 Row(Modifier.clip(RoundedCornerShape(8.dp))
                     .background(Color.Black.copy(alpha = .42f))
@@ -566,6 +550,7 @@ private fun DemoAction(icon: androidx.compose.ui.graphics.vector.ImageVector, la
 }
 
 @Composable
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 private fun DemoLiveVideo(video: Int) {
     val context = LocalContext.current
     val player = remember(video) {
@@ -590,6 +575,10 @@ private fun DemoLivePanel(panel: String, room: DemoRoom, gifts: List<Gift>, sele
     cohostQueued: Boolean, queueProgress: Int,
     onApplyCohost: () -> Unit, onWithdrawCohost: () -> Unit, onAdvanceQueue: () -> Unit,
     onGiftSelected: (String) -> Unit, onGiftSent: (Gift) -> Unit, onDismiss: () -> Unit) {
+    if (panel == "announcement") {
+        LiveRoomAnnouncementDialog(room.host, room.welcome, onDismiss)
+        return
+    }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .54f)).clickable(onClick = onDismiss)) {
         if (panel == "gift") {
             Box(Modifier.align(Alignment.BottomCenter).clickable {}) {
