@@ -431,12 +431,15 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         Unit
     }
 
-    private fun parseMomentComment(row: JSONObject): MomentComment {
+    internal fun parseMomentComment(row: JSONObject): MomentComment {
         val author = row.getJSONObject("author")
+        val parentId = row.optString("parent_id").takeIf { it.matches(Regex("[1-9][0-9]{0,19}")) }
+        val replyToUsername = if (parentId == null || row.isNull("reply_to_username")) null
+            else row.optString("reply_to_username").takeIf(String::isNotBlank)
         return MomentComment(row.getString("id"), row.getLong("user_id"), author.getString("username"), row.getString("content"),
-            row.optString("created_at"), row.optBoolean("is_mine"), author.optString("avatar").takeIf(String::isNotBlank),
-            row.optString("parent_id").takeIf { it.matches(Regex("[1-9][0-9]{0,19}")) },
-            row.optString("reply_to_username").takeIf(String::isNotBlank), row.optLong("reply_count"))
+            row.optString("created_at"), row.optBoolean("is_mine"),
+            if (author.isNull("avatar")) null else author.optString("avatar").takeIf(String::isNotBlank),
+            parentId, replyToUsername, row.optLong("reply_count"))
     }
 
     suspend fun momentComments(token: String, momentId: String, beforeId: String = ""): Pair<List<MomentComment>, String> = withContext(Dispatchers.IO) {

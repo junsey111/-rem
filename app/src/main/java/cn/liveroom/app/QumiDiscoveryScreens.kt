@@ -545,7 +545,7 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
                         }
                     }) { Text("$message · 重试") } } }
                     items(comments, key = { it.id }) { comment ->
-                        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                             MomentCommentRow(comment, momentNow, onReply = { replyTarget = comment; focusRequester.requestFocus(); keyboard?.show() },
                                 onDelete = { deleteTarget = comment }, enabled = !busy)
                             if (comment.replyCount > 0 || comment.id in expandedRoots) {
@@ -684,18 +684,20 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
 @Composable
 private fun MomentCommentRow(comment: MomentComment, now: java.time.Instant, onReply: () -> Unit, onDelete: () -> Unit,
     enabled: Boolean, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth().padding(vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Row(modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         QumiUserAvatar(comment.avatar, comment.username, Modifier.size(34.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(comment.username, color = DiscoveryInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            comment.replyToUsername?.let { Text("回复 @$it", color = DiscoveryAccent, fontSize = 12.sp) }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(comment.username, color = DiscoveryInk, fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold)
+            if (comment.parentId != null) comment.replyToUsername?.let {
+                Text("回复 @$it", color = DiscoveryAccent, fontSize = 12.sp, lineHeight = 16.sp)
+            }
             Text(comment.content, color = DiscoveryInk, fontSize = 14.sp, lineHeight = 20.sp)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(momentCommentTime(comment.createdAt, now), color = DiscoveryMuted, fontSize = 11.sp)
-                TextButton(onClick = onReply, enabled = enabled,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)) { Text("回复", color = DiscoveryAccent, fontSize = 11.sp) }
-                if (comment.isMine) TextButton(onClick = onDelete, enabled = enabled,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("删除", color = DiscoveryMuted, fontSize = 11.sp) }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(momentCommentTime(comment.createdAt, now), color = DiscoveryMuted, fontSize = 11.sp, lineHeight = 14.sp)
+                Text("回复", Modifier.clip(RoundedCornerShape(4.dp)).clickable(enabled = enabled, onClick = onReply)
+                    .padding(vertical = 4.dp), color = DiscoveryAccent, fontSize = 11.sp, lineHeight = 14.sp)
+                if (comment.isMine) Text("删除", Modifier.clip(RoundedCornerShape(4.dp)).clickable(enabled = enabled, onClick = onDelete)
+                    .padding(vertical = 4.dp), color = DiscoveryMuted, fontSize = 11.sp, lineHeight = 14.sp)
             }
         }
     }
