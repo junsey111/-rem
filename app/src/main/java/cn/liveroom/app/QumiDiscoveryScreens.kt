@@ -592,7 +592,7 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
             }
             actionError?.let { Text(it, Modifier.padding(horizontal = 18.dp, vertical = 4.dp), color = Color(0xFFB4233B), fontSize = 12.sp) }
             HorizontalDivider(color = Color(0xFFF0F0F2))
-            BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+            BoxWithConstraints(Modifier.fillMaxWidth().padding(start = 14.dp, top = 14.dp, end = 14.dp, bottom = 2.dp)) {
                 val inputWidth = minOf(maxWidth * .68f, 250.dp)
                 Column {
                     replyTarget?.let { target -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -607,10 +607,10 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
                                 .onFocusChanged { focused = it.isFocused }
                                 .clip(CircleShape).background(Color(0xFFF8F6FC))
                                 .border(1.dp, if (focused) DiscoveryAccent else Color(0xFFE6DDF6), CircleShape)
-                                .padding(horizontal = 16.dp, vertical = 11.dp),
+                                .padding(horizontal = 16.dp),
                             textStyle = TextStyle(color = DiscoveryInk, fontSize = 14.sp),
                             cursorBrush = SolidColor(DiscoveryAccent),
-                            decorationBox = { inner -> Box {
+                            decorationBox = { inner -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
                                 if (content.isEmpty()) Text("说点友善的话…", color = DiscoveryMuted, fontSize = 14.sp)
                                 inner()
                             } },
@@ -640,7 +640,7 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
                                     .onFailure { actionError = it.message ?: "评论发送失败，请重试" }
                                 busy = false
                             }
-                        }, modifier = Modifier.width(70.dp).height(42.dp), shape = CircleShape,
+                        }, modifier = Modifier.width(70.dp).height(44.dp), shape = CircleShape,
                             contentPadding = PaddingValues(0.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = DiscoveryAccent)) {
                             Text(if (busy) "发送中" else "发送", fontSize = 13.sp)
