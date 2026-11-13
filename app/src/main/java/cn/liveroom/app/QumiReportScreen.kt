@@ -36,6 +36,8 @@ internal fun QumiReportScreen(
     busy: Boolean = false,
     error: String? = null,
     pending: Boolean = false,
+    evidenceReference: String? = null,
+    onPickImage: (() -> Unit)? = null,
     onBack: () -> Unit,
     onSubmit: (String) -> Unit,
     onRetry: () -> Unit = {},
@@ -94,9 +96,14 @@ internal fun QumiReportScreen(
                 Text("图片", fontSize = 16.sp, color = LiveStyle.ink)
                 Spacer(Modifier.height(10.dp))
                 Box(Modifier.size(76.dp).background(LiveStyle.surface, RoundedCornerShape(8.dp))
-                    .clickable(enabled = !busy && !pending) { imageNotice = true }, contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Add, "添加举报图片", tint = LiveStyle.muted, modifier = Modifier.size(24.dp))
+                    .clickable(enabled = !busy && !pending) { onPickImage?.invoke() ?: run { imageNotice = true } }, contentAlignment = Alignment.Center) {
+                    if (evidenceReference.isNullOrBlank()) {
+                        Icon(Icons.Rounded.Add, "添加举报图片", tint = LiveStyle.muted, modifier = Modifier.size(24.dp))
+                    } else {
+                        Text("已添加\n图片证据", color = LiveStyle.accent, fontSize = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    }
                 }
+                evidenceReference?.takeIf { it.isNotBlank() }?.let { Text("图片证据已安全上传", color = LiveStyle.muted, fontSize = 12.sp) }
             }
         }
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(LiveStyle.surface).padding(horizontal = 16.dp, vertical = 12.dp)) {
