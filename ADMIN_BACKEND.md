@@ -4,21 +4,24 @@
 
 ## 当前入口
 
-- Web：<http://localhost:8000/>
+- Web：本轮为 <http://127.0.0.1:8002/>；开发服务器从 8000 开始寻找可用端口，以启动日志为准。
 - 本地 Billd 管理 API：`127.0.0.1:24300`
 - 本地 Revenue：`127.0.0.1:24808`
 - 本地管理员 ID：`1`。密码和本地服务密钥保存在被 Git 忽略的 `.local/admin-local.json`，不要上传该文件。
 - 专用 MySQL：`127.0.0.1:23306`。本地两个数据库为 `live_ops_local_billd`、`live_ops_local_revenue`。本次没有创建 VM 管理员、修改 VM 账号或部署新版本到 VM。
+- 专用 Redis：`127.0.0.1:26379`。登录和新增业务依赖该连接；不要与其他应用的 Redis 数据混用。
 
 ## 重启
 
-需要已安装 MySQL 8、Node、pnpm、Go。专用 MySQL 的数据目录位于当前机器的 `%LOCALAPPDATA%/Temp/live-rem-mysql-integration/data`，不是系统其他 MySQL 的数据目录。当前已初始化，不要再次初始化或清空它。
+需要已安装 MySQL 8、Redis、Node、pnpm、Go。当前专用 MySQL 的数据目录位于 `$env:USERPROFILE/.codex/live-validation/mysql-data`（Windows mysqld 在中文路径下无法正常启动），不是系统其他 MySQL 的数据目录。当前已初始化，不要再次初始化或清空它。新机器须建立自己的专用本地实例。
 
 先启动专用 MySQL（如果 23306 已在监听则跳过）：
 
 ```powershell
-& 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqld.exe' --no-defaults "--datadir=$env:LOCALAPPDATA/Temp/live-rem-mysql-integration/data" --port=23306 --bind-address=127.0.0.1 --mysqlx=0 --console
+& 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqld.exe' --no-defaults "--datadir=$env:USERPROFILE/.codex/live-validation/mysql-data" --port=23306 --bind-address=127.0.0.1 --mysqlx=0 --console
 ```
+
+在另一个终端用已安装的 `redis-server` 启动 `--bind 127.0.0.1 --port 26379 --save "" --appendonly no`，如果该端口已监听则跳过。这是无持久化的本地验证实例，正式短信登录应使用受保护的服务端 Redis。
 
 在仓库根目录另开终端启动 API：
 
@@ -33,7 +36,8 @@ node scripts/start-admin-local.cjs
 
 ```powershell
 cd third_party/billd-live
-pnpm start
+$env:BILLD_API_URL='http://127.0.0.1:24300'
+pnpm exec webpack serve --config ./script/config/webpack.common.ts --env development --host 127.0.0.1
 ```
 
 Web 开发服务器只绑定回环地址。API 脚本创建或复用专用本地管理员，使用限定两个数据库的账号运行服务，Revenue 执行正式迁移但跳过演示种子。该入口只启动管理所需 API，不代表本机完整音视频、OpenIM、Kafka 和结算 worker 均在运行。
@@ -48,8 +52,14 @@ Web 开发服务器只绑定回环地址。API 脚本创建或复用专用本地
 | 主播审核、举报 | 用户提交、材料引用、审核/驳回、举报处理，按真实状态展示 |
 | 提现、退款 | 申请、审核、驳回、人工回执登记；后台保存资金规则与版本审计 |
 | 公屏管理 | 查询房间历史、分页、按分钟禁言/解禁、隐藏消息、处置记录 |
+| 平台资质 | 编辑主体与许可证信息、发布/撤回；每次保存均带原因并写入幂等审计 |
+| 动态、评论审核 | 独立待审列表、通过/驳回/隐藏/恢复；记录审核人、时间、原因，作者删除不可恢复 |
+| 公告、任务 | 发布平台公告并触发可选推送；配置任务开关和金币奖励 |
+| 公会、贵族、装扮 | 查看/处置公会与入会申请；维护贵族等级和装扮商品目录 |
 
 所有运营接口要求当前有效账号在数据库中拥有 `SUPER_ADMIN`，不接受客户端伪造的 operator_id。账号禁用与会话撤销、审计在同一事务提交，后续 worker 将禁用状态同步到 Revenue 并关闭会话。恢复账号不会复活旧 token。
+
+平台资质接口为 `GET /operations/qualification`、`PUT /operations/qualification`，客户端读取 `GET /qualification`。公开发布前必须填写平台名称、主体名称和登记注册号；没有真实资料时保持未发布，不填示例或虚构许可证。既有数据库先备份并执行 Billd `migrations/20261113_platform_qualification.sql`，再部署服务端；新库由 Billd 模型初始化建表。资质保存要求 UUID v4 `request_id` 和修改原因，重复请求单号只返回原审计结果。
 
 ## 资金规则和边界
 
@@ -102,6 +112,14 @@ Billd 媒体核对进程现会分页读取 Revenue 中 ACCEPTED/MUTED 席位，�
 验证：独立 MySQL 测试覆盖宽限、重连、探测中断、暂停席位、终态、关播、权限撤销及重新申请；Billd 测试覆盖分页、真实会话校验、房间消失及探测失败不报告离线。Go 全量测试和 Billd 构建、媒体权限相关测试通过。这些自动测试不代替 Android 双设备弱网验收。
 
 
-本次已部署到 Debian `192.168.254.132`，迁移 00024 应用成功；实际 LiveKit 控制查询和席位核对进程执行通过（部署核查时活动连麦席位为 0，没有向正式库插入模拟席位）。管理页返回 200，未登录后台代理和媒体访问返回 401。数据库及镜像备份位于 `/opt/live-platform/.deploy/before-cohost-presence-20261104`。真实资金和实名开关保持关闭。
+历史部署记录（2026-11-04，并非本轮部署）：Debian `192.168.254.132` 的迁移 00024 当时应用成功；LiveKit 控制查询和席位核对进程执行通过（核查时活动连麦席位为 0，没有向正式库插入模拟席位）。管理页返回 200，未登录后台代理和媒体访问返回 401。数据库及镜像备份位于 `/opt/live-platform/.deploy/before-cohost-presence-20261104`。真实资金和实名开关保持关闭。
 
 同时修复 Nginx 对 Billd 容器地址的永久缓存：后台与媒体网关使用 Docker DNS 和可动态解析的 upstream，后端重建换地址后会重新解析。两份配置已通过部署环境 `nginx -t`。
+
+## 2026-11-13 当前本地验收
+
+管理/API 启动器已加载全部新增业务路由和 Redis。`node scripts/smoke-admin-local.cjs` 实测 27 个管理/用户接口，覆盖普通注册、普通账号拒绝管理请求、文字动态待审/审核可见/删除、退出登录后旧会话失效；不充值、不发放奖励，不触发真实渠道。Web 已实际登录并核对任务类型、动态审核与服务接入页面。动态审核增加已通过内容的隐藏入口，新文字和图片均先待审。
+
+Revenue 真实 MySQL 全量测试通过，新增任务奖励、商城购买/撤销的 8 路并发同单回放与余额、账本平衡检查；修复同单跨任务复用的 500、资料生日保存 SQL 参数错误。Billd 40 项测试中 39 通过、1 因独立 LiveKit 未运行跳过。Android assembleDebug、lintDebug 与 JVM 测试通过；Web typecheck 和生产构建通过。
+
+本轮没有重新部署 VM。短信厂商、真实支付、实名、系统离线推送、完整媒体/消息链路与 Android 双设备操作尚未验收；评论已补齐独立待审队列、通过/驳回/隐藏/恢复以及作者删除保护；客户端展示待审和驳回状态。微信认证、真人认证和语音签名认证也未接入实际服务。以上限制不应描述成“全部功能已完成”。

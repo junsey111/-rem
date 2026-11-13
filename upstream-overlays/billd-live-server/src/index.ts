@@ -11,6 +11,7 @@ import { catchErrorMiddle, corsMiddle } from '@/app/app.middleware';
 import errorHandler from '@/app/handler/error-handle';
 import { apiBeforeVerify } from '@/app/verify.middleware';
 import { connectMysql } from '@/config/mysql';
+import { connectRedis } from '@/config/redis';
 import { connectNodeMediaServer } from '@/config/stream';
 import { connectWebSocket } from '@/config/websocket';
 import { startMediaReconciliation } from '@/service/media-authority';
@@ -77,6 +78,7 @@ function runServer() {
       app.use(apiBeforeVerify); // 注意：需要在所有路由加载前使用这个中间件
       await Promise.all([
         connectMysql(), // 连接mysql
+        connectRedis(),
       ]);
       // Fresh Compose volumes need the upstream Sequelize models to create
       // their tables before the API starts accepting requests. Set

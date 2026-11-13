@@ -65,7 +65,6 @@ import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Store
 import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.rounded.Videocam
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -111,9 +110,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.time.LocalDate
 import java.time.YearMonth
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.UUID
 
 internal enum class QumiAccountPage { MINE, PROFILE, PROFILE_EDIT, PUBLIC_PROFILE, WALLET, BILLS, SETTINGS, ABOUT, REFERRAL, COSTUME, YOUTH, LEVEL, TASKS, GUARD, HOST, IDENTITY, CONTACTS, VISITORS, EVENTS, ANNOUNCEMENT_DETAIL, NOTIFICATIONS, GUILD, NOBLE, FRIENDS, BEAUTY, BLACKLIST, HELP, QUALIFICATION, SEARCH, SECRETARY_CHAT, SECRETARY_SETTINGS, SECRETARY_PROFILE }
 
@@ -153,7 +155,9 @@ internal fun QumiMineScreen(
     ) {
         item {
             Row(Modifier.fillMaxWidth().clickable(onClick = onProfile).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Image(painterResource(R.drawable.qumi_default_avatar), contentDescription = "个人头像", contentScale = ContentScale.Crop, modifier = Modifier.size(82.dp).clip(CircleShape))
+                QumiUserAvatar(session.token, session.avatar, Modifier.size(82.dp).clip(CircleShape), "个人头像") {
+                    Image(painterResource(R.drawable.qumi_default_avatar), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                }
                 Column(Modifier.weight(1f).padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(session.username, color = QumiText, fontSize = 25.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -331,7 +335,7 @@ internal fun QumiContactsScreen(token: String, initialTab: Int, onBack: () -> Un
             else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 items(users, key = { it.id }) { user ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(46.dp).clip(CircleShape).background(Color(0xFFECE8FF)).clickable { onOpenUser(user.id.toString(), user.username) }, contentAlignment = Alignment.Center) {
+                        QumiUserAvatar(token, user.avatar, Modifier.size(46.dp).clip(CircleShape).background(Color(0xFFECE8FF)).clickable { onOpenUser(user.id.toString(), user.username) }, "${user.username}的头像") {
                             Text(user.username.take(1), color = Color(0xFF7864E8), fontSize = 18.sp)
                         }
                         Column(Modifier.weight(1f).clickable { onOpenUser(user.id.toString(), user.username) }.padding(start = 12.dp)) {
@@ -385,7 +389,7 @@ internal fun QumiVisitorsScreen(token: String, onBack: () -> Unit, onOpenUser: (
             visitors.isNotEmpty() -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 items(visitors, key = { it.user.id }) { visitor ->
                     Row(Modifier.fillMaxWidth().clickable { onOpenUser(visitor.user.id.toString(), visitor.user.username) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(46.dp).clip(CircleShape).background(Color(0xFFECE8FF)), contentAlignment = Alignment.Center) {
+                        QumiUserAvatar(token, visitor.user.avatar, Modifier.size(46.dp).clip(CircleShape).background(Color(0xFFECE8FF)), "${visitor.user.username}的头像") {
                             Text(visitor.user.username.take(1), color = Color(0xFF7864E8), fontSize = 18.sp)
                         }
                         Column(Modifier.weight(1f).padding(start = 12.dp)) {
@@ -409,24 +413,37 @@ internal fun QumiVisitorsScreen(token: String, onBack: () -> Unit, onOpenUser: (
 }
 
 @Composable
-internal fun QumiAnnouncementListScreen(onBack: () -> Unit, onOpenDetail: (Int) -> Unit) {
-    val notices = listOf(
-        Triple("绿色直播文明公约", "2025-09-28", R.drawable.qumi_announcement_covenant),
-        Triple("严厉打击违规交易", "2025-09-28", R.drawable.qumi_announcement_trading),
-    )
+internal fun QumiAnnouncementListScreen(token: String, onBack: () -> Unit, onOpenDetail: (PlatformAnnouncementItem) -> Unit) {
+    var notices by remember { mutableStateOf<List<PlatformAnnouncementItem>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val api = remember { LivePlatformApi() }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(token) {
+        loading = true
+        error = null
+        runCatching { api.announcements(token) }.onSuccess { notices = it }.onFailure { error = it.message ?: "公告加载失败" }
+        loading = false
+    }
     Column(Modifier.fillMaxSize().background(Color(0xFFF5F5F6))) {
         QumiPageTitle("平台活动", onBack)
         LazyColumn(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            items(notices.size) { index ->
-                val (title, date, image) = notices[index]
+            if (loading) item { Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+            error?.let { message -> item { Text(message, Modifier.padding(24.dp), color = Color(0xFF8B8FA0)) } }
+            if (!loading && error == null && notices.isEmpty()) item {
+                Text("暂无平台公告", Modifier.padding(24.dp), color = Color(0xFF8B8FA0))
+            }
+            items(notices, key = { it.id }) { notice ->
                 Column {
-                    Text(date, Modifier.fillMaxWidth().padding(vertical = 18.dp), color = Color(0xFF99999D), fontSize = 16.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    Text(notice.createdAt.take(10), Modifier.fillMaxWidth().padding(vertical = 18.dp), color = Color(0xFF99999D), fontSize = 16.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     Surface(Modifier.fillMaxWidth(), color = Color.White, shape = RoundedCornerShape(12.dp)) {
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            Image(painterResource(image), contentDescription = title, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxWidth().height(112.dp).clip(RoundedCornerShape(9.dp)))
-                            Text(title, Modifier.padding(start = 6.dp, top = 14.dp, bottom = 12.dp), color = QumiText, fontSize = 18.sp)
+                            Text(notice.title, Modifier.padding(start = 6.dp, top = 14.dp, bottom = 6.dp), color = QumiText, fontSize = 18.sp)
+                            Text(notice.summary.ifBlank { "平台公告" }, Modifier.padding(start = 6.dp, bottom = 12.dp), color = Color(0xFF888A93), fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             HorizontalDivider(color = QumiLine)
-                            Row(Modifier.fillMaxWidth().height(52.dp).clickable { onOpenDetail(index) }, verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.fillMaxWidth().height(52.dp).clickable {
+                                scope.launch { runCatching { api.markAnnouncementRead(token, notice.id) }; onOpenDetail(notice) }
+                            }, verticalAlignment = Alignment.CenterVertically) {
                                 Text("查看详情", Modifier.weight(1f), color = Color(0xFFB0B0B3), fontSize = 18.sp)
                                 Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = QumiText)
                             }
@@ -439,67 +456,9 @@ internal fun QumiAnnouncementListScreen(onBack: () -> Unit, onOpenDetail: (Int) 
 }
 
 @Composable
-internal fun QumiAnnouncementDetailScreen(title: String, index: Int, onBack: () -> Unit) {
-    val body = if (index == 0) listOf(
-        "为保障社区用户的良好体验，维护平台的正常秩序，根据《计算机信息网络国际联网安全保护管理办法》、《互联网信息服务管理办法》、《互联网电子公告服务管理规定》、《全国人民代表大会常务委员会关于维护互联网安全的决定》、《互联网新闻信息服务管理规定》、《文化部关于加强网络表演管理工作的通知》《关于加强网络视听节目直播服务管理有关问题的通知》等相关法律规定，以及《服务条款》和《隐私政策》等相关协议和政策，特制定本公约。",
-        "官方提供视频直播服务以及围绕视频直播展开的社区化服务，旨在为用户创建公平、快乐、自由、健康的网络社区。",
-        "以下条款适用于平台所有主播及用户，适用于所有直播形式。",
-        "用户说明：",
-        "一、凡接受《服务条款》、《用户隐私政策》和本公约并成功注册的，都是官方用户。",
-        "二、用户的尊严、自由和权利受社区平等保护。",
-        "三、用户的经验值和其他虚拟财产受社区保护。",
-        "四、用户有依社区规则在社区内活动和发表言论的权利。",
-        "五、用户的个人隐私受社区保护，社区须采取严格措施，确保用户隐私信息不被泄露。",
-        "六、用户须妥善保管账号和密码；不应将账号、密码转让、出租、出借、赠与或以其他形式转移给他人使用。",
-        "七、用户依社区管理规则规范产生的行为，受社区保护。用户从事违反法律法规及社区管理规则规范的行为活动将受到相应处罚。",
-        "八、用户的任何权利，以不影响其他用户的相同权利为限。社区规则可以对这些限制做出具体的规定。",
-        "九、禁止军人直播或利用人体缺陷或者以展示人体变异等方式招徕用户。",
-        "十、未经批准，任何机构和个人不得在平台使用“电视台”“广播电台”“电台”“TV”等广播电视专有名称开展直播。",
-        "十一、任何机构和个人不得通过平台对重大政治、军事、经济、社会、文化、等活动或事件进行音视频直播。",
-        "十二、平台禁止讨论涉及中央领导人和亲属的违规营销信息",
-        "言论规则：",
-        "一、用户在社区内的言论(包括但不限于文字、图片、音频、视频)不得违反国家的法律法规。根据《互联网信息服务管理办法》，用户的言论不得含有下列内容：",
-        "1）违反宪法确定的基本原则的；",
-        "2）危害国家安全，泄露国家秘密，颠覆国家政权，破坏国家统一的；",
-        "3）损害国家荣誉和利益的；",
-        "4）煽动民族仇恨、民族歧视、破坏民族团结的；",
-        "5）破坏国家宗教政策，宣扬邪教和封建迷信的；",
-        "6）散布谣言，扰乱社会秩序，破坏社会稳定的；",
-        "7）散布淫秽、色情、赌博、暴力、凶杀、恐怖或者教唆犯罪的，含有任何性或性暗示的；",
-        "8）侮辱或者诽谤他人，侵害他人合法权益的，含有辱骂、恐吓、威胁内容的；",
-        "9）煽动非法集会、结社、游行、示威、聚众扰乱社会秩序的；",
-        "10）其他可能引起或已经引起不良影响的政治话题；",
-        "11）非法民间组织的名义活动；",
-        "12）发送骚扰、垃圾广告、恶意诋毁、诱骗信息的；",
-        "13）干扰本服务正常运营和侵犯其他用户或第三方合法权益内容的信息；",
-        "14）严禁通过任何方式传播毒品、展示枪支、管制刀具等；",
-        "15）含有法律、行政法规禁止的其他内容的信息；",
-        "二、用户的言论应符合社区规则规定，发言前应了解相关规定，不发表与社区规则相违背的言论。",
-        "三、用户应遵守社区秩序和网络道德，杜绝污言秽语，杜绝刷屏、恶意连麦等影响他人正常使用的行为。",
-        "四、用户应尊重他人隐私，除非危及公众利益或经当事人同意，不得公开他人姓名、住址、电话等个人资料及其他隐私信息。",
-        "五、未经社区许可，禁止发布广告或其他以获取商业利益为目的的内容。",
-        "六、用户在社区内发表违规言论的，社区管理人员有权删除其全部或部分言论，并视情节和危害结果，对其给予适当处罚。",
-        "七、用户对自己的言论承担全部责任。",
-        "社区管理：",
-        "存在以上严禁行为的，平台有权视情节轻重，作出严格的处罚，包括但不限于禁言、删除信息、警告、处以7天、30天或永久封号的处理。",
-        "情节内容特别严重的平台将上报公安机关进行处罚。平台用户可使用“举报”功能对违规的主播、用户进行举报。直播平台核实后会立即对违规行为进行处理。平台将采取技术审核过滤、人工主动巡查、用户投诉等方式进行集中处置。",
-        "在平台开通直播功能的用户，有义务配合社区营造一个文明向上的社区生态环境，直播用户应自觉维护好直播间的气氛，引导直播间的用户合法合规参与直播间互动。",
-        "本公约的效力仅限于虚拟社区内部，不得解释为可以对用户或他人的现实权利和义务产生影响。本公约的各项条款，以符合国家法律法规为基本原则，若有不一致之处，以国家的法律法规为解释准则。用户因使用社区服务产生的现实权利和义务受国家法律法规、《服务条款》、《用户隐私政策》的保护和制约。",
-        "本公约解释权归官方所有。官方有义务将之不断完善并及时公示。",
-        "社区其他任何规定、条例与本公约冲突时，以本公约为准。",
-        "官方运营团队",
-        "2025年4月",
-    ) else listOf(
-        "趣蜜一直以来致力于给用户提供一个绿色、健康的直播交友环境，打造一个真实直播交友平台。",
-        "坚决反对任何违规交易虚拟礼物，包括但不限于如下等行为：",
-        "1、以任何形式自行或诱导、撮合、帮助、教唆他人进行违规交易或赌博的行为;",
-        "2、以任何形式发布、传播与违规交易或赌博相关的违法信息；",
-        "3、以任何形式任何理由在平台内进行刷礼返现行为;",
-        "4、其他违反法律法规及平台规则涉嫌违规交易、赌博的行为。",
-        "请广大用户自觉维护平台秩序，共同创造良好社交环境！任何人不得以任何形式、手段违规交易本平台的虚拟礼物及其他权益、资产等，或利用虚拟礼物及其他利益、资产实施违法违规行为；",
-        "趣蜜将在全站范围内进一步开展打击违规交易行为的专项合规巡查行动，如发现任何用户存在相关违规行为，一经查实一律从严处罚(包括但不限于封停账号、限制相关功能、扣除收益等)或移交司法机关追究相关法律责任!",
-        "官方运营团队",
-        "2025年4月",
+internal fun QumiAnnouncementDetailScreen(title: String, content: String? = null, onBack: () -> Unit) {
+    val body = content?.trim()?.takeIf { it.isNotEmpty() }?.split("\n")?.filter { it.isNotBlank() } ?: listOf(
+        "公告正文暂不可用，请返回公告列表后重试。",
     )
     Column(Modifier.fillMaxSize().background(Color.White)) {
         Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -739,9 +698,99 @@ internal fun QumiSecretaryChatScreen(onBack: () -> Unit, onSettings: () -> Unit)
 }
 
 @Composable
-internal fun QumiSecretarySettingsScreen(onBack: () -> Unit, onOpenProfile: () -> Unit) {
-    var showReport by remember { mutableStateOf(false) }
-    if (showReport) QumiSystemReportDialog { showReport = false }
+internal fun QumiSecretarySettingsScreen(
+    token: String,
+    api: LivePlatformApi,
+    gateway: OpenImGateway,
+    recipientId: String?,
+    messageReady: Boolean,
+    onBack: () -> Unit,
+    onOpenProfile: () -> Unit,
+    onReport: () -> Unit,
+    onHistoryCleared: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var blocked by remember(token, recipientId) { mutableStateOf(false) }
+    var loadingBlock by remember(token, recipientId) { mutableStateOf(true) }
+    var busy by remember { mutableStateOf(false) }
+    var confirmBlock by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(token, recipientId) {
+        loadingBlock = true
+        error = null
+        val id = recipientId?.toLongOrNull()
+        if (id == null) {
+            error = "客服账号未配置"
+            loadingBlock = false
+            return@LaunchedEffect
+        }
+        try {
+            blocked = api.blockedUsers(token).any { it.id == id }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            error = failure.message ?: "屏蔽状态暂时无法读取"
+        } finally {
+            loadingBlock = false
+        }
+    }
+    fun setBlocked(value: Boolean) {
+        val id = recipientId?.toLongOrNull() ?: return
+        if (busy) return
+        busy = true
+        error = null
+        scope.launch {
+            try {
+                api.setBlocked(token, id, value)
+                blocked = value
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                error = failure.message ?: "屏蔽操作失败，请重试"
+            } finally {
+                busy = false
+            }
+        }
+    }
+    if (confirmBlock) QumiConfirmSheet(
+        title = "拉黑趣蜜小秘书？",
+        message = "拉黑后你将无法继续向该账号发送消息，可在黑名单设置中解除。",
+        confirmLabel = if (busy) "处理中" else "拉黑",
+        busy = busy,
+        onDismiss = { if (!busy) confirmBlock = false },
+        onConfirm = { confirmBlock = false; setBlocked(true) },
+    )
+    if (confirmClear) QumiConfirmSheet(
+        title = "清除聊天记录",
+        message = "消息服务会清除这个会话的聊天记录，此操作无法撤销。",
+        confirmLabel = if (busy) "正在清除…" else "清除记录",
+        busy = busy,
+        onDismiss = { if (!busy) confirmClear = false },
+        onConfirm = {
+            val id = recipientId
+            if (id.isNullOrBlank() || !messageReady) {
+                error = "消息服务未连接，请连接后重试"
+                confirmClear = false
+            } else {
+                busy = true
+                error = null
+                scope.launch {
+                    try {
+                        gateway.clearConversationHistory(id)
+                        onHistoryCleared()
+                        confirmClear = false
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        error = failure.message ?: "聊天记录清除失败，请重试"
+                    } finally {
+                        busy = false
+                    }
+                }
+            }
+        },
+    )
     Column(Modifier.fillMaxSize().background(Color.White)) {
         QumiPageTitle("设置", onBack)
         Row(Modifier.fillMaxWidth().height(112.dp).clickable(onClick = onOpenProfile).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -753,43 +802,89 @@ internal fun QumiSecretarySettingsScreen(onBack: () -> Unit, onOpenProfile: () -
             Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color.Black)
         }
         Spacer(Modifier.fillMaxWidth().height(11.dp).background(Color(0xFFF5F5F5)))
-        QumiReadOnlyToggleRow("置顶聊天")
-        QumiDivider()
         Row(Modifier.fillMaxWidth().height(66.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("置顶聊天", color = Color.Black, fontSize = 18.sp)
+            Spacer(Modifier.weight(1f))
+            Text("消息页固定置顶", color = Color(0xFF969AA6), fontSize = 14.sp)
+        }
+        QumiDivider()
+        Row(Modifier.fillMaxWidth().height(66.dp).clickable(enabled = messageReady && !busy && recipientId != null) { confirmClear = true }.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("清除聊天记录", color = Color.Black, fontSize = 18.sp)
             Spacer(Modifier.weight(1f))
+            Text(if (!messageReady) "未连接" else if (busy) "处理中" else "", color = Color(0xFF969AA6), fontSize = 14.sp)
             Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color.Black)
         }
         QumiDivider()
-        Row(Modifier.fillMaxWidth().height(66.dp).clickable { showReport = true }.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(66.dp).clickable(onClick = onReport).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("举报", color = Color.Black, fontSize = 18.sp)
             Spacer(Modifier.weight(1f))
             Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color.Black)
         }
         QumiDivider()
-        QumiReadOnlyToggleRow("拉黑")
-    }
-}
-
-@Composable
-private fun QumiReadOnlyToggleRow(title: String) {
-    Row(Modifier.fillMaxWidth().height(66.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, color = Color.Black, fontSize = 18.sp)
-        Spacer(Modifier.weight(1f))
-        androidx.compose.material3.Switch(checked = false, onCheckedChange = {}, enabled = false)
+        Row(Modifier.fillMaxWidth().height(66.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("拉黑", color = Color.Black, fontSize = 18.sp)
+            Spacer(Modifier.weight(1f))
+            if (loadingBlock) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            else Switch(checked = blocked, onCheckedChange = { value -> if (value) confirmBlock = true else setBlocked(false) }, enabled = !busy && recipientId != null)
+        }
+        error?.let { Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
     }
 }
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-internal fun QumiSecretaryProfileScreen(onBack: () -> Unit) {
+internal fun QumiSecretaryProfileScreen(
+    token: String,
+    api: LivePlatformApi,
+    support: ChatRecipient?,
+    onBack: () -> Unit,
+    onReport: () -> Unit,
+) {
     var dynamic by remember { mutableStateOf(false) }
+    var posts by remember { mutableStateOf(emptyList<MomentPost>()) }
+    var nextCursor by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var refresh by remember { mutableIntStateOf(0) }
+    var busyPost by remember { mutableStateOf<String?>(null) }
+    var commentsFor by remember { mutableStateOf<MomentPost?>(null) }
+    val scope = rememberCoroutineScope()
     var showMore by remember { mutableStateOf(false) }
-    var showReport by remember { mutableStateOf(false) }
-    if (showMore) QumiProfileMoreDialog(onDismiss = { showMore = false }, onReport = { showMore = false; showReport = true })
-    if (showReport) QumiSystemReportDialog { showReport = false }
+    if (showMore) QumiProfileMoreDialog(onDismiss = { showMore = false }, onReport = { showMore = false; onReport() })
     val scroll = rememberLazyListState()
     val collapsed by remember { derivedStateOf { scroll.firstVisibleItemIndex >= 2 } }
+    LaunchedEffect(token, support?.userId, dynamic, refresh) {
+        if (!dynamic) return@LaunchedEffect
+        val userId = support?.userId?.toLongOrNull()
+        if (userId == null) {
+            posts = emptyList()
+            nextCursor = ""
+            error = "客服账号未配置"
+            return@LaunchedEffect
+        }
+        loading = true
+        error = null
+        runCatching { api.moments(token, "user", userId = userId) }
+            .onSuccess { (items, cursor) -> posts = items; nextCursor = cursor }
+            .onFailure { posts = emptyList(); nextCursor = ""; error = it.message ?: "动态加载失败" }
+        loading = false
+    }
+    fun loadMore() {
+        val userId = support?.userId?.toLongOrNull() ?: return
+        val cursor = nextCursor
+        if (cursor.isBlank() || loading) return
+        loading = true
+        scope.launch {
+            runCatching { api.moments(token, "user", cursor, userId) }
+                .onSuccess { (items, newCursor) ->
+                    posts = posts + items.filterNot { post -> posts.any { it.id == post.id } }
+                    nextCursor = newCursor
+                    error = null
+                }
+                .onFailure { error = it.message ?: "加载更多动态失败" }
+            loading = false
+        }
+    }
     Column(Modifier.fillMaxSize().background(Color.White)) {
         Box(Modifier.weight(1f)) {
         LazyColumn(state = scroll, modifier = Modifier.fillMaxSize()) {
@@ -828,7 +923,53 @@ internal fun QumiSecretaryProfileScreen(onBack: () -> Unit) {
                     HorizontalDivider(color = Color(0xFFF5F6FA))
                 }
             }
-            if (dynamic) item { QumiEmptyState("动态服务暂未接入") } else item {
+            if (dynamic) {
+                when {
+                    loading && posts.isEmpty() -> item { Box(Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+                    error != null && posts.isEmpty() -> item {
+                        Box(Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) {
+                            TextButton(onClick = { refresh++ }) { Text("${error} · 点击重试") }
+                        }
+                    }
+                    posts.isEmpty() -> item { QumiEmptyState("暂无动态") }
+                    else -> item { Text("动态 · ${posts.size}", Modifier.fillMaxWidth().padding(horizontal = 27.dp, vertical = 16.dp), color = QumiSubtle, fontSize = 13.sp) }
+                }
+                if (error != null && posts.isNotEmpty()) item { Text(error!!, Modifier.padding(horizontal = 27.dp), color = Color(0xFFB4233B), fontSize = 12.sp) }
+                items(posts, key = { it.id }) { post ->
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 27.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (post.content.isNotBlank()) Text(post.content, color = QumiText, fontSize = 15.sp, lineHeight = 22.sp)
+                        post.media.forEach { media ->
+                            MomentMediaImage(token, media, Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(8.dp)))
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(post.createdAt.replace('T', ' ').take(16), Modifier.weight(1f), color = QumiSubtle, fontSize = 12.sp)
+                            TextButton(enabled = busyPost == null, onClick = {
+                                busyPost = post.id
+                                scope.launch {
+                                    runCatching { api.likeMoment(token, post.id, !post.isLiked) }
+                                        .onSuccess {
+                                            posts = posts.map { current ->
+                                                if (current.id == post.id) current.copy(
+                                                    isLiked = !post.isLiked,
+                                                    likeCount = (post.likeCount + if (post.isLiked) -1 else 1).coerceAtLeast(0),
+                                                ) else current
+                                            }
+                                        }
+                                        .onFailure { error = it.message ?: "点赞失败，请重试" }
+                                    busyPost = null
+                                }
+                            }) { Text("${if (post.isLiked) "已赞" else "点赞"} ${post.likeCount}") }
+                            TextButton(onClick = { commentsFor = post }) { Text("评论 ${post.commentCount}") }
+                        }
+                        HorizontalDivider(color = QumiLine)
+                    }
+                }
+                if (nextCursor.isNotBlank()) item {
+                    TextButton(onClick = { loadMore() }, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (loading) "正在加载…" else "加载更多")
+                    }
+                }
+            } else item {
                 Column(Modifier.padding(horizontal = 27.dp).padding(top = 30.dp, bottom = 40.dp)) {
                     Text("认证信息", color = Color.Black, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(26.dp))
@@ -840,19 +981,7 @@ internal fun QumiSecretaryProfileScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(40.dp))
                     Text("个人信息", color = Color.Black, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(32.dp))
-                    listOf("现居：暂无" to "星座：暂无", "身高：暂无" to "体重：暂无", "职业：2131821821" to "年收入：暂无", "婚姻：保密" to "").forEach { (left, right) ->
-                        Row(Modifier.fillMaxWidth()) {
-                            Text(left, Modifier.weight(1f), color = Color(0xFF454A64), fontSize = 24.sp)
-                            Text(right, Modifier.weight(1f), color = Color(0xFF454A64), fontSize = 24.sp)
-                        }
-                        Spacer(Modifier.height(32.dp))
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Text("我的的标签", color = Color.Black, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(68.dp))
-                    Text("交友心声", color = Color.Black, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(32.dp))
-                    Text("想找个有缘且有趣的人，快来联系我吧～", color = Color(0xFF454A64), fontSize = 25.sp)
+                    Text("该账号用于发布平台安全提醒，没有公开个人资料。", color = Color(0xFF454A64), fontSize = 17.sp, lineHeight = 26.sp)
                 }
             }
         }
@@ -877,6 +1006,14 @@ internal fun QumiSecretaryProfileScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+    commentsFor?.let { post ->
+        QumiMomentCommentsSheet(
+            token = token,
+            post = post,
+            onDismiss = { commentsFor = null },
+            onCountChanged = { delta -> posts = posts.map { current -> if (current.id == post.id) current.copy(commentCount = (current.commentCount + delta).coerceAtLeast(0)) else current } },
+        )
     }
 }
 
@@ -942,7 +1079,21 @@ private fun QumiLevelSummary(title: String, level: Int, points: Long, nextPoints
 }
 
 @Composable
-internal fun QumiTaskCenterScreen(token: String, onBack: () -> Unit, onOpenMoments: () -> Unit) {
+internal fun QumiTaskCenterScreen(session: UserSession, onBack: () -> Unit, onOpenMoments: () -> Unit, onOpenDiscovery: () -> Unit, onOpenLive: () -> Unit, onEditProfile: () -> Unit) {
+    val token = session.token
+    val context = LocalContext.current
+    val claimPrefs = remember(session.id) { context.getSharedPreferences("qumi_task_claims", android.content.Context.MODE_PRIVATE) }
+    val taskDate = remember { LocalDate.now(ZoneOffset.UTC).toString() }
+    fun claimPreferenceKey(taskKey: String, claimPeriod: String) = "${session.id}:${if (claimPeriod == "once") "once" else taskDate}:$taskKey"
+    fun claimRequestId(taskKey: String, claimPeriod: String): String {
+        val key = claimPreferenceKey(taskKey, claimPeriod)
+        return claimPrefs.getString(key, null) ?: UUID.randomUUID().toString().also {
+            claimPrefs.edit().putString(key, it).apply()
+        }
+    }
+    fun clearClaimRequestId(taskKey: String, claimPeriod: String) {
+        claimPrefs.edit().remove(claimPreferenceKey(taskKey, claimPeriod)).apply()
+    }
     var selectedCategory by remember { mutableIntStateOf(0) }
     val categories = listOf("日常任务", "新手福利", "直播任务")
     var progress by remember { mutableStateOf<MomentDailyProgress?>(null) }
@@ -994,7 +1145,7 @@ internal fun QumiTaskCenterScreen(token: String, onBack: () -> Unit, onOpenMomen
                             checkinError = null
                             scope.launch {
                                 runCatching { api.submitDailyCheckin(token) }
-                                    .onSuccess { checkin = it }
+                                    .onSuccess { checkin = it; reload++ }
                                     .onFailure { checkinError = it.message ?: "签到失败，请重试" }
                                 checkinBusy = false
                             }
@@ -1039,12 +1190,80 @@ internal fun QumiTaskCenterScreen(token: String, onBack: () -> Unit, onOpenMomen
                                         }
                                         HorizontalDivider(color = QumiLine)
                                     }
-                                    Text("仅展示服务端记录的互动次数；奖励规则尚未配置。", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), color = QumiSubtle, fontSize = 12.sp)
+                                    val dailyTasks = stats.tasks.filter { it.category == "daily" || it.category == "social" }
+                                    if (dailyTasks.isEmpty()) Text("平台尚未配置日常任务。", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), color = QumiSubtle, fontSize = 12.sp)
+                                    else dailyTasks.forEach { task ->
+                                        val taskComplete = task.progress >= task.targetCount
+                                        val completeAction = when (task.key) {
+                                            "follow_user", "first_follow" -> onOpenDiscovery
+                                            "set_city" -> onEditProfile
+                                            "publish_moment", "like_moment", "comment_moment" -> onOpenMoments
+                                            else -> null
+                                        }
+                                        val actionLabel = when (task.key) {
+                                            "follow_user", "first_follow" -> "去关注"
+                                            "set_city" -> "去完善"
+                                            "publish_moment" -> "去发布"
+                                            "like_moment", "comment_moment" -> "去动态"
+                                            else -> "未完成"
+                                        }
+                                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                Text(task.title, color = QumiText, fontSize = 15.sp)
+                                                Text("${task.progress.coerceAtMost(task.targetCount)}/${task.targetCount} · 奖励 ${task.rewardCoins} 金币", color = QumiSubtle, fontSize = 12.sp)
+                                            }
+                                            TextButton(enabled = !task.claimed && (taskComplete || completeAction != null), onClick = {
+                                                if (taskComplete) scope.launch {
+                                                    runCatching { api.claimTask(token, task.key, claimRequestId(task.key, task.claimPeriod)) }
+                                                        .onSuccess { clearClaimRequestId(task.key, task.claimPeriod); reload++ }
+                                                        .onFailure { error = it.message ?: "领取失败，请重试" }
+                                                } else {
+                                                    completeAction?.invoke()
+                                                }
+                                            }) { Text(if (task.claimed) "已领取" else if (taskComplete) "领取" else actionLabel) }
+                                        }
+                                        HorizontalDivider(color = QumiLine)
+                                    }
                                 }
                             }
                         } else {
-                            Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                            val categoryKey = if (selectedCategory == 1) "newcomer" else "live"
+                            val tasks = progress?.tasks.orEmpty().filter { it.category == categoryKey }
+                            if (tasks.isEmpty()) Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
                                 Text("平台尚未配置此类任务", color = QumiSubtle, fontSize = 14.sp)
+                            } else Column {
+                                tasks.forEach { task ->
+                                    val taskComplete = task.progress >= task.targetCount
+                                    val completeAction = when (task.key) {
+                                        "first_follow" -> onOpenDiscovery
+                                        "set_city" -> onEditProfile
+                                        "send_gift", "start_live" -> onOpenLive
+                                        else -> null
+                                    }
+                                    val actionLabel = when (task.key) {
+                                        "first_follow" -> "去关注"
+                                        "set_city" -> "去完善"
+                                        "send_gift" -> "去直播"
+                                        "start_live" -> "去开播"
+                                        else -> "未完成"
+                                    }
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                            Text(task.title, color = QumiText, fontSize = 15.sp)
+                                            Text("${task.progress.coerceAtMost(task.targetCount)}/${task.targetCount} · 奖励 ${task.rewardCoins} 金币", color = QumiSubtle, fontSize = 12.sp)
+                                        }
+                                        TextButton(enabled = !task.claimed && (taskComplete || completeAction != null), onClick = {
+                                            if (taskComplete) scope.launch {
+                                                runCatching { api.claimTask(token, task.key, claimRequestId(task.key, task.claimPeriod)) }
+                                                    .onSuccess { clearClaimRequestId(task.key, task.claimPeriod); reload++ }
+                                                    .onFailure { error = it.message ?: "领取失败，请重试" }
+                                            } else {
+                                                completeAction?.invoke()
+                                            }
+                                        }) { Text(if (task.claimed) "已领取" else if (taskComplete) "领取" else actionLabel) }
+                                    }
+                                    HorizontalDivider(color = QumiLine)
+                                }
                             }
                         }
                     }
@@ -1098,11 +1317,10 @@ internal fun QumiGuardScreen(token: String, onBack: () -> Unit) {
             }
         }
     }
-    if (showRules) AlertDialog(
-        onDismissRequest = { showRules = false },
-        title = { Text("数据说明") },
-        text = { Text("榜单统计当前账号近7日收到的已结算直播礼物，按金币总额排序。列表是礼物记录，不代表平台授予守护身份、特权或奖励。") },
-        confirmButton = { TextButton(onClick = { showRules = false }) { Text("知道了") } },
+    if (showRules) QumiInfoSheet(
+        title = "数据说明",
+        message = "榜单统计当前账号近7日收到的已结算直播礼物，按金币总额排序。列表是礼物记录，不代表平台授予守护身份、特权或奖励。",
+        onDismiss = { showRules = false },
     )
 }
 
@@ -1199,14 +1417,15 @@ internal fun QumiIdentityScreen(
 ) {
     var confirmRealName by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
-    if (confirmRealName) AlertDialog(
-        onDismissRequest = { confirmRealName = false },
-        title = { Text("开始实名认证") },
-        text = { Text("将打开平台配置的认证服务。只有在服务商页面继续后才会提交认证资料；本应用不会收集证件信息。") },
-        confirmButton = { TextButton(enabled = !starting, onClick = { confirmRealName = false; onStartRealName() }) { Text(if (starting) "正在连接…" else "继续") } },
-        dismissButton = { TextButton(onClick = { confirmRealName = false }) { Text("取消") } },
+    if (confirmRealName) QumiConfirmSheet(
+        title = "开始实名认证",
+        message = "将打开平台配置的认证服务。只有在服务商页面继续后才会提交认证资料；本应用不会收集证件信息。",
+        confirmLabel = if (starting) "正在连接…" else "继续",
+        busy = starting,
+        onDismiss = { confirmRealName = false },
+        onConfirm = { confirmRealName = false; onStartRealName() },
     )
-    notice?.let { message -> AlertDialog(onDismissRequest = { notice = null }, title = { Text("认证状态") }, text = { Text(message) }, confirmButton = { TextButton(onClick = { notice = null }) { Text("知道了") } }) }
+    notice?.let { message -> QumiInfoSheet(title = "认证状态", message = message, onDismiss = { notice = null }) }
     val items = listOf(
         Triple("实名认证", "提高交友成功率", Icons.Rounded.Badge),
         Triple("微信认证", "可使用微信进行打款", Icons.Rounded.ChatBubbleOutline),
@@ -1285,6 +1504,7 @@ private fun QumiHostStat(label: String, value: String, modifier: Modifier = Modi
 internal fun QumiPersonalHomeScreen(
     session: UserSession,
     profile: UserProfile?,
+    socialProfile: SocialProfile?,
     level: UserLevel?,
     onBack: () -> Unit,
     onEdit: () -> Unit,
@@ -1320,6 +1540,13 @@ internal fun QumiPersonalHomeScreen(
                 }
                 IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).padding(top = 4.dp)) { Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = Color.White) }
                 TextButton(onClick = onEdit, modifier = Modifier.align(Alignment.TopEnd).padding(top = 4.dp)) { Text("编辑", color = Color.White) }
+                QumiUserAvatar(
+                    session.token, session.avatar,
+                    Modifier.align(Alignment.BottomStart).padding(start = 20.dp, bottom = 8.dp).size(76.dp).clip(CircleShape).background(Color.White),
+                    "个人头像",
+                ) {
+                    Image(painterResource(R.drawable.qumi_default_avatar), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                }
             }
         }
         item {
@@ -1360,9 +1587,18 @@ internal fun QumiPersonalHomeScreen(
             items(dynamicPosts, key = { it.id }) { post ->
                 Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), color = Color(0xFFF7F7F9), shape = RoundedCornerShape(8.dp)) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            QumiUserAvatar(session.token, post.authorAvatar ?: session.avatar, Modifier.size(36.dp).clip(CircleShape).background(Color(0xFFECE8FF)), "个人头像") {
+                                Image(painterResource(R.drawable.qumi_default_avatar), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            }
+                            Column(Modifier.padding(start = 10.dp)) {
+                                Text(session.username, color = QumiText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text(post.createdAt.replace('T', ' ').take(16), color = QumiSubtle, fontSize = 11.sp)
+                            }
+                        }
                         Text(post.content, color = QumiText, fontSize = 15.sp, lineHeight = 22.sp)
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(post.createdAt.replace('T', ' ').take(16), Modifier.weight(1f), color = QumiSubtle, fontSize = 12.sp)
+                            Spacer(Modifier.weight(1f))
                             TextButton(enabled = dynamicBusyPost == null, onClick = {
                                 dynamicBusyPost = post.id
                                 scope.launch {
@@ -1412,19 +1648,25 @@ internal fun QumiPersonalHomeScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         QumiProfileFact("地区", profile?.region)
                         QumiProfileFact("年龄", profile?.age?.let { "$it" })
+                        QumiProfileFact("生日", profile?.birthDate)
                         QumiProfileFact("性别", when (profile?.gender) { "MALE" -> "男"; "FEMALE" -> "女"; else -> null })
+                        socialProfileFacts(socialProfile).forEach { (label, value) -> QumiProfileFact(label, value) }
+                        socialProfile?.profileTags?.takeIf { it.isNotEmpty() }?.let { QumiProfileFact("标签", it.joinToString("、")) }
+                        QumiProfileFact("征友条件", socialProfile?.datingPreferences)
                     }
-                    Text("资料由本人填写，未经身份核验。", color = QumiSubtle, fontSize = 13.sp)
+                    Text("${if (socialProfile?.isPublic == true) "扩展资料对外公开" else "扩展资料仅自己可见"}；所有资料由本人填写，未经身份核验。", color = QumiSubtle, fontSize = 13.sp)
                 }
             }
         }
     }
     deletePost?.let { post ->
-        AlertDialog(
-            onDismissRequest = { if (!deletingPost) deletePost = null },
-            title = { Text("删除这条动态？") },
-            text = { Text("删除后将从动态列表中移除。") },
-            confirmButton = { TextButton(enabled = !deletingPost, onClick = {
+        QumiConfirmSheet(
+            title = "删除这条动态？",
+            message = "删除后将从动态列表中移除。",
+            confirmLabel = "删除",
+            busy = deletingPost,
+            onDismiss = { if (!deletingPost) deletePost = null },
+            onConfirm = {
                 deletingPost = true
                 scope.launch {
                     runCatching { api.deleteMoment(session.token, post.id) }
@@ -1432,8 +1674,7 @@ internal fun QumiPersonalHomeScreen(
                         .onFailure { dynamicError = it.message ?: "删除失败，请重试" }
                     deletingPost = false
                 }
-            }) { Text(if (deletingPost) "删除中" else "删除") } },
-            dismissButton = { TextButton(enabled = !deletingPost, onClick = { deletePost = null }) { Text("取消") } },
+            },
         )
     }
     dynamicCommentsFor?.let { post ->
@@ -1458,6 +1699,34 @@ private fun QumiProfileFact(label: String, value: String?) {
     Text("$label：${value ?: "暂未填写"}", color = Color(0xFF4C5366), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
+private fun socialProfileFacts(profile: SocialProfile?): List<Pair<String, String>> {
+    if (profile == null) return emptyList()
+    val income = when (profile.annualIncome) {
+        "UNDER_50K" -> "5 万以下"
+        "50K_100K" -> "5-10 万"
+        "100K_200K" -> "10-20 万"
+        "200K_500K" -> "20-50 万"
+        "OVER_500K" -> "50 万以上"
+        else -> null
+    }
+    val marital = when (profile.maritalStatus) {
+        "SINGLE" -> "单身"
+        "IN_RELATIONSHIP" -> "恋爱中"
+        "MARRIED" -> "已婚"
+        "DIVORCED" -> "离异"
+        "WIDOWED" -> "丧偶"
+        else -> null
+    }
+    return listOfNotNull(
+        profile.heightCm?.let { "身高" to "$it cm" },
+        profile.weightKg?.let { "体重" to "$it kg" },
+        profile.occupation?.let { "工作" to it },
+        income?.let { "年收入" to it },
+        profile.city?.let { "所在地" to it },
+        marital?.let { "婚姻" to it },
+    )
+}
+
 @Composable
 internal fun QumiPublicProfileScreen(
     token: String,
@@ -1466,12 +1735,13 @@ internal fun QumiPublicProfileScreen(
     onBack: () -> Unit,
     onMessage: (String, String) -> Unit,
     onBlock: (Long) -> Unit,
+    onReport: (Long) -> Unit,
 ) {
     var user by remember(userId) { mutableStateOf<PublicUser?>(null) }
     var loading by remember(userId) { mutableStateOf(true) }
     var error by remember(userId) { mutableStateOf<String?>(null) }
     var profileRefresh by remember(userId) { mutableIntStateOf(0) }
-    var dynamicTab by remember(userId) { mutableStateOf(false) }
+    var selectedProfileTab by remember(userId) { mutableIntStateOf(0) }
     var posts by remember(userId) { mutableStateOf(emptyList<MomentPost>()) }
     var nextCursor by remember(userId) { mutableStateOf("") }
     var postsLoading by remember(userId) { mutableStateOf(false) }
@@ -1480,6 +1750,10 @@ internal fun QumiPublicProfileScreen(
     var actionError by remember(userId) { mutableStateOf<String?>(null) }
     var postsRefresh by remember(userId) { mutableIntStateOf(0) }
     var followBusy by remember(userId) { mutableStateOf(false) }
+    var supporterBoard by remember(userId) { mutableStateOf<CreatorSupporterBoard?>(null) }
+    var supporterError by remember(userId) { mutableStateOf<String?>(null) }
+    var supporterRefresh by remember(userId) { mutableIntStateOf(0) }
+    var socialProfile by remember(userId) { mutableStateOf<SocialProfile?>(null) }
     var likeBusyId by remember(userId) { mutableStateOf<String?>(null) }
     var commentsFor by remember(userId) { mutableStateOf<MomentPost?>(null) }
     val api = remember { LivePlatformApi() }
@@ -1501,9 +1775,13 @@ internal fun QumiPublicProfileScreen(
         loading = false
     }
 
-    LaunchedEffect(token, user?.id, dynamicTab, postsRefresh) {
+    LaunchedEffect(token, userId, profileRefresh) {
+        socialProfile = runCatching { api.publicSocialProfile(token, userId) }.getOrNull()
+    }
+
+    LaunchedEffect(token, user?.id, selectedProfileTab, postsRefresh) {
         val targetId = user?.id ?: return@LaunchedEffect
-        if (!dynamicTab) return@LaunchedEffect
+        if (selectedProfileTab != 1) return@LaunchedEffect
         postsLoading = true
         postsError = null
         postsPagingError = false
@@ -1511,6 +1789,16 @@ internal fun QumiPublicProfileScreen(
             .onSuccess { (items, cursor) -> posts = items; nextCursor = cursor }
             .onFailure { postsError = it.message ?: "动态加载失败"; posts = emptyList(); nextCursor = "" }
         postsLoading = false
+    }
+
+    LaunchedEffect(token, user?.id, selectedProfileTab, supporterRefresh) {
+        val targetId = user?.id ?: return@LaunchedEffect
+        if (selectedProfileTab != 2) return@LaunchedEffect
+        supporterBoard = null
+        supporterError = null
+        runCatching { api.publicCreatorSupporters(token, targetId) }
+            .onSuccess { supporterBoard = it }
+            .onFailure { supporterError = it.message ?: "守护榜加载失败" }
     }
 
     fun loadMorePosts() {
@@ -1535,7 +1823,10 @@ internal fun QumiPublicProfileScreen(
         Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = QumiText) }
             Text(user?.username ?: fallbackName, Modifier.weight(1f), color = QumiText, fontSize = 18.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-            TextButton(enabled = user != null, onClick = { user?.let { onBlock(it.id) } }) { Text("屏蔽", color = QumiSubtle) }
+            Row {
+                TextButton(enabled = user != null, onClick = { user?.let { onReport(it.id) } }) { Text("举报", color = QumiSubtle) }
+                TextButton(enabled = user != null, onClick = { user?.let { onBlock(it.id) } }) { Text("屏蔽", color = QumiSubtle) }
+            }
         }
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -1552,7 +1843,11 @@ internal fun QumiPublicProfileScreen(
                         Box(Modifier.fillMaxWidth().height(238.dp).background(Brush.verticalGradient(listOf(Color(0xFFEADBF5), Color(0xFFF4EFF8), Color.White)))) {
                             Image(painterResource(R.drawable.qumi_profile_cover), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                             Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = .2f)))
-                            Box(Modifier.align(Alignment.BottomStart).padding(start = 22.dp, bottom = 16.dp).size(82.dp).clip(CircleShape).background(Color(0xFFECE8FF)), contentAlignment = Alignment.Center) {
+                            QumiUserAvatar(
+                                token, profile.avatar,
+                                Modifier.align(Alignment.BottomStart).padding(start = 22.dp, bottom = 16.dp).size(82.dp).clip(CircleShape).background(Color(0xFFECE8FF)),
+                                "${profile.username}的头像",
+                            ) {
                                 Text(profile.username.take(1), color = QumiPurple, fontSize = 30.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
@@ -1580,9 +1875,9 @@ internal fun QumiPublicProfileScreen(
                     }
                     item {
                         Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
-                            listOf("关于TA", "动态").forEachIndexed { index, label ->
-                                val selected = dynamicTab == (index == 1)
-                                Column(Modifier.weight(1f).fillMaxSize().clickable { dynamicTab = index == 1 }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            listOf("关于TA", "动态", "守护").forEachIndexed { index, label ->
+                                val selected = selectedProfileTab == index
+                                Column(Modifier.weight(1f).fillMaxSize().clickable { selectedProfileTab = index }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                                     Text(label, color = if (selected) QumiText else QumiSubtle, fontSize = 15.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
                                     if (selected) Spacer(Modifier.padding(top = 5.dp).width(22.dp).height(3.dp).clip(CircleShape).background(QumiPurple))
                                 }
@@ -1590,13 +1885,22 @@ internal fun QumiPublicProfileScreen(
                         }
                         HorizontalDivider(color = QumiLine)
                     }
-                    if (!dynamicTab) item {
+                    if (selectedProfileTab == 0) item {
                         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("个人介绍", color = QumiText, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                             Text(profile.description?.takeIf { it.isNotBlank() } ?: "对方还没有填写公开介绍", color = QumiSubtle, fontSize = 14.sp, lineHeight = 21.sp)
+                            Text("个人资料", color = QumiText, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                            val details = socialProfile?.takeIf { it.isPublic }
+                            if (details == null) {
+                                Text("TA暂未公开更多资料", color = QumiSubtle, fontSize = 14.sp)
+                            } else {
+                                socialProfileFacts(details).forEach { (label, value) -> QumiProfileFact(label, value) }
+                                details.profileTags.takeIf { it.isNotEmpty() }?.let { QumiProfileFact("标签", it.joinToString("、")) }
+                                QumiProfileFact("征友条件", details.datingPreferences)
+                            }
                             Text("公开资料由用户本人填写，未经身份核验。", color = Color(0xFF999BA4), fontSize = 12.sp)
                         }
-                    } else {
+                    } else if (selectedProfileTab == 1) {
                         postsError?.let { message -> item {
                             TextButton(onClick = { if (postsPagingError) loadMorePosts() else postsRefresh++ }, modifier = Modifier.fillMaxWidth()) { Text("$message · 点击重试") }
                         } }
@@ -1604,9 +1908,18 @@ internal fun QumiPublicProfileScreen(
                         if (!postsLoading && posts.isEmpty() && postsError == null) item { Box(Modifier.fillMaxWidth().height(170.dp), contentAlignment = Alignment.Center) { Text("还没有发布动态", color = QumiSubtle) } }
                         items(posts, key = { it.id }) { post ->
                             Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    QumiUserAvatar(token, post.authorAvatar ?: profile.avatar, Modifier.size(36.dp).clip(CircleShape).background(Color(0xFFECE8FF)), "${profile.username}的头像") {
+                                        Text(profile.username.take(1), color = QumiPurple, fontWeight = FontWeight.SemiBold)
+                                    }
+                                    Column(Modifier.padding(start = 10.dp)) {
+                                        Text(profile.username, color = QumiText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(post.createdAt.replace('T', ' ').take(16), color = QumiSubtle, fontSize = 11.sp)
+                                    }
+                                }
                                 Text(post.content, color = QumiText, fontSize = 15.sp, lineHeight = 22.sp)
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(post.createdAt.replace('T', ' ').take(16), Modifier.weight(1f), color = QumiSubtle, fontSize = 12.sp)
+                                    Spacer(Modifier.weight(1f))
                                     TextButton(enabled = likeBusyId == null, onClick = {
                                         likeBusyId = post.id
                                         scope.launch {
@@ -1624,6 +1937,36 @@ internal fun QumiPublicProfileScreen(
                         if (postsLoading && posts.isNotEmpty()) item { Text("正在加载…", Modifier.fillMaxWidth().padding(14.dp), color = QumiSubtle, textAlign = TextAlign.Center) }
                         if (nextCursor.isNotBlank()) item {
                             TextButton(enabled = !postsLoading, onClick = { loadMorePosts() }, modifier = Modifier.fillMaxWidth()) { Text(if (postsLoading) "正在加载…" else "加载更多") }
+                        }
+                    } else {
+                        when {
+                            supporterError != null -> item {
+                                TextButton(onClick = { supporterRefresh++ }, modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp)) {
+                                    Text("${supporterError} · 点击重试")
+                                }
+                            }
+                            supporterBoard == null -> item { Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+                            supporterBoard?.hidden == true -> item {
+                                Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                                    Text("对方暂未公开守护榜", color = QumiSubtle)
+                                }
+                            }
+                            supporterBoard?.supporters.isNullOrEmpty() -> item {
+                                Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                                    Text("近7日还没有守护记录", color = QumiSubtle)
+                                }
+                            }
+                            else -> itemsIndexed(supporterBoard?.supporters.orEmpty(), key = { _, supporter -> supporter.userId }) { index, supporter ->
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("${index + 1}", color = QumiPurple, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(34.dp))
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("用户 ID ${supporter.userId}", color = QumiText, fontSize = 15.sp)
+                                        Text("${supporter.giftCount} 件礼物", color = QumiSubtle, fontSize = 12.sp)
+                                    }
+                                    Text("${supporter.coins} 金币", color = QumiText, fontSize = 14.sp)
+                                }
+                                HorizontalDivider(color = QumiLine)
+                            }
                         }
                     }
                 }
@@ -1668,12 +2011,13 @@ internal fun QumiWalletScreen(
 ) {
     var confirmRecharge by remember { mutableStateOf<Int?>(null) }
     confirmRecharge?.let { coins ->
-        AlertDialog(
-            onDismissRequest = { confirmRecharge = null },
-            title = { Text("充值 $coins 金币") },
-            text = { Text("实付 ¥${String.format(Locale.ROOT, "%.2f", coins / 100.0)}。确认后前往支付宝，到账结果可在充值记录查看。") },
-            confirmButton = { TextButton(onClick = { confirmRecharge = null; onTopUp(coins) }, enabled = !rechargeBusy) { Text("前往支付") } },
-            dismissButton = { TextButton(onClick = { confirmRecharge = null }) { Text("取消") } },
+        QumiConfirmSheet(
+            title = "充值 $coins 金币",
+            message = "实付 ¥${String.format(Locale.ROOT, "%.2f", coins / 100.0)}。确认后前往支付宝，到账结果可在充值记录查看。",
+            confirmLabel = "前往支付",
+            busy = rechargeBusy,
+            onDismiss = { confirmRecharge = null },
+            onConfirm = { confirmRecharge = null; onTopUp(coins) },
         )
     }
     Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFFB7DBFF), Color(0xFFF3E7EF), Color(0xFFEAF2F5))))) {
@@ -1753,9 +2097,13 @@ internal fun QumiBillsScreen(
     giftHistory: GiftHistory?,
     giftHistoryLoading: Boolean,
     giftHistoryError: String?,
+    roseBills: RoseBills?,
+    roseBillsLoading: Boolean,
+    roseBillsError: String?,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onLoadGiftHistory: () -> Unit,
+    onLoadRoseBills: (Boolean) -> Unit,
 ) {
     var category by remember(initialCategory) { mutableIntStateOf(initialCategory.coerceIn(0, 3)) }
     var filter by remember { mutableIntStateOf(0) }
@@ -1765,6 +2113,7 @@ internal fun QumiBillsScreen(
     var withdrawalsLoading by remember { mutableStateOf(false) }
     LaunchedEffect(category, reload) {
         if (category == 0) onLoadGiftHistory()
+        if (category == 1) onLoadRoseBills(false)
         if (category == 3) {
             withdrawalsLoading = true
             withdrawalError = null
@@ -1806,7 +2155,23 @@ internal fun QumiBillsScreen(
                     }
                 }
             }
-            1 -> QumiEmptyState("当前账户暂未接入玫瑰账单")
+            1 -> when {
+                roseBillsLoading && roseBills?.bills.orEmpty().isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) { CircularProgressIndicator(Modifier.padding(top = 36.dp)) }
+                roseBillsError != null && roseBills?.bills.orEmpty().isEmpty() -> QumiEmptyState(roseBillsError!!)
+                roseBills?.bills.orEmpty().isEmpty() -> QumiEmptyState("数据为空")
+                else -> LazyColumn(Modifier.fillMaxSize().background(QumiPage), contentPadding = PaddingValues(10.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    items(roseBills?.bills.orEmpty(), key = { it.id }) { row ->
+                        QumiBillRow("${row.giftName} ×${row.quantity}", "用户 ${row.viewerId} · ${row.createdAt}", "+${row.diamondReward} 钻石", row.status)
+                    }
+                    if (!roseBills?.nextCursor.isNullOrBlank()) {
+                        item {
+                            TextButton(onClick = { onLoadRoseBills(true) }, enabled = !roseBillsLoading, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (roseBillsLoading) "正在加载…" else "加载更多")
+                            }
+                        }
+                    }
+                }
+            }
             2 -> when {
                 rechargeOrdersError != null -> QumiEmptyState(rechargeOrdersError)
                 rechargeOrders.isEmpty() -> QumiEmptyState("数据为空")
@@ -1863,6 +2228,7 @@ private fun QumiEmptyState(message: String) {
 
 @Composable
 internal fun QumiSettingsScreen(
+    session: UserSession,
     onBack: () -> Unit,
     onAbout: () -> Unit,
     onYouth: () -> Unit,
@@ -1873,28 +2239,68 @@ internal fun QumiSettingsScreen(
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("qumi_account_settings", android.content.Context.MODE_PRIVATE) }
-    var recommendation by remember { mutableStateOf(prefs.getBoolean("recommendation", false)) }
-    var hideGuardian by remember { mutableStateOf(prefs.getBoolean("hide_guardian", false)) }
+    var recommendation by remember(session.id) { mutableStateOf(false) }
+    var hideGuardian by remember(session.id) { mutableStateOf(false) }
+    var privacyPreferencesLoaded by remember(session.id) { mutableStateOf(false) }
+    var privacyError by remember(session.id) { mutableStateOf<String?>(null) }
+    var privacySaving by remember(session.id) { mutableStateOf<String?>(null) }
+    var privacyReload by remember(session.id) { mutableIntStateOf(0) }
     var showInfo by remember { mutableStateOf<String?>(null) }
     var clearCacheConfirm by remember { mutableStateOf(false) }
     var cacheSize by remember { mutableStateOf("…") }
     val scope = rememberCoroutineScope()
+    val api = remember { LivePlatformApi() }
     LaunchedEffect(Unit) {
         cacheSize = withContext(Dispatchers.IO) { formatQumiBytes(context.cacheDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }) }
     }
-    showInfo?.let { title ->
-        AlertDialog(onDismissRequest = { showInfo = null }, title = { Text(title) }, text = { Text(if (title == "当前版本") "现场 Live ${BuildConfig.VERSION_NAME}" else "相关服务接口尚未接入。") }, confirmButton = { TextButton(onClick = { showInfo = null }) { Text("知道了") } })
+    LaunchedEffect(session.token, privacyReload) {
+        privacyError = null
+        runCatching { api.accountPrivacyPreferences(session.token) }
+            .onSuccess { value ->
+                recommendation = value.personalizedRecommendations
+                hideGuardian = value.hideGuardian
+                privacyPreferencesLoaded = true
+                prefs.edit().putBoolean("recommendation", value.personalizedRecommendations).putBoolean("hide_guardian", value.hideGuardian).apply()
+            }
+            .onFailure { privacyError = it.message ?: "隐私设置加载失败" }
     }
-    if (clearCacheConfirm) AlertDialog(
-        onDismissRequest = { clearCacheConfirm = false }, title = { Text("清除缓存") }, text = { Text("清除本机缓存文件，不会删除账号或聊天记录。") },
-        confirmButton = { TextButton(onClick = {
+    fun savePrivacyPreference(key: String, enabled: Boolean) {
+        if (!privacyPreferencesLoaded || privacySaving != null) return
+        val previousRecommendation = recommendation
+        val previousHideGuardian = hideGuardian
+        if (key == "personalized_recommendations") recommendation = enabled else hideGuardian = enabled
+        privacySaving = key
+        privacyError = null
+        scope.launch {
+            runCatching { api.saveAccountPrivacyPreference(session.token, key, enabled) }
+                .onSuccess { value ->
+                    recommendation = value.personalizedRecommendations
+                    hideGuardian = value.hideGuardian
+                    prefs.edit().putBoolean("recommendation", recommendation).putBoolean("hide_guardian", hideGuardian).apply()
+                }
+                .onFailure {
+                    recommendation = previousRecommendation
+                    hideGuardian = previousHideGuardian
+                    privacyError = it.message ?: "保存失败，请重试"
+                }
+            privacySaving = null
+        }
+    }
+    showInfo?.let { title ->
+        QumiInfoSheet(title = title, message = if (title == "当前版本") "现场 Live ${BuildConfig.VERSION_NAME}" else "相关服务接口尚未接入。", onDismiss = { showInfo = null })
+    }
+    if (clearCacheConfirm) QumiConfirmSheet(
+        title = "清除缓存",
+        message = "清除本机缓存文件，不会删除账号或聊天记录。",
+        confirmLabel = "清除",
+        onDismiss = { clearCacheConfirm = false },
+        onConfirm = {
             clearCacheConfirm = false
             scope.launch {
                 withContext(Dispatchers.IO) { context.cacheDir.listFiles()?.forEach { it.deleteRecursively() } }
                 cacheSize = "0 B"
             }
-        }) { Text("清除") } },
-        dismissButton = { TextButton(onClick = { clearCacheConfirm = false }) { Text("取消") } },
+        },
     )
     Column(Modifier.fillMaxSize().background(QumiPage)) {
         Row(Modifier.fillMaxWidth().height(92.dp).background(Color.White), verticalAlignment = Alignment.CenterVertically) {
@@ -1909,17 +2315,25 @@ internal fun QumiSettingsScreen(
                     QumiSettingsPageRow("关于我们", Icons.Rounded.Info, onClick = onAbout)
                     QumiSettingsPageRow("当前版本", Icons.Rounded.Info, value = BuildConfig.VERSION_NAME, onClick = { showInfo = "当前版本" })
                     QumiSettingsPageRow("平台资质", Icons.Rounded.VerifiedUser, onClick = onQualification)
-                    QumiSettingsPageToggle("个性化推荐", recommendation, onChecked = {
-                        recommendation = it
-                        prefs.edit().putBoolean("recommendation", it).apply()
+                    QumiSettingsPageToggle("个性化推荐", recommendation, enabled = privacyPreferencesLoaded && privacySaving == null, onChecked = {
+                        savePrivacyPreference("personalized_recommendations", it)
                     })
                 }
             }
             item {
                 QumiSettingsPageGroup {
-                    QumiSettingsPageToggle("守护榜开关", hideGuardian, { hideGuardian = it; prefs.edit().putBoolean("hide_guardian", it).apply() }, "开启后不对外展示我的守护")
+                    QumiSettingsPageToggle("隐藏我的守护榜", hideGuardian, enabled = privacyPreferencesLoaded && privacySaving == null, onChecked = {
+                        savePrivacyPreference("hide_guardian", it)
+                    }, subtitle = "开启后，其他人无法查看我的守护榜")
                 }
             }
+            if (privacySaving != null) item { Text("正在保存隐私设置…", Modifier.padding(horizontal = 6.dp), color = QumiSubtle, fontSize = 13.sp) }
+            privacyError?.let { message -> item {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(message, Modifier.weight(1f), color = Color(0xFFB4233B), fontSize = 13.sp)
+                    TextButton(onClick = { privacyReload++ }) { Text("重试") }
+                }
+            } }
             item {
                 QumiSettingsPageGroup {
                     QumiSettingsPageRow("青少年模式", Icons.Rounded.ChildCare, onClick = onYouth)
@@ -1951,14 +2365,14 @@ private fun QumiSettingsPageRow(title: String, icon: androidx.compose.ui.graphic
 }
 
 @Composable
-private fun QumiSettingsPageToggle(title: String, checked: Boolean, onChecked: (Boolean) -> Unit, subtitle: String? = null) {
+private fun QumiSettingsPageToggle(title: String, checked: Boolean, enabled: Boolean = true, onChecked: (Boolean) -> Unit, subtitle: String? = null) {
     Row(Modifier.fillMaxWidth().height(if (subtitle == null) 90.dp else 125.dp).padding(horizontal = 25.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(title, color = Color(0xFF202020), fontSize = 26.sp)
             subtitle?.let { Text(it, color = Color(0xFFAAAAAA), fontSize = 14.sp, fontWeight = FontWeight.Bold) }
         }
-        Box(Modifier.size(48.dp).toggleable(value = checked, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onChecked), contentAlignment = Alignment.Center) {
-            Switch(checked = checked, onCheckedChange = null, modifier = Modifier.scale(.6f),
+        Box(Modifier.size(48.dp).toggleable(enabled = enabled, value = checked, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onChecked), contentAlignment = Alignment.Center) {
+            Switch(checked = checked, enabled = enabled, onCheckedChange = null, modifier = Modifier.scale(.6f),
                 colors = androidx.compose.material3.SwitchDefaults.colors(uncheckedThumbColor = Color.White, uncheckedTrackColor = Color(0xFF818181), uncheckedBorderColor = Color.Transparent, checkedThumbColor = Color.White, checkedTrackColor = QumiPurple))
         }
     }
@@ -1968,32 +2382,144 @@ private fun QumiSettingsPageToggle(title: String, checked: Boolean, onChecked: (
 internal fun QumiProfileEditScreen(
     session: UserSession,
     profile: UserProfile?,
+    socialProfile: SocialProfile?,
+    profileLoaded: Boolean,
+    profileLoadError: String?,
     busy: Boolean,
     onBack: () -> Unit,
+    onAvatarUpload: () -> Unit,
     onCoverUpload: () -> Unit,
-    onSave: (Int, String, String) -> Unit,
+    onRetry: () -> Unit,
+    onSave: (Int, String, String, String?, SocialProfile) -> Unit,
 ) {
     var age by remember(profile) { mutableStateOf(profile?.age?.toString().orEmpty()) }
     var region by remember(profile) { mutableStateOf(profile?.region.orEmpty()) }
     var gender by remember(profile) { mutableStateOf(profile?.gender ?: "UNSPECIFIED") }
+    var birthDate by remember(profile) { mutableStateOf(profile?.birthDate.orEmpty()) }
+    var height by remember(socialProfile) { mutableStateOf(socialProfile?.heightCm?.toString().orEmpty()) }
+    var weight by remember(socialProfile) { mutableStateOf(socialProfile?.weightKg?.toString().orEmpty()) }
+    var occupation by remember(socialProfile) { mutableStateOf(socialProfile?.occupation.orEmpty()) }
+    var annualIncome by remember(socialProfile) { mutableStateOf(socialProfile?.annualIncome.orEmpty()) }
+    var city by remember(socialProfile) { mutableStateOf(socialProfile?.city.orEmpty()) }
+    var maritalStatus by remember(socialProfile) { mutableStateOf(socialProfile?.maritalStatus.orEmpty()) }
+    var tags by remember(socialProfile) { mutableStateOf(socialProfile?.profileTags?.joinToString("、").orEmpty()) }
+    var datingPreferences by remember(socialProfile) { mutableStateOf(socialProfile?.datingPreferences.orEmpty()) }
+    var isPublic by remember(socialProfile) { mutableStateOf(socialProfile?.isPublic ?: false) }
+    val incomeOptions = listOf(
+        "" to "不填写", "UNDER_50K" to "5万以下", "50K_100K" to "5-10万",
+        "100K_200K" to "10-20万", "200K_500K" to "20-50万", "OVER_500K" to "50万以上",
+    )
+    val maritalOptions = listOf(
+        "" to "不填写", "SINGLE" to "单身", "IN_RELATIONSHIP" to "恋爱中",
+        "MARRIED" to "已婚", "DIVORCED" to "离异", "WIDOWED" to "丧偶",
+    )
+    val normalizedTags = tags.split(Regex("[,，、\\s]+")).map(String::trim).filter(String::isNotEmpty).distinct()
+    val genderLocked = profile?.gender != null
+    val birthDateValid = birthDate.isBlank() || runCatching { LocalDate.parse(birthDate) }.isSuccess
+    val detailsValid = (height.isBlank() || height.toIntOrNull()?.let { it in 80..250 } == true)
+        && (weight.isBlank() || weight.toIntOrNull()?.let { it in 20..300 } == true)
+        && occupation.length <= 50 && city.length <= 60 && datingPreferences.length <= 300
+        && normalizedTags.size <= 10 && normalizedTags.all { it.length <= 12 }
     Column(Modifier.fillMaxSize().background(QumiPage)) {
         QumiPageTitle("个人资料", onBack)
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text(session.username, color = QumiText, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-            Text("账号 ID ${session.id}", color = QumiSubtle, fontSize = 14.sp)
+        if (!profileLoaded) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(profileLoadError ?: "正在读取已保存的资料…", color = QumiSubtle)
+                    if (profileLoadError != null) TextButton(onClick = onRetry) { Text("重试") }
+                }
+            }
+        } else Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                QumiUserAvatar(session.token, session.avatar, Modifier.size(64.dp).clip(CircleShape).background(Color.White), "个人头像") {
+                    Image(painterResource(R.drawable.qumi_default_avatar), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                }
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(session.username, color = QumiText, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                    Text("账号 ID ${session.id}", color = QumiSubtle, fontSize = 14.sp)
+                }
+                TextButton(enabled = !busy, onClick = onAvatarUpload) { Text("更换头像") }
+            }
             TextButton(onClick = onCoverUpload) { Text("设置直播封面") }
             Text("本人资料", color = QumiText, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
             Text(if (profile?.source == "SELF_REPORTED") "本人填写，未经身份核验" else "年龄和地区需由本人填写。", color = QumiSubtle, fontSize = 13.sp)
             OutlinedTextField(age, { age = it.filter(Char::isDigit).take(3) }, label = { Text("当前年龄") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                birthDate,
+                { birthDate = it.filter { char -> char.isDigit() || char == '-' }.take(10) },
+                label = { Text("生日") },
+                placeholder = { Text("YYYY-MM-DD") },
+                supportingText = { Text("填写后，年龄以生日由服务端计算") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
             OutlinedTextField(region, { region = it.uppercase(Locale.ROOT).take(2) }, label = { Text("地区代码，例如 CN、US、KR") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Text("性别（本人填写）", color = QumiText, fontSize = 14.sp)
+            Text(if (genderLocked) "性别（已填写，不可修改）" else "性别（本人填写后不可修改）", color = QumiText, fontSize = 14.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("UNSPECIFIED" to "不填写", "MALE" to "男", "FEMALE" to "女").forEach { (value, label) ->
-                    FilterChip(selected = gender == value, onClick = { gender = value }, label = { Text(label) })
+                    FilterChip(selected = gender == value, enabled = !genderLocked, onClick = { gender = value }, label = { Text(label) })
                 }
             }
-            Button(onClick = { age.toIntOrNull()?.let { onSave(it, region, gender) } }, enabled = !busy && age.toIntOrNull() in 1..120 && region.length == 2, modifier = Modifier.fillMaxWidth()) {
+            HorizontalDivider(color = QumiLine)
+            Text("更多资料", color = QumiText, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            Text("填写内容由你决定是否展示在个人主页。", color = QumiSubtle, fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(height, { height = it.filter(Char::isDigit).take(3) }, label = { Text("身高 cm") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.weight(1f))
+                OutlinedTextField(weight, { weight = it.filter(Char::isDigit).take(3) }, label = { Text("体重 kg") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.weight(1f))
+            }
+            OutlinedTextField(occupation, { occupation = it.take(50) }, label = { Text("工作") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(city, { city = it.take(60) }, label = { Text("所在地") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            QumiProfileChoiceGroup("年收入", annualIncome, incomeOptions) { annualIncome = it }
+            QumiProfileChoiceGroup("婚姻状况", maritalStatus, maritalOptions) { maritalStatus = it }
+            OutlinedTextField(tags, { tags = it.take(150) }, label = { Text("个人标签") }, supportingText = { Text("用顿号或逗号分隔，最多 10 个") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(datingPreferences, { datingPreferences = it.take(300) }, label = { Text("征友条件") }, minLines = 2, maxLines = 4, modifier = Modifier.fillMaxWidth())
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("公开扩展资料", color = QumiText, fontSize = 15.sp)
+                    Text("关闭后，其他用户无法查看这些字段", color = QumiSubtle, fontSize = 12.sp)
+                }
+                Switch(checked = isPublic, enabled = !busy, onCheckedChange = { isPublic = it })
+            }
+            Button(onClick = {
+                val ageValue = age.toIntOrNull() ?: return@Button
+                onSave(ageValue, region, gender, birthDate.trim().takeIf(String::isNotEmpty), SocialProfile(
+                    heightCm = height.toIntOrNull(),
+                    weightKg = weight.toIntOrNull(),
+                    occupation = occupation.trim().takeIf(String::isNotEmpty),
+                    annualIncome = annualIncome.takeIf(String::isNotEmpty),
+                    city = city.trim().takeIf(String::isNotEmpty),
+                    maritalStatus = maritalStatus.takeIf(String::isNotEmpty),
+                    profileTags = normalizedTags,
+                    datingPreferences = datingPreferences.trim().takeIf(String::isNotEmpty),
+                    isPublic = isPublic,
+                ))
+            }, enabled = !busy && age.toIntOrNull() in 1..120 && region.length == 2 && birthDateValid && detailsValid, modifier = Modifier.fillMaxWidth()) {
                 Text(if (busy) "正在保存…" else "保存资料")
+            }
+        }
+    }
+}
+
+@Composable
+private fun QumiProfileChoiceGroup(
+    title: String,
+    selected: String,
+    options: List<Pair<String, String>>,
+    onSelected: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(title, color = QumiText, fontSize = 14.sp)
+        options.chunked(3).forEach { rowOptions ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                rowOptions.forEach { (value, label) ->
+                    FilterChip(
+                        modifier = Modifier.weight(1f),
+                        selected = selected == value,
+                        onClick = { onSelected(value) },
+                        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    )
+                }
+                repeat(3 - rowOptions.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }

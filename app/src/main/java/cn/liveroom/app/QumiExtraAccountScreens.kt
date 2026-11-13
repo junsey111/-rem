@@ -27,20 +27,23 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ChildCare
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +59,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.asImageBitmap
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlinx.coroutines.launch
+import java.util.UUID
 
 private val CostumeBackground = Color(0xFF211B4D)
 private val CostumePanel = Color(0xFF160A2B)
@@ -101,112 +113,46 @@ private val QumiCostumeCatalog = linkedMapOf(
 )
 
 @Composable
-internal fun QumiCostumeShopScreen(onBack: () -> Unit) {
-    var showingOwned by remember { mutableStateOf(false) }
-    var selectedCategory by remember { mutableIntStateOf(0) }
-    var selectedItem by remember { mutableIntStateOf(0) }
-    val category = QumiCostumeCatalog.keys.elementAt(selectedCategory)
-    val products = QumiCostumeCatalog.getValue(category)
-    val selected = products.getOrNull(selectedItem.coerceIn(0, (products.size - 1).coerceAtLeast(0)))
-
+internal fun QumiCostumeShopScreen(session: UserSession, onBack: () -> Unit) {
+    val api = remember { LivePlatformApi() }
+    var serverItems by remember { mutableStateOf<List<CostumeItemInfo>?>(null) }
+    var ownedItems by remember { mutableStateOf<List<OwnedCostume>>(emptyList()) }
+    var serverError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(session.token) {
+        runCatching {
+            val catalog = api.costumeCatalog(session.token)
+            val owned = api.ownedCostumes(session.token)
+            catalog to owned
+        }.onSuccess { (catalog, owned) ->
+            serverItems = catalog
+            ownedItems = owned
+        }.onFailure {
+            serverItems = emptyList()
+            serverError = it.message ?: "装扮服务暂不可用"
+        }
+    }
+    if (serverItems != null || serverError != null) {
+        QumiServerCostumeScreen(
+            session = session,
+            items = serverItems!!,
+            owned = ownedItems,
+            error = serverError,
+            api = api,
+            onOwnedChange = { ownedItems = it },
+            onBack = onBack,
+        )
+        return
+    }
     Column(Modifier.fillMaxSize().background(CostumeBackground)) {
         Row(Modifier.fillMaxWidth().height(58.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, contentDescription = "返回", tint = Color.White) }
-            Text(
-                "装扮商城",
-                Modifier.weight(1f).clickable { showingOwned = false },
-                textAlign = TextAlign.End,
-                color = if (!showingOwned) Color.White else CostumeMuted,
-                fontSize = 19.sp,
-                fontWeight = if (!showingOwned) FontWeight.SemiBold else FontWeight.Normal,
-            )
-            Text(
-                "我的装扮",
-                Modifier.weight(1f).clickable { showingOwned = true }.padding(start = 20.dp),
-                color = if (showingOwned) Color.White else CostumeMuted,
-                fontSize = 19.sp,
-                fontWeight = if (showingOwned) FontWeight.SemiBold else FontWeight.Normal,
-            )
-            Spacer(Modifier.width(24.dp))
+            Text("装扮商城", Modifier.weight(1f), textAlign = TextAlign.Center, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(48.dp))
         }
-
-        if (showingOwned) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Rounded.Info, contentDescription = null, tint = CostumeMuted, modifier = Modifier.size(46.dp))
-                    Text("装扮列表暂不可用", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                    Text("当前平台尚未接入装扮库存接口", color = CostumeMuted, fontSize = 14.sp)
-                }
-            }
-        } else {
-            Box(Modifier.fillMaxWidth().height(145.dp), contentAlignment = Alignment.Center) {
-                if (selected != null) {
-                    Image(painterResource(selected.image), contentDescription = selected.name, contentScale = ContentScale.Fit, modifier = Modifier.size(width = 220.dp, height = 145.dp))
-                } else {
-                    Icon(Icons.Rounded.Info, contentDescription = null, tint = CostumeMuted, modifier = Modifier.size(44.dp))
-                }
-            }
-
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)).background(CostumePanel)
-                    .horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(24.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                QumiCostumeCatalog.keys.forEachIndexed { index, name ->
-                    Column(
-                        Modifier.clickable {
-                            selectedCategory = index
-                            selectedItem = 0
-                        },
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(name, color = if (selectedCategory == index) Color.White else CostumeMuted, fontSize = 15.sp, fontWeight = if (selectedCategory == index) FontWeight.SemiBold else FontWeight.Normal)
-                        Box(Modifier.width(18.dp).height(3.dp).clip(CircleShape).background(if (selectedCategory == index) Color.White else Color.Transparent))
-                    }
-                }
-            }
-
-            if (products.isEmpty()) {
-                Box(Modifier.weight(1f).fillMaxWidth().background(CostumePanel), contentAlignment = Alignment.Center) {
-                    Text("该分类商品目录暂未接入", color = CostumeMuted, fontSize = 16.sp)
-                }
-            } else {
-                LazyColumn(
-                    Modifier.weight(1f).fillMaxWidth().background(CostumePanel),
-                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(products.chunked(3)) { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEachIndexed { inRow, item ->
-                                val index = products.indexOf(item)
-                                CostumeProductCard(
-                                    item = item,
-                                    selected = selectedItem == index,
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { selectedItem = index },
-                                )
-                            }
-                            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-                        }
-                    }
-                }
-            }
-
-            Column(Modifier.fillMaxWidth().background(Color(0xFF2C245E))) {
-                Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Surface(color = Color(0xFFFF6468), shape = RoundedCornerShape(6.dp)) { Text("参考目录", Modifier.padding(horizontal = 7.dp, vertical = 4.dp), color = Color.White, fontSize = 12.sp) }
-                    Text("  商品和价格未在本平台上架", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                }
-                Row(Modifier.fillMaxWidth().height(92.dp).background(Color(0xFF321958)).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(selected?.name ?: category, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                        Text(selected?.let { "参考价 ${it.roses} 玫瑰 · 未在本平台上架" } ?: "该分类商品目录尚未接入", color = CostumeMuted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    Button(onClick = {}, enabled = false, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp)) { Text("未开放购买") }
-                }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                CircularProgressIndicator(color = Color(0xFF18E6D0))
+                Text("正在读取平台装扮目录…", color = Color.White, fontSize = 15.sp)
             }
         }
     }
@@ -224,6 +170,149 @@ private fun CostumeProductCard(item: QumiShopItem, selected: Boolean, modifier: 
         Image(painterResource(item.image), contentDescription = item.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().height(94.dp).clip(RoundedCornerShape(8.dp)))
         Text(item.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("参考价 ${item.roses} 玫瑰", color = CostumeMuted, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun QumiServerCostumeScreen(
+    session: UserSession,
+    items: List<CostumeItemInfo>,
+    owned: List<OwnedCostume>,
+    error: String?,
+    api: LivePlatformApi,
+    onOwnedChange: (List<OwnedCostume>) -> Unit,
+    onBack: () -> Unit,
+) {
+    var showingOwned by remember { mutableStateOf(false) }
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    var busyId by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf(error) }
+    var purchaseItem by remember { mutableStateOf<CostumeItemInfo?>(null) }
+    var purchaseBusy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val purchasePrefs = remember(session.id) { context.getSharedPreferences("qumi_catalog_purchases", android.content.Context.MODE_PRIVATE) }
+    val categories = remember(items) { listOf(null) + items.map { it.category }.distinct() }
+    val visible = selectedCategory?.let { category -> items.filter { it.category == category } } ?: items
+    Column(Modifier.fillMaxSize().background(CostumeBackground)) {
+        Row(Modifier.fillMaxWidth().height(58.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "返回", tint = Color.White) }
+            Text("装扮商城", Modifier.weight(1f), textAlign = TextAlign.Center, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+            TextButton(onClick = { showingOwned = !showingOwned }) { Text(if (showingOwned) "商城" else "我的", color = Color.White) }
+        }
+        if (notice != null) TextButton(onClick = { notice = null }) { Text(notice!!, color = Color(0xFFFFB4AB), maxLines = 2) }
+        if (showingOwned) {
+            if (owned.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(Icons.Rounded.Info, null, tint = CostumeMuted, modifier = Modifier.size(46.dp))
+                    Text("暂无已拥有装扮", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                    Text("从商城选择装扮即可购买", color = CostumeMuted, fontSize = 14.sp)
+                }
+            } else LazyColumn(Modifier.weight(1f).fillMaxWidth().background(CostumePanel), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(owned, key = { it.id }) { ownedItem ->
+                    val item = ownedItem.item
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF24134A)).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CostumeAssetImage(item?.assetUrl, item?.name ?: "装扮", Modifier.size(58.dp).clip(RoundedCornerShape(10.dp)))
+                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text(item?.name ?: "装扮 ${ownedItem.costumeId}", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            Text(if (ownedItem.equipped) "已装备" else item?.category.orEmpty(), color = CostumeMuted, fontSize = 12.sp)
+                        }
+                        if (!ownedItem.equipped) TextButton(enabled = busyId == null, onClick = {
+                            busyId = ownedItem.costumeId
+                            scope.launch {
+                                runCatching { api.equipCostume(session.token, ownedItem.costumeId) }
+                                    .onSuccess { onOwnedChange(owned.map { it.copy(equipped = it.costumeId == ownedItem.costumeId) }) }
+                                    .onFailure { notice = it.message ?: "装备失败" }
+                                busyId = null
+                            }
+                        }) { Text(if (busyId == ownedItem.costumeId) "处理中" else "装备") }
+                    }
+                }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth().background(CostumePanel).horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                categories.forEach { category ->
+                    Text(category ?: "全部", Modifier.clickable { selectedCategory = category }, color = if (selectedCategory == category) Color.White else CostumeMuted, fontSize = 14.sp, fontWeight = if (selectedCategory == category) FontWeight.SemiBold else FontWeight.Normal)
+                }
+            }
+            if (visible.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth().background(CostumePanel), contentAlignment = Alignment.Center) {
+                Text("后台尚未上架装扮", color = CostumeMuted, fontSize = 16.sp)
+            } else LazyColumn(Modifier.weight(1f).fillMaxWidth().background(CostumePanel), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(visible, key = { it.id }) { item ->
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF24134A)).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CostumeAssetImage(item.assetUrl, item.name, Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)))
+                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text(item.name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            Text(item.description.ifBlank { item.category }, color = CostumeMuted, fontSize = 12.sp, maxLines = 2)
+                        }
+                        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(if (item.priceCoins > 0) "${item.priceCoins} 金币" else "免费", color = Color(0xFFFFD783), fontSize = 12.sp)
+                            TextButton(enabled = !purchaseBusy, onClick = { purchaseItem = item }) { Text("购买", color = Color(0xFF18E6D0)) }
+                        }
+                    }
+                }
+            }
+            Text("购买前会展示价格，扣币和拥有记录均由服务端确认。", Modifier.fillMaxWidth().background(Color(0xFF2C245E)).padding(12.dp), color = CostumeMuted, fontSize = 12.sp)
+        }
+    }
+    purchaseItem?.let { item ->
+        QumiConfirmSheet(
+            title = "购买${item.name}",
+            message = if (item.priceCoins > 0) "将从金币余额扣除 ${item.priceCoins} 金币，购买后可在“我的”中装备。" else "本次购买不扣除金币，确认后立即加入你的装扮。",
+            confirmLabel = "确认购买",
+            busy = purchaseBusy,
+            onDismiss = { if (!purchaseBusy) purchaseItem = null },
+            onConfirm = {
+                val key = "costume_${item.id}"
+                val requestId = purchasePrefs.getString(key, null) ?: UUID.randomUUID().toString().also {
+                    purchasePrefs.edit().putString(key, it).commit()
+                }
+                purchaseBusy = true
+                scope.launch {
+                    runCatching {
+                        api.purchaseCostume(session.token, item.id, requestId)
+                        api.ownedCostumes(session.token)
+                    }.onSuccess { updated ->
+                        onOwnedChange(updated)
+                        purchasePrefs.edit().remove(key).apply()
+                        purchaseItem = null
+                        notice = "${item.name}已加入我的装扮"
+                    }.onFailure { failure ->
+                        if (failure is PlatformHttpException && failure.statusCode < 500) purchasePrefs.edit().remove(key).apply()
+                        notice = failure.message ?: "购买失败，请稍后重试"
+                    }
+                    purchaseBusy = false
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun CostumeAssetImage(url: String?, description: String, modifier: Modifier) {
+    var bitmap by remember(url) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(url) {
+        bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val value = url?.trim().orEmpty()
+                require(value.startsWith("https://") || value.startsWith("http://"))
+                val connection = URL(value).openConnection() as HttpURLConnection
+                try {
+                    connection.connectTimeout = 5_000
+                    connection.readTimeout = 8_000
+                    connection.instanceFollowRedirects = false
+                    check(connection.responseCode in 200..299)
+                    check(connection.contentLengthLong <= 2 * 1024 * 1024L || connection.contentLengthLong < 0)
+                    val bytes = connection.inputStream.use { it.readBytesLimited(2 * 1024 * 1024 + 1) }
+                    check(bytes.size in 1..(2 * 1024 * 1024))
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                } finally { connection.disconnect() }
+            }.getOrNull()
+        }
+    }
+    Box(modifier, contentAlignment = Alignment.Center) {
+        if (bitmap == null) Icon(Icons.Rounded.Info, description, tint = Color(0xFFE4C1FF), modifier = Modifier.size(34.dp))
+        bitmap?.let { Image(it.asImageBitmap(), description, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
     }
 }
 
@@ -257,19 +346,14 @@ internal fun QumiYouthModeScreen(accountId: Long, onBack: () -> Unit) {
         Text("本机保护模式：设置四位密码后限制本客户端的直播、私信和消费入口。状态不会同步到服务端。", Modifier.fillMaxWidth().padding(horizontal = 24.dp), color = Color(0xFF9296AC), fontSize = 14.sp, lineHeight = 21.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.weight(1.1f))
     }
-    if (showSetPassword) AlertDialog(
-        onDismissRequest = { showSetPassword = false },
-        icon = { Icon(Icons.Rounded.ChildCare, contentDescription = null) },
-        title = { Text("设置独立密码") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("密码仅保存在本机，用于关闭青少年模式。")
-                YouthPasswordField("四位数字密码", password) { password = it }
-                YouthPasswordField("再次输入密码", confirmPassword) { confirmPassword = it }
-                if (error != null) Text(error!!, color = Color(0xFFB4233B), fontSize = 12.sp)
-            }
-        },
-        confirmButton = { TextButton(onClick = {
+    if (showSetPassword) QumiModalSheet(onDismiss = { showSetPassword = false }) {
+        QumiSheetTitle("设置独立密码", "密码仅保存在本机，用于关闭青少年模式。")
+        YouthPasswordField("四位数字密码", password) { password = it }
+        YouthPasswordField("再次输入密码", confirmPassword) { confirmPassword = it }
+        error?.let { Text(it, color = Color(0xFFB4233B), fontSize = 12.sp) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(onClick = { showSetPassword = false }, modifier = Modifier.weight(1f)) { Text("取消") }
+            Button(onClick = {
             when {
                 password.length != 4 -> error = "请输入四位数字密码"
                 password != confirmPassword -> error = "两次输入的密码不一致"
@@ -279,27 +363,23 @@ internal fun QumiYouthModeScreen(accountId: Long, onBack: () -> Unit) {
                     showSetPassword = false
                 }
             }
-        }) { Text("开启") } },
-        dismissButton = { TextButton(onClick = { showSetPassword = false }) { Text("取消") } },
-    )
-    if (showDisable) AlertDialog(
-        onDismissRequest = { showDisable = false },
-        title = { Text("关闭青少年模式") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("请输入设置时的四位密码。")
-                YouthPasswordField("独立密码", password) { password = it }
-                if (error != null) Text(error!!, color = Color(0xFFB4233B), fontSize = 12.sp)
-            }
-        },
-        confirmButton = { TextButton(onClick = {
+            }, modifier = Modifier.weight(1f)) { Text("开启") }
+        }
+    }
+    if (showDisable) QumiModalSheet(onDismiss = { showDisable = false }) {
+        QumiSheetTitle("关闭青少年模式", "请输入设置时的四位密码。")
+        YouthPasswordField("独立密码", password) { password = it }
+        error?.let { Text(it, color = Color(0xFFB4233B), fontSize = 12.sp) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(onClick = { showDisable = false }, modifier = Modifier.weight(1f)) { Text("取消") }
+            Button(onClick = {
             if (YouthModePreferences.disable(context, accountId, password)) {
                 mode = YouthModePreferences.load(context, accountId)
                 showDisable = false
             } else error = "密码错误，请重试"
-        }) { Text("关闭") } },
-        dismissButton = { TextButton(onClick = { showDisable = false }) { Text("取消") } },
-    )
+            }, modifier = Modifier.weight(1f)) { Text("关闭") }
+        }
+    }
 }
 
 @Composable

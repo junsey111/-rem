@@ -10,6 +10,8 @@ import {
   storeDmVideo, submitDmGift, unlockDmVideo,
 } from '@/service/openim-dm';
 import { RequestRateLimiter } from '@/app/request-rate';
+import User from '@/model/user.model';
+import { assertPeerAccess } from '@/service/interaction-policy';
 
 const openimRouter = new Router({ prefix: '/openim' });
 const recipientRate = new RequestRateLimiter();
@@ -61,6 +63,14 @@ openimRouter.get('/support', async ctx => {
     throw new CustomError('发起私信较频繁，请稍后重试', 429, 429);
   }
   successHandler({ ctx, data: await resolveSupportContact(Number(userInfo.id)) });
+});
+openimRouter.get('/peer-access/:userId', async ctx => {
+  const userInfo = await requireUser(ctx);
+  if (!/^[1-9][0-9]{0,9}$/.test(ctx.params.userId)) throw new CustomError('用户 ID 无效', 400, 400);
+  const peer: any = await User.findByPk(Number(ctx.params.userId), { attributes: ['id', 'username', 'avatar', 'status'] });
+  if (!peer || peer.status !== 1) throw new CustomError('对方暂时无法接收消息', 404, 404);
+  await assertPeerAccess(Number(userInfo.id), Number(peer.id));
+  successHandler({ ctx, data: { allowed: true, user_id: String(peer.id), name: peer.username || '用户' } });
 });
 openimRouter.post('/dm-gifts', async ctx => {
   const userInfo = await requireUser(ctx);

@@ -115,6 +115,20 @@ func TestMatchLifecycleMySQL(t *testing.T) {
 	if data["age_years"] != nil || data["region_code"] != nil || data["source"] != "UNKNOWN" {
 		t.Fatalf("legacy defaults exposed: %v", data)
 	}
+	data = check(call(98, "PUT", profilePath, `{"age_years":25,"region_code":"cn","gender":"MALE","birth_date":"2000-01-02"}`), 200)
+	if data["birth_date"] != "2000-01-02" || data["gender"] != "MALE" || data["region_code"] != "CN" {
+		t.Fatalf("profile persistence: %v", data)
+	}
+	data = check(call(98, "PUT", profilePath, `{"age_years":26,"region_code":"CN","gender":"MALE"}`), 200)
+	if data["birth_date"] != "2000-01-02" {
+		t.Fatalf("omitted birthday was cleared: %v", data)
+	}
+	check(call(98, "PUT", profilePath, `{"age_years":26,"region_code":"CN","gender":"FEMALE"}`), 409)
+	check(call(98, "PUT", profilePath, `{"age_years":26,"region_code":"CN","gender":"MALE","birth_date":"2000-02-30"}`), 400)
+	data = check(call(98, "PUT", profilePath, `{"age_years":26,"region_code":"CN","gender":"MALE","birth_date":""}`), 200)
+	if data["birth_date"] != nil {
+		t.Fatalf("explicit birthday clear failed: %v", data)
+	}
 	data = check(call(99, "GET", profilePath, ""), 200)
 	if data["age_years"] != nil || data["region_code"] != nil {
 		t.Fatal("new account received invented demographics")

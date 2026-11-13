@@ -18,6 +18,7 @@ test('real password route and MySQL enforce disabled accounts, server expiry, un
   await admin.query(`CREATE DATABASE \`${name}\``);await admin.query(`USE \`${name}\``);
   db=new Sequelize(name,decodeURIComponent(url.username),decodeURIComponent(url.password),{host:url.hostname,port:Number(url.port||3306),dialect:'mysql',logging:false});
   stub('@/config/mysql',{__esModule:true,default:db});stub('@/config/secret',{JWT_SECRET:secret});stub('@/utils',{initTable:()=>{}});
+  stub('@/config/redis',{redisClient:{isReady:false}});
   const user=require('../dist/model/user.model').default;await user.sync();
   await admin.query('ALTER TABLE user MODIFY COLUMN password VARCHAR(50) NOT NULL');
   await admin.query("INSERT INTO user(id,username,password,status,created_at,updated_at) VALUES(9,'Legacy migration','PreservedLegacy',1,UTC_TIMESTAMP(),UTC_TIMESTAMP())");
@@ -48,7 +49,7 @@ test('real password route and MySQL enforce disabled accounts, server expiry, un
   const upgraded=(await user.findByPk(1)).password;assert.ok(isPasswordHash(upgraded));assert.ok(await verifyPassword('ExactPassword',upgraded));
   assert.equal((await login({password:upgraded})).status,400);
   const claims=jwt.verify(firstToken,secret,{algorithms:['HS256']});assert.equal(claims.exp-claims.iat,86400);assert.deepEqual(claims.userInfo,{id:1});assert.ok(claims.jti);assert.equal(claims.password,undefined);
-  const profile=await call('/user/me',undefined,firstToken);assert.equal(profile.status,200);assert.deepEqual(profile.data.data,{id:1,username:'真实昵称',status:1});
+  const profile=await call('/user/me',undefined,firstToken);assert.equal(profile.status,200);assert.deepEqual(profile.data.data,{id:1,username:'真实昵称',status:1,avatar:null});
   const second=await login({exp:0});assert.equal(second.status,200);assert.notEqual(second.data.data,firstToken);assert.equal((await call('/user/me',undefined,firstToken)).status,401);
   const concurrent=await Promise.all(Array.from({length:4},()=>login()));assert.ok(concurrent.every(r=>r.status===200));assert.equal(new Set(concurrent.map(r=>r.data.data)).size,4);
   const current=(await user.findByPk(1)).token;let accepted=0;for(const result of concurrent)if((await call('/user/me',undefined,result.data.data)).status===200)accepted++;assert.equal(accepted,1);

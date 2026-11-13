@@ -21,16 +21,28 @@ class CustomError extends Error {
 }
 
 const peers = {
+  1: { id: 1, status: 1 },
   2: { id: 2, status: 1 },
   3: { id: 3, status: 2 },
 };
 
 stub('@/model/customError.model', { CustomError });
-stub('@/constant', { ALLOW_HTTP_CODE: { ok: 200, paramsError: 400, forbidden: 403 } });
-stub('@/config/secret', { LIVEKIT_API_KEY: 'fixture-key', LIVEKIT_API_SECRET: 'fixture-secret', REVENUE_API_URL: 'http://fixture' });
+stub('@/config/mysql', { __esModule: true, default: {} });
+stub('@/constant', {
+  ALLOW_HTTP_CODE: { ok: 200, paramsError: 400, forbidden: 403 },
+  PROJECT_ENV: 'development',
+  PROJECT_ENV_ENUM: { development: 'development', prod: 'prod', beta: 'beta' },
+});
+stub('@/config/secret', {
+  LIVEKIT_API_KEY: 'fixture-key',
+  LIVEKIT_API_SECRET: 'fixture-secret',
+  REVENUE_API_URL: 'http://fixture',
+  MYSQL_CONFIG: { database: 'fixture', username: 'fixture', password: 'fixture', host: '127.0.0.1', port: 3306 },
+});
 stub('@/app/auth/authJwt', { authJwt: async (ctx) => ({ code: 200, userInfo: { id: Number(ctx.headers.authorization.slice(7)) } }) });
 stub('@/app/handler/success-handle', { __esModule: true, default: ({ ctx, data }) => { ctx.body = data; } });
 stub('@/service/media-authority', { mediaAuthority: async () => { throw new Error('live authority must not run for a dm call'); }, mediaSessionHash: (token) => `hash-${token}` });
+stub('@/service/interaction-policy', { assertPeerAccess: async () => {} });
 stub('@/utils/request', { __esModule: true, default: { get: async () => { throw new Error('revenue must not run for a dm call'); } } });
 stub('@/model/user.model', { __esModule: true, default: { findByPk: async (id) => peers[String(id)] || null } });
 

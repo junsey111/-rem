@@ -30,7 +30,46 @@ fun CoverUploadSheet(session:UserSession,api:LivePlatformApi,onDismiss:()->Unit)
  }}
  ModalBottomSheet(onDismissRequest={if(!busy)onDismiss()}){Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Text("直播封面",style=MaterialTheme.typography.titleLarge);Text("选择静态 JPEG、PNG 或 WebP，大小不超过 3MB。图片会裁剪为竖版封面并移除原始元数据。");message?.let{Text(it)};if(busy)LinearProgressIndicator(Modifier.fillMaxWidth());Button(enabled=!busy,onClick={picker.launch("image/*")}){Text("选择图片并上传")}}}
 }
-private fun java.io.InputStream.readBytesLimited(limit:Int):ByteArray{
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AvatarUploadSheet(session: UserSession, api: LivePlatformApi, onUploaded: (String) -> Unit, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) scope.launch {
+            busy = true
+            message = null
+            try {
+                val bytes = withContext(Dispatchers.IO) {
+                    requireNotNull(context.contentResolver.openInputStream(uri)).use { it.readBytesLimited(5 * 1024 * 1024 + 1) }
+                }
+                require(bytes.size <= 5 * 1024 * 1024) { "头像不能超过 5MB" }
+                onUploaded(api.uploadAvatar(session.token, bytes))
+                message = "头像已更新"
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                message = error.message ?: "头像上传失败"
+            } finally {
+                busy = false
+            }
+        }
+    }
+    ModalBottomSheet(onDismissRequest = { if (!busy) onDismiss() }) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("更换头像", style = MaterialTheme.typography.titleLarge)
+            Text("选择静态 JPEG、PNG 或 WebP，大小不超过 5MB。服务端会自动裁切并清除原图元数据。")
+            message?.let { Text(it) }
+            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            Button(enabled = !busy, onClick = { picker.launch("image/*") }) { Text("选择图片并上传") }
+        }
+    }
+}
+
+internal fun java.io.InputStream.readBytesLimited(limit:Int):ByteArray{
  val output=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192)
  while(output.size()<limit){val n=read(buffer,0,minOf(buffer.size,limit-output.size()));if(n<0)break;output.write(buffer,0,n)}
  return output.toByteArray()

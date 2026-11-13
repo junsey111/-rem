@@ -1,6 +1,8 @@
 package cn.liveroom.app
 
 import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
@@ -11,7 +13,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.UUID
 
@@ -48,7 +52,24 @@ fun BusinessSheet(session:UserSession,api:LivePlatformApi,initialTab:String="wit
     var available by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     var reportSubmitted by remember { mutableStateOf(false) }
+    var evidenceUploading by remember { mutableStateOf(false) }
     val labels=mapOf("withdrawals" to "提现","refunds" to "退款","creator-applications" to "主播申请","reports" to "举报")
+    val evidencePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null && !busy && !evidenceUploading && tab == "reports") scope.launch {
+            evidenceUploading = true
+            error = null
+            runCatching {
+                val bytes = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytesLimited(8 * 1024 * 1024 + 1) }
+                        ?: error("无法读取图片")
+                }
+                require(bytes.size <= 8 * 1024 * 1024) { "图片不能超过 8MB" }
+                api.uploadReportEvidence(session.token, bytes)
+            }.onSuccess { uploaded -> evidence = uploaded.reference }
+                .onFailure { error = it.message ?: "图片上传失败，请重试" }
+            evidenceUploading = false
+        }
+    }
     LaunchedEffect(tab,refresh){
         busy=true;error=null;rows=emptyList()
         try{
@@ -85,11 +106,15 @@ fun BusinessSheet(session:UserSession,api:LivePlatformApi,initialTab:String="wit
     }catch(e:Exception){error=e.message}}
     if (initialTab == "reports" && reportTarget != null && pending.isSuccess && (pending.getOrNull() == null || pending.getOrNull()?.optString("path") == "/revenue/reports")) {
         Dialog(onDismissRequest = { if (!busy) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            QumiReportScreen(content = content, onContent = { content = it }, busy = busy, error = error,
+            QumiReportScreen(content = content, onContent = { content = it }, busy = busy || evidenceUploading, error = error,
+                evidenceReference = evidence, onPickImage = { evidencePicker.launch("image/*") },
                 pending = pending.getOrNull() != null, onBack = { if (!busy) onDismiss() },
                 onSubmit = { submit(it) }, onRetry = { send() })
-            if (reportSubmitted) AlertDialog(onDismissRequest = onDismiss, title = { Text("举报已提交") },
-                text = { Text("平台将核实你提供的内容。") }, confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } })
+            if (reportSubmitted) QumiInfoSheet(
+                title = "举报已提交",
+                message = "平台将核实你提供的内容。",
+                onDismiss = onDismiss,
+            )
         }
     } else ModalBottomSheet(onDismissRequest={if(!busy)onDismiss()}){
         LazyColumn(Modifier.fillMaxWidth().imePadding(),contentPadding=PaddingValues(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){

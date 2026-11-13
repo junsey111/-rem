@@ -17,6 +17,8 @@ import User from '@/model/user.model';
 import { DmVideo, DmVideoUnlock } from '@/model/openimDmVideo.model';
 import axios from '@/utils/request';
 import { registerOpenImContact } from '@/service/openim-session';
+import { assertPeerAccess } from '@/service/interaction-policy';
+import { createUserNotification } from '@/service/push-notifications';
 import {
   interpretAccess,
   interpretDmGift,
@@ -80,6 +82,7 @@ function throwInterpreted(result: { outcome: string; message?: string; status?: 
 async function requirePeer(senderId: number, recipientId: string) {
   const user: any = await User.findByPk(Number(recipientId));
   if (!user || user.status !== 1) throw new CustomError('对方暂时无法接收这条消息', 404, 404);
+  await assertPeerAccess(senderId, Number(user.id));
   await registerOpenImContact(String(user.id), user.username || '未设置昵称', user.avatar || '');
   return user;
 }
@@ -170,6 +173,12 @@ export async function submitDmGift(senderId: number, body: any, token: string) {
   const result = interpretDmGift(call, request, name);
   throwInterpreted(result);
   if (result.outcome !== 'accepted') throw new CustomError('结算结果尚未确认，请用同一单号重试', 503, 503);
+  void createUserNotification(Number(request.recipientId), {
+    kind: 'MESSAGE',
+    actor_id: senderId,
+    title: '收到私信礼物',
+    body: `${result.imCustom.gift_name || '礼物'} ×${request.quantity}`,
+  }).catch(error => console.error('DM gift notification failed', error?.message || error));
   return {
     accepted: true,
     request_id: request.requestId,
@@ -267,6 +276,12 @@ export async function storeDmVideo(senderId: number, meta: any, bytes: Buffer) {
   }
   const stored = await DmVideo.findByPk(videoId);
   if (!stored) throw new CustomError('视频暂时无法保存，请用同一单号重试', 503, 503);
+  void createUserNotification(Number(request.recipientId), {
+    kind: 'MESSAGE',
+    actor_id: senderId,
+    title: '收到私信视频',
+    body: request.title,
+  }).catch(error => console.error('DM video notification failed', error?.message || error));
   return presentVideo(stored);
 }
 
@@ -297,6 +312,7 @@ async function playable(row: any, viewerId: number, token: string) {
 export async function describeDmVideo(viewerId: number, videoId: string, token: string) {
   const row = await loadVideo(videoId);
   if (!participant(row, viewerId)) throw new CustomError('视频不存在', 404, 404);
+  await assertPeerAccess(viewerId, Number(row.owner_user_id) === viewerId ? Number(row.recipient_user_id) : Number(row.owner_user_id));
   const canPlay = await playable(row, viewerId, token);
   return {
     video_id: row.video_id,
@@ -311,6 +327,7 @@ export async function describeDmVideo(viewerId: number, videoId: string, token: 
 export async function openDmVideoMedia(viewerId: number, videoId: string, token: string) {
   const row = await loadVideo(videoId);
   if (!participant(row, viewerId)) throw new CustomError('视频不存在', 404, 404);
+  await assertPeerAccess(viewerId, Number(row.owner_user_id) === viewerId ? Number(row.recipient_user_id) : Number(row.owner_user_id));
   if (!await playable(row, viewerId, token)) throw locked();
   const file = mediaFile(row.storage_name);
   if (!fs.existsSync(file)) throw new CustomError('视频文件暂时不可用，请稍后重试', 503, 503);
@@ -320,6 +337,7 @@ export async function openDmVideoMedia(viewerId: number, videoId: string, token:
 export async function unlockDmVideo(viewerId: number, videoId: string, body: any, token: string) {
   const row = await loadVideo(videoId);
   if (!participant(row, viewerId)) throw new CustomError('视频不存在', 404, 404);
+  await assertPeerAccess(viewerId, Number(row.owner_user_id) === viewerId ? Number(row.recipient_user_id) : Number(row.owner_user_id));
   if (Number(row.owner_user_id) === viewerId) throw new CustomError('发送者无需解锁自己的视频', 400, 400);
   if (!body || typeof body.request_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.request_id)) {
     throw new CustomError('解锁请求缺少有效单号', 400, 400);

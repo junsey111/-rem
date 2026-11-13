@@ -48,12 +48,37 @@ Revenue 需要同时提供扣费接口和 `GET /v1/dm/videos/:id/access`（`{unl
 
 关系由唯一的无序用户对保证只能有一条；迁移为 `migrations/20261108_user_close_friends.sql`。DB_SYNC_MODE=2 会通过 Sequelize 模型建表/校正；生产使用已迁移数据库时先执行 SQL 再用 `DB_SYNC_MODE=3` 启动。关系只表达双方同意，不触发收费、金币、礼物或等级权益。
 
+## 用户头像
+
+- `POST /user/avatar`：当前登录用户以 `application/octet-stream` 上传 JPEG、PNG 或 WebP，最大 5MB。服务端拒绝动画图片，将图像方向纠正后裁切、转为 JPEG 并移除原始元数据；成功返回 `{avatar_path}`。
+- `GET /user/avatars/:id/:filename`：需要登录，只返回该用户数据库中当前有效的头像；互相屏蔽的用户收到 404。图片使用私有 60 秒缓存。
+- `GET /user/me` 的 `avatar` 字段返回当前头像路径或 `null`。头像替换后旧路径立即失效。
+- 文件保存在 `USER_AVATAR_DIR`，未配置时使用 `data/user-avatars`。Compose 将其挂载到持久卷 `billd-user-avatars`。
+
 ## 用户等级
 
 `GET /revenue/level` 转发 Revenue `GET /v1/users/me/level`，返回观众累计已确认消费积分、主播累计已确认钻石积分、当前等级和下一档积分门槛。最高等级的 `*_next_level_points` 为 `0`。门槛只由 Revenue 计算，客户端不据此发放余额或虚构权益。
 
+## 动态与评论审核
+
+新提交的文字、图片动态和评论均进入 `PENDING`，公共流只展示审核通过且未被删除的内容。评论作者可查看本人的待审/驳回状态和原因，其他用户不可见。公开评论数量仅统计已通过内容；屏蔽关系同时约束动态、评论和互动。
+
+管理员使用 `GET /operations/moments` 或 `/operations/comments`，支持 `status=PENDING|APPROVED|REJECTED|ALL` 与 `before_id` 游标。`POST /operations/moments/:id` 或 `/operations/comments/:id` 的 JSON 为 `{action:APPROVED|REJECTED|HIDE|RESTORE,reason}`；驳回和隐藏必须提供 1–200 字原因，保存操作人、时间和原因。审核变更在行锁事务中完成；作者已删除的评论不能由管理员恢复。所有管理操作校验当前账号权限。
+
+既有 Billd 库需先执行一次 `migrations/20261113_moment_comment_review.sql`。已有评论保留原已发布状态，新提交接口显式写入 PENDING；不要用 sync alter 重建正式表。
+
 ## 本地与部署
 
-本地后台：http://localhost:8000/ 。本地凭据位于 Git 忽略的 `.local/admin-local.json`。本地 API 为 24300，Revenue 为 24808，仅监听回环地址。
+本地后台开发服务器从 8000 寻找可用端口，本轮为 http://127.0.0.1:8002/ ，以启动日志为准。本地凭据位于 Git 忽略的 `.local/admin-local.json`。本地 API 为 24300，Revenue 为 24808，仅监听回环地址。
 
-新增 Billd 表对应 `migrations/20261102_live_cover.sql`、`20261102_provider_attempt.sql`、`20261102_provider_attempt_reason.sql`、`20261102_identity_verification.sql`；reason 迁移为一次性 ALTER。Revenue 用 goose 升级到 00017。先备份，不使用 force/alter 重建既有业务库。
+新增 Billd 表需按实际已应用版本逐项执行 `upstream-overlays/billd-live-server/migrations` 中的增量 SQL；其中 ALTER 迁移只执行一次。本轮还包括 20261111 通知、任务、动态媒体、商城、公会与等级目录，以及 20261113 手机号身份、社交资料和平台资质。Revenue 用 goose 升级到 `00032`。先备份，不使用 force/alter 重建既有业务库。
+
+## 短信登录适配器（默认关闭）
+
+- `GET /user/auth-methods` 返回 `{password:true,sms:boolean}`；客户端按配置选择登录方式，密码注册仍可用。
+- `POST /user/sms/send-code`：JSON `{phone}`，仅接受中国大陆手机号；成功不返回验证码。
+- `POST /user/sms/login`：JSON `{phone,code}`，六位验证码。首次验证成功创建普通 `USER` 账号，后续复用手机号身份；封禁账号不能登录。验证码验证与账号注册分别依赖真实 Redis、MySQL；不可用时返回 503，不降级绕过。
+- `SMS_ENABLED=false` 为默认值。启用需设置 HTTPS `SMS_PROVIDER_URL`、`SMS_PROVIDER_TEMPLATE_ID`、至少 32 字符 `SMS_PROVIDER_SECRET` 和稳定的至少 32 字符 `PHONE_HASH_SECRET`。手机号数据库标识使用 HMAC；更换 PHONE_HASH_SECRET 会改变身份映射，须事先安排迁移。
+- 适配器收到原始 JSON `{request_id,to,template_id,parameters:{code,expires_minutes:5}}`，请求头为 `X-Request-Id`、Unix 秒 `X-Request-Timestamp`、`X-Request-Signature: sha256=<hex>`。签名原文为 `timestamp + "." + 原始请求体`，算法为共享密钥 HMAC-SHA256；服务商适配器必须校验签名、时效并按 request_id 幂等。任意 2xx 表示接收成功；禁止重定向，8 秒超时，失败清除本次验证码。
+- 验证码 5 分钟有效、同号 60 秒限发，号码/IP 在 24 小时窗口分别限 10/50 次。错误第 5 次失效，成功仅能消费一次；计数、过期及一次消费由 Redis Lua 原子执行。
+- 本轮测试使用真实 Redis 和隔离 MySQL，外部 HTTPS 发送使用替身；未向真实手机号发送短信，不表示某家厂商已联调完成。

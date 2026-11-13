@@ -11,7 +11,8 @@ const errorHandler = (error: unknown, ctx: ParameterizedContext) => {
     message: known ? error.message : '服务暂时不可用，请稍后重试',
   };
   // Do not print request credentials, payment signatures or database error payloads.
-  console.error('Request failed', { status, method: ctx.method, path: ctx.path });
+  const path = ctx.path.replace(/^\/openim\/hooks\/[^/]+(?=\/callbackBeforeSendSingleMsgCommand$)/, '/openim/hooks/[redacted]');
+  console.error('Request failed', { status, method: ctx.method, path });
 };
 
 export default errorHandler;

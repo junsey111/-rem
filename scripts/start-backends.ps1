@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$revenuePort = if ($env:REVENUE_PORT) { [int]$env:REVENUE_PORT } else { 18080 }
+$revenuePort = if ($env:REVENUE_PORT) { [int]$env:REVENUE_PORT } else { 24808 }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw 'Docker CLI was not found. Install Docker Desktop and start its Linux engine.'
@@ -31,13 +31,17 @@ function Wait-TcpEndpoint([string]$Name, [string]$RemoteHost, [int]$Port, [int]$
   throw "$Name did not open $RemoteHost`:$Port within $TimeoutSeconds seconds. Check: docker compose logs"
 }
 
-# Billd/SRS and the revenue ledger are separate upstream compose projects so
-# each keeps its own database schema and Kafka/Redis dependencies.
+# The unified compose file owns Billd, Revenue, SRS, LiveKit, and their
+# dependencies. Keeping Revenue in the same project makes the health-checked
+# dependency chain deterministic and avoids two APIs sharing the same ledger.
 docker compose -p live-platform -f (Join-Path $PSScriptRoot '..\backend-compose.yml') up --build -d
 if ($LASTEXITCODE -ne 0) { throw 'Billd/SRS stack did not become ready.' }
-$env:API_PORT = [string]$revenuePort
-docker compose -p live-revenue -f (Join-Path $PSScriptRoot '..\third_party\live-revenue-integrity-lab\docker-compose.yml') up --build -d
-if ($LASTEXITCODE -ne 0) { throw 'Revenue stack did not become ready.' }
+# Older revisions launched a second Revenue compose project. Stop its
+# containers if they are still present; volumes are intentionally preserved.
+$legacyRevenueCompose = Join-Path $PSScriptRoot '..\third_party\live-revenue-integrity-lab\docker-compose.yml'
+if (Test-Path $legacyRevenueCompose) {
+  docker compose -p live-revenue -f $legacyRevenueCompose down --remove-orphans *> $null
+}
 $openImRoot = Join-Path $PSScriptRoot '..\third_party\openim-server'
 docker network inspect live_backend *> $null
 if ($LASTEXITCODE -ne 0) {

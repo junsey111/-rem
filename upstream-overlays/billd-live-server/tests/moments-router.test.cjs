@@ -22,16 +22,29 @@ const taskWhere = [];
 stub('@/app/auth/authJwt', { authJwt: async ctx => ({ code: 200, userInfo: { id: Number(ctx.get('authorization').slice(7)) } }) });
 stub('@/model/customError.model', { CustomError });
 stub('@/app/handler/success-handle', { __esModule: true, default: ({ ctx, data }) => { ctx.status = 200; ctx.body = { data }; } });
+stub('@/config/mysql', { __esModule: true, default: { transaction: async callback => callback({}) } });
 stub('@/model/user.model', { __esModule: true, default: { findAll: async () => [{ id: 2, username: '作者', avatar: null }] } });
 stub('@/model/followRelation.model', { __esModule: true, default: {} });
+stub('@/model/userSocialProfile.model', { __esModule: true, default: { findOne: async () => null } });
 stub('@/model/dailyCheckin.model', { __esModule: true, default: {
   findAll: async () => [...checkinDates].sort().reverse().map(checkin_date => ({ checkin_date })),
+  count: async () => 0,
   findOrCreate: async ({ where }) => {
     const created = !checkinDates.includes(where.checkin_date);
     if (created) checkinDates.push(where.checkin_date);
     return [{ ...where }, created];
   },
 } });
+stub('@/model/taskConfig.model', { __esModule: true, default: {
+  findOne: async () => null,
+  findAll: async () => [],
+} });
+stub('@/model/taskClaim.model', { __esModule: true, default: {
+  findAll: async () => [],
+  findOne: async () => null,
+  findOrCreate: async ({ defaults }) => [{ get: () => defaults }, true],
+} });
+stub('@/model/reportEvidence.model', { __esModule: true, default: {} });
 stub('@/model/moment.model', { Moment: {
   findAll: async ({ where }) => { feedWhere = where; return rows; },
   count: async ({ where }) => { taskWhere.push(where); return 2; },
@@ -52,6 +65,8 @@ stub('@/model/moment.model', { Moment: {
   findAll: async options => options.group ? [{ moment_id: 5, count: '2' }] : [...likes].map(moment_id => ({ moment_id })),
   findOrCreate: async ({ where }) => { likes.add(String(where.moment_id)); return [null, true]; },
   destroy: async ({ where }) => likes.delete(String(where.moment_id)),
+}, MomentMedia: {
+  findAll: async () => [],
 } });
 
 test('authenticated moments support feed, text publishing, comments, likes, and owned deletion', async () => {
@@ -92,16 +107,16 @@ test('authenticated moments support feed, text publishing, comments, likes, and 
     assert.equal((await call('/moments?scope=all&user_id=2')).status, 400);
     await call('/moments?scope=following');
     const [andKey] = Object.getOwnPropertySymbols(feedWhere);
-    assert.equal(feedWhere[andKey].length, 3);
+    assert.equal(feedWhere[andKey].length, 4);
     const blockedUsers = feedWhere[andKey][1].user_id[Object.getOwnPropertySymbols(feedWhere[andKey][1].user_id)[0]];
     const followedUsers = feedWhere[andKey][2].user_id[Object.getOwnPropertySymbols(feedWhere[andKey][2].user_id)[0]];
     assert.match(blockedUsers.val, /user_block_relation/);
     assert.match(followedUsers.val, /user_follow_relation/);
     const dailyProgress = await call('/moments/tasks/today');
     assert.equal(dailyProgress.status, 200);
-    assert.deepEqual(dailyProgress.json.data, { published: 2, liked: 3, commented: 4 });
+    assert.deepEqual(dailyProgress.json.data, { published: 2, liked: 3, commented: 4, tasks: [] });
     assert.equal(taskWhere.length, 3);
-    assert.ok(taskWhere.every(where => where.user_id === 1 && where.createdAt));
+    assert.ok(taskWhere.every(where => where.user_id === 1 && where.created_at));
     assert.equal(taskWhere[0].visible, true);
     const beforeCheckin = await call('/moments/tasks/checkin');
     assert.equal(beforeCheckin.json.data.checked_in, false);

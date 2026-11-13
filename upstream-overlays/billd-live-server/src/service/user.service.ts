@@ -1,6 +1,7 @@
-import Sequelize from 'sequelize';
+import Sequelize, { Transaction } from 'sequelize';
 
-import { PROJECT_ENV, THIRD_PLATFORM } from '@/constant';
+import { THIRD_PLATFORM } from '@/constant';
+import sequelize from '@/config/mysql';
 import { IList, IUser } from '@/interface';
 import emailModel from '@/model/emailUser.model';
 import githubUserModel from '@/model/githubUser.model';
@@ -226,16 +227,16 @@ class UserService {
   }
 
   /** 创建用户 */
-  async create(props: IUser) {
+  async create(props: IUser, transaction?: Transaction): Promise<any> {
+    if (!transaction) return sequelize.transaction(current => this.create(props, current));
     // @ts-ignore
-    const result: any = await userModel.create(props);
-    if (PROJECT_ENV === 'prod') {
-      // 生产环境注册用户权限就是SVIP用户
-      await result.setRoles([5]);
-    } else {
-      // 非生产环境注册用户权限就是SUPER_ADMIN管理员
-      await result.setRoles([2, 3]);
-    }
+    const result: any = await userModel.create(props, { transaction });
+    const [userRole] = await roleModel.findOrCreate({
+      where: { role_value: 'USER' },
+      defaults: { role_name: '用户', type: 1, priority: 99, p_id: 0 },
+      transaction,
+    });
+    await result.setRoles([userRole.id], { transaction });
     return result;
   }
 

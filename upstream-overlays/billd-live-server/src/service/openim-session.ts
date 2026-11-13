@@ -9,6 +9,7 @@ import Live from '@/model/live.model';
 import { CustomError } from '@/model/customError.model';
 import { mediaAuthority } from '@/service/media-authority';
 import axios from '@/utils/request';
+import { assertPeerAccess } from '@/service/interaction-policy';
 
 const hash = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 function validAccount(user: any, token: string): boolean {
@@ -77,6 +78,7 @@ export async function resolveLiveRecipient(roomId: string, senderId: number) {
     return await sequelize.transaction(async transaction => {
       const user: any = await User.findByPk(Number(id), { transaction, lock: transaction.LOCK.UPDATE });
       if (!user || user.status !== 1) throw new CustomError('该主播暂时无法接收私信', 404, 404);
+      await assertPeerAccess(senderId, Number(user.id));
       await registerUser(user, await adminHeaders());
       return { user_id: String(user.id), name: user.username || '未设置昵称' };
     });

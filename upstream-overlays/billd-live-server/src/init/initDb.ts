@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import '@/model/rechargeOrder.model';
 import '@/model/openimSession.model';
 import '@/model/openimDmVideo.model';
@@ -10,10 +11,22 @@ import '@/model/identityVerification.model';
 import '@/model/followRelation.model';
 import '@/model/moment.model';
 import '@/model/profileVisit.model';
+import '@/model/userSocialProfile.model';
+import '@/model/userPhoneIdentity.model';
 import '@/model/userBlock.model';
 import '@/model/notificationPreference.model';
 import '@/model/dailyCheckin.model';
 import '@/model/closeFriendRelation.model';
+import '@/model/reportEvidence.model';
+import '@/model/taskConfig.model';
+import '@/model/taskClaim.model';
+import '@/model/guild.model';
+import '@/model/noble.model';
+import '@/model/costume.model';
+import '@/model/platformAnnouncement.model';
+import '@/model/userNotification.model';
+import '@/model/platformQualification.model';
+import '@/model/platformQualificationAudit.model';
 
 import sequelize from '@/config/mysql';
 import { PROJECT_NODE_ENV } from '@/constant';
@@ -22,7 +35,7 @@ import { deleteAllForeignKeys, deleteAllIndexs } from '@/utils/index';
 
 /** 加载所有model */
 export const loadAllModel = () => {
-  const modelDir = `${process.cwd()}/src/model`;
+  const modelDir = path.resolve(__dirname, '../model');
   fs.readdirSync(modelDir).forEach((file: string) => {
     if (PROJECT_NODE_ENV === 'development') {
       if (file.indexOf('.model.ts') === -1) return;

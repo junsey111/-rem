@@ -7,6 +7,8 @@ import { chalkINFO } from '@/utils/chalkTip';
 
 import { authJwt } from './auth/authJwt';
 
+const auditPath = (path: string) => path.replace(/^\/openim\/hooks\/[^/]+(?=\/callbackBeforeSendSingleMsgCommand$)/, '/openim/hooks/[redacted]');
+
 // Preserve route-owned HTTP results, including durable gift rejection markers.
 export const catchErrorMiddle = async (ctx: ParameterizedContext, next) => {
   const start = Date.now();
@@ -24,7 +26,7 @@ export const catchErrorMiddle = async (ctx: ParameterizedContext, next) => {
       api_user_agent: ctx.request.headers['user-agent'],
       api_from: ctx.path === '/admin' || ctx.path.startsWith('/admin/') ? 2 : 1,
       api_method: ctx.request.method,
-      api_path: ctx.request.path,
+      api_path: auditPath(ctx.request.path),
       api_real_ip: peerAddress(ctx),
       api_status_code: ctx.status,
       api_err_code: ctx.status,

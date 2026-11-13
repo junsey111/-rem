@@ -36,12 +36,13 @@ internal fun QumiReportScreen(
     busy: Boolean = false,
     error: String? = null,
     pending: Boolean = false,
+    evidenceReference: String? = null,
+    onPickImage: () -> Unit,
     onBack: () -> Unit,
     onSubmit: (String) -> Unit,
     onRetry: () -> Unit = {},
 ) {
     var category by rememberSaveable { mutableStateOf("其他") }
-    var imageNotice by remember { mutableStateOf(false) }
     val view = LocalView.current
     SideEffect {
         (view.parent as? DialogWindowProvider)?.window?.let { window ->
@@ -93,9 +94,11 @@ internal fun QumiReportScreen(
                 Text("图片", fontSize = 28.sp, color = Color.Black)
                 Spacer(Modifier.height(8.dp))
                 Box(Modifier.size(162.dp, 170.dp).background(Color(0xFFF5F5F5), RoundedCornerShape(8.dp))
-                    .clickable(enabled = !busy && !pending) { imageNotice = true }, contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Add, "添加举报图片", tint = Color(0xFF9D9DA7), modifier = Modifier.size(32.dp))
+                    .clickable(enabled = !busy && !pending, onClick = onPickImage), contentAlignment = Alignment.Center) {
+                    if (evidenceReference.isNullOrBlank()) Icon(Icons.Rounded.Add, "添加举报图片", tint = Color(0xFF9D9DA7), modifier = Modifier.size(32.dp))
+                    else Text("已添加\n图片证据", color = purple, fontSize = 18.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 }
+                evidenceReference?.takeIf { it.isNotBlank() }?.let { Text("图片证据已安全上传", color = Color(0xFF555555), fontSize = 16.sp) }
             }
         }
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 33.dp).padding(bottom = 125.dp)) {
@@ -107,22 +110,6 @@ internal fun QumiReportScreen(
                 modifier = Modifier.fillMaxWidth().height(73.dp),
             ) { Text(if (busy) "提交中…" else if (pending) "核实原申请" else "提交", fontSize = 32.sp) }
         }
-    }
-    if (imageNotice) AlertDialog(
-        onDismissRequest = { imageNotice = false }, title = { Text("图片证据") },
-        text = { Text("举报图片上传暂未接入，请先在内容中描述问题。") },
-        confirmButton = { TextButton(onClick = { imageNotice = false }) { Text("知道了") } },
-    )
-}
-
-@Composable
-internal fun QumiSystemReportDialog(onDismiss: () -> Unit) {
-    var content by rememberSaveable { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        QumiReportScreen(content, { content = it }, error = error, onBack = onDismiss, onSubmit = {
-            error = "小秘书为系统展示账号，没有可举报的平台用户 ID。"
-        })
     }
 }
 

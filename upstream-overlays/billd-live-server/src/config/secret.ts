@@ -24,6 +24,8 @@ export const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || 'secret';
 export const OPENIM_API_URL = process.env.OPENIM_API_URL || 'http://openim-server:10002';
 export const OPENIM_PUBLIC_API_URL = process.env.OPENIM_PUBLIC_API_URL || 'http://10.0.2.2:10002';
 export const OPENIM_SECRET = process.env.OPENIM_SECRET || '';
+export const OPENIM_CALLBACK_SECRET = process.env.OPENIM_CALLBACK_SECRET || 'change-me-openim-callback-secret';
+export const OPENIM_CALLBACK_PATH = `/openim/hooks/${OPENIM_CALLBACK_SECRET}/callbackBeforeSendSingleMsgCommand`;
 export const OPENIM_ADMIN_USER_ID = process.env.OPENIM_ADMIN_USER_ID || 'imAdmin';
 export const OPENIM_PLATFORM_ID = numberEnv('OPENIM_PLATFORM_ID', 1);
 export const OPENIM_WS_URL = process.env.OPENIM_WS_URL || 'ws://10.0.2.2:10001';
@@ -31,7 +33,13 @@ export const OPENIM_WS_URL = process.env.OPENIM_WS_URL || 'ws://10.0.2.2:10001';
 export const OPENIM_SUPPORT_USER_ID = process.env.OPENIM_SUPPORT_USER_ID || '';
 export const OPENIM_SUPPORT_NICKNAME = process.env.OPENIM_SUPPORT_NICKNAME || '客服';
 export const OPENIM_DM_MEDIA_DIR = process.env.OPENIM_DM_MEDIA_DIR || '';
-// Revenue teammate owns these ledgers. 404/501 from the paths below stays a stub.
+export const FCM_SERVICE_ACCOUNT_JSON = process.env.FCM_SERVICE_ACCOUNT_JSON || '';
+export const SMS_ENABLED = process.env.SMS_ENABLED === 'true';
+export const SMS_PROVIDER_URL = process.env.SMS_PROVIDER_URL || '';
+export const SMS_PROVIDER_SECRET = process.env.SMS_PROVIDER_SECRET || '';
+export const SMS_PROVIDER_TEMPLATE_ID = process.env.SMS_PROVIDER_TEMPLATE_ID || '';
+export const PHONE_HASH_SECRET = process.env.PHONE_HASH_SECRET || '';
+// Revenue owns these ledgers. Keep overrides aligned with the deployed Revenue routes; missing routes fail closed.
 export const REVENUE_DM_GIFTS_PATH = process.env.REVENUE_DM_GIFTS_PATH || '/v1/dm/gifts';
 export const REVENUE_DM_VIDEO_UNLOCK_PATH = process.env.REVENUE_DM_VIDEO_UNLOCK_PATH || '/v1/dm/video-unlocks';
 export const REVENUE_DM_VIDEO_ACCESS_PATH = process.env.REVENUE_DM_VIDEO_ACCESS_PATH || '/v1/dm/videos';

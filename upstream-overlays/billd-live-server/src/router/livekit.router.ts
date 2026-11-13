@@ -11,7 +11,8 @@ import { CustomError } from '@/model/customError.model';
 import axios from '@/utils/request';
 import { mediaAuthority, mediaSessionHash } from '@/service/media-authority';
 import { requireMediaAccess } from '@/service/media-access';
-import { DmCallError, endDmCall, joinDmCall, openDmCall } from '@/service/dm-call';
+import { DmCallError, dmCallPeer, endDmCall, joinDmCall, openDmCall } from '@/service/dm-call';
+import { assertPeerAccess } from '@/service/interaction-policy';
 
 const liveKitRouter = new Router({ prefix: '/livekit' });
 const callRate = new RequestRateLimiter();
@@ -149,6 +150,7 @@ liveKitRouter.post('/calls', async (ctx, next) => {
   const peer = peerId === String(userInfo.id)
     ? { id: peerId, disabled: false }
     : await loadCallPeer(peerId);
+  if (peer && peerId !== String(userInfo.id)) await assertPeerAccess(Number(userInfo.id), Number(peer.id));
   try {
     successHandler({
       ctx,
@@ -171,11 +173,18 @@ liveKitRouter.post('/calls', async (ctx, next) => {
 liveKitRouter.post('/calls/join', async (ctx, next) => {
   const userInfo = await authedCaller(ctx);
   try {
+    const callId = String(ctx.request.body?.call_id ?? '').trim();
+    const peerId = dmCallPeer(callId, String(userInfo.id));
+    if (peerId) {
+      const peer = await loadCallPeer(peerId);
+      if (!peer || peer.disabled) throw new CustomError('对方账号不可用', 403, 403);
+      await assertPeerAccess(Number(userInfo.id), Number(peer.id));
+    }
     successHandler({
       ctx,
       data: await joinDmCall({
         userId: String(userInfo.id),
-        callId: String(ctx.request.body?.call_id ?? '').trim(),
+        callId,
         loginToken: bearerToken(ctx),
         url: liveKitPublicUrl(),
         apiKey: LIVEKIT_API_KEY,

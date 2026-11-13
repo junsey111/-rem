@@ -1,5 +1,8 @@
 package cn.liveroom.app
 
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -27,10 +30,12 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -39,11 +44,39 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
 private val DiscoveryInk = Color(0xFF19191F)
 private val DiscoveryMuted = Color(0xFF858A98)
 private val DiscoveryPurple = Color(0xFF7864E8)
 private val DiscoveryCanvas = Color(0xFFF5F6FA)
+
+@Composable
+internal fun MomentMediaImage(token: String, media: MomentMedia, modifier: Modifier = Modifier) {
+    var bitmap by remember(media.id, token) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(media.id, token) {
+        bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                require(media.path.matches(Regex("/moments/media/[1-9][0-9]{0,19}")))
+                val connection = URL(BuildConfig.BILLD_API_URL.trimEnd('/') + media.path).openConnection() as HttpURLConnection
+                try {
+                    connection.connectTimeout = 5_000
+                    connection.readTimeout = 15_000
+                    connection.setRequestProperty("Authorization", "Bearer $token")
+                    check(connection.responseCode in 200..299)
+                    check(connection.contentType.orEmpty().startsWith("image/"))
+                    val bytes = connection.inputStream.use { it.readBytesLimited(8 * 1024 * 1024 + 1) }
+                    check(bytes.size <= 8 * 1024 * 1024)
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                } finally { connection.disconnect() }
+            }.getOrNull()
+        }
+    }
+    bitmap?.let { Image(it.asImageBitmap(), contentDescription = "动态图片", contentScale = ContentScale.Crop, modifier = modifier) }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -131,7 +164,7 @@ internal fun QumiFriendsScreen(
             section == 2 -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(QumiGrid.itemGap)) {
                 items(followingUsers, key = { it.id }) { user ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(48.dp).clip(CircleShape).background(Color(0xFFECE8FF)), contentAlignment = Alignment.Center) {
+                        QumiUserAvatar(token, user.avatar, Modifier.size(48.dp).clip(CircleShape).background(Color(0xFFECE8FF)), "${user.username}的头像") {
                             Text(user.username.take(1), color = DiscoveryPurple, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Column(Modifier.weight(1f).padding(start = 12.dp).clickable { onOpenUser(user.id.toString(), user.username) }) {
@@ -169,7 +202,7 @@ internal fun QumiFriendsScreen(
             else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(QumiGrid.itemGap)) {
                 items(users, key = { it.id }) { user ->
                     Row(Modifier.fillMaxWidth().clickable { onOpenUser(user.id.toString(), user.username) }.padding(vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(48.dp).clip(CircleShape).background(Color(0xFFECE8FF)), contentAlignment = Alignment.Center) {
+                        QumiUserAvatar(token, user.avatar, Modifier.size(48.dp).clip(CircleShape).background(Color(0xFFECE8FF)), "${user.username}的头像") {
                             Text(user.username.take(1), color = DiscoveryPurple, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Column(Modifier.weight(1f).padding(start = 12.dp)) {
@@ -232,10 +265,34 @@ internal fun QumiMomentsScreen(token: String, onMessages: () -> Unit, onOpenUser
     var composeOpen by remember { mutableStateOf(false) }
     var content by remember { mutableStateOf("") }
     var publishing by remember { mutableStateOf(false) }
+    var mediaUploading by remember { mutableStateOf(false) }
+    var selectedMedia by remember { mutableStateOf<MomentMedia?>(null) }
     var busyPost by remember { mutableStateOf<String?>(null) }
     var commentsFor by remember { mutableStateOf<MomentPost?>(null) }
     val scope = rememberCoroutineScope()
     val api = remember { LivePlatformApi() }
+    val context = LocalContext.current
+    val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null && !publishing && !mediaUploading) scope.launch {
+            mediaUploading = true
+            error = null
+            runCatching {
+                val bytes = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytesLimited(8 * 1024 * 1024 + 1) }
+                        ?: error("无法读取图片")
+                }
+                require(bytes.size <= 8 * 1024 * 1024) { "图片不能超过 8MB" }
+                api.uploadMomentMedia(token, bytes)
+            }.onSuccess { selectedMedia = it }
+                .onFailure { error = it.message ?: "图片上传失败，请重试" }
+            mediaUploading = false
+        }
+    }
+    fun discardComposerMedia() {
+        val media = selectedMedia
+        selectedMedia = null
+        if (media != null) scope.launch { runCatching { api.deleteMomentMedia(token, media.id) } }
+    }
     fun refresh() {
         loading = true
         error = null
@@ -315,7 +372,7 @@ internal fun QumiMomentsScreen(token: String, onMessages: () -> Unit, onOpenUser
                     Surface(Modifier.fillMaxWidth(), color = Color(0xFFF8F8FA), shape = RoundedCornerShape(8.dp)) {
                         Column(Modifier.padding(14.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(38.dp).clip(CircleShape).background(Color(0xFFECE8FF)), contentAlignment = Alignment.Center) {
+                                QumiUserAvatar(token, post.authorAvatar, Modifier.size(38.dp).clip(CircleShape).background(Color(0xFFECE8FF)), "${post.username}的头像") {
                                     Text(post.username.take(1), color = DiscoveryPurple, fontWeight = FontWeight.SemiBold)
                                 }
                                 Column(Modifier.weight(1f).padding(start = 10.dp).clickable { onOpenUser(post.userId.toString(), post.username) }) {
@@ -323,7 +380,14 @@ internal fun QumiMomentsScreen(token: String, onMessages: () -> Unit, onOpenUser
                                     Text(post.createdAt.replace('T', ' ').take(16), color = DiscoveryMuted, fontSize = 11.sp)
                                 }
                             }
-                            Text(post.content, Modifier.padding(top = 12.dp), color = DiscoveryInk, fontSize = 15.sp, lineHeight = 22.sp)
+                            if (post.reviewStatus != "APPROVED") {
+                                Text(if (post.reviewStatus == "PENDING") "审核中，审核通过后其他人可见" else "审核未通过",
+                                    Modifier.padding(top = 10.dp), color = Color(0xFF9A6A00), fontSize = 12.sp)
+                            }
+                            if (post.content.isNotBlank()) Text(post.content, Modifier.padding(top = 12.dp), color = DiscoveryInk, fontSize = 15.sp, lineHeight = 22.sp)
+                            post.media.forEach { media ->
+                                MomentMediaImage(token, media, Modifier.fillMaxWidth().height(220.dp).padding(top = 10.dp).clip(RoundedCornerShape(8.dp)))
+                            }
                             Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 TextButton(onClick = { commentsFor = post }) {
                                     Text("评论 ${post.commentCount}", color = DiscoveryMuted)
@@ -357,26 +421,35 @@ internal fun QumiMomentsScreen(token: String, onMessages: () -> Unit, onOpenUser
             onCountChanged = { delta -> posts = posts.map { if (it.id == post.id) it.copy(commentCount = (it.commentCount + delta).coerceAtLeast(0)) else it } },
         )
     }
-    if (composeOpen) AlertDialog(
-        onDismissRequest = { if (!publishing) composeOpen = false },
-        title = { Text("发布动态") },
-        text = { Column {
-            OutlinedTextField(value = content, onValueChange = { content = it.take(500) }, modifier = Modifier.fillMaxWidth(), minLines = 4,
-                placeholder = { Text("分享此刻…") }, supportingText = { Text("${content.length}/500") })
-            Text("目前支持文字动态", Modifier.align(Alignment.End).padding(top = 4.dp), color = DiscoveryMuted, fontSize = 12.sp)
-            error?.let { Text(it, Modifier.padding(top = 6.dp), color = Color(0xFFB4233B), fontSize = 12.sp) }
-        } },
-        confirmButton = { TextButton(enabled = content.isNotBlank() && !publishing, onClick = {
-            publishing = true
-            scope.launch {
-                runCatching { api.publishMoment(token, content) }
-                    .onSuccess { post -> posts = listOf(post) + posts; content = ""; composeOpen = false; following = false }
-                    .onFailure { error = it.message ?: "发布失败，请重试" }
-                publishing = false
-            }
-        }) { Text(if (publishing) "发布中" else "发布") } },
-        dismissButton = { TextButton(enabled = !publishing, onClick = { composeOpen = false }) { Text("取消") } },
-    )
+    if (composeOpen) QumiModalSheet(
+        onDismiss = { if (!publishing && !mediaUploading) { discardComposerMedia(); composeOpen = false } },
+        dismissEnabled = !publishing && !mediaUploading,
+    ) {
+        QumiSheetTitle("发布动态")
+        OutlinedTextField(value = content, onValueChange = { content = it.take(500) }, modifier = Modifier.fillMaxWidth(), minLines = 4,
+            placeholder = { Text("分享此刻…") }, supportingText = { Text("${content.length}/500") })
+        selectedMedia?.let { media ->
+            MomentMediaImage(token, media, Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(8.dp)))
+            TextButton(enabled = !publishing && !mediaUploading, onClick = { discardComposerMedia() }) { Text("移除图片") }
+        }
+        TextButton(enabled = !publishing && !mediaUploading, onClick = { mediaPicker.launch("image/*") }) {
+            Text(if (mediaUploading) "图片上传中…" else "添加图片")
+        }
+        Text("发布后会进入审核，通过后会展示给其他用户", Modifier.fillMaxWidth(), color = DiscoveryMuted, fontSize = 12.sp)
+        error?.let { Text(it, color = Color(0xFFB4233B), fontSize = 12.sp) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(enabled = !publishing && !mediaUploading, onClick = { discardComposerMedia(); composeOpen = false }, modifier = Modifier.weight(1f)) { Text("取消") }
+            Button(enabled = (content.isNotBlank() || selectedMedia != null) && !publishing && !mediaUploading, onClick = {
+                publishing = true
+                scope.launch {
+                    runCatching { api.publishMoment(token, content, selectedMedia?.let { listOf(it.id) } ?: emptyList()) }
+                        .onSuccess { post -> posts = listOf(post) + posts; content = ""; selectedMedia = null; composeOpen = false; following = false }
+                        .onFailure { error = it.message ?: "发布失败，请重试" }
+                    publishing = false
+                }
+            }, modifier = Modifier.weight(1f)) { Text(if (publishing) "发布中" else "发布") }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -424,12 +497,20 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
                         }
                     }) { Text("$message · 重试") } } }
                     items(comments, key = { it.id }) { comment ->
-                        Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text(comment.username, color = DiscoveryInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text(comment.content, color = DiscoveryInk, fontSize = 14.sp, lineHeight = 20.sp)
+                        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.Top) {
+                            QumiUserAvatar(token, comment.avatar, Modifier.size(34.dp).clip(CircleShape).background(Color(0xFFECE8FF)), "${comment.username}的头像") {
+                                Text(comment.username.take(1), color = DiscoveryPurple, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Column(Modifier.weight(1f).padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Text(comment.username, color = DiscoveryInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text(comment.content, color = DiscoveryInk, fontSize = 14.sp, lineHeight = 20.sp)
+                                if (comment.isMine && comment.reviewStatus != "APPROVED") Text(
+                                    if (comment.reviewStatus == "PENDING") "审核中，仅自己可见" else "未通过审核${comment.moderationReason.takeIf { it.isNotBlank() }?.let { "：$it" }.orEmpty()}",
+                                    color = DiscoveryMuted, fontSize = 12.sp)
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(comment.createdAt.replace('T', ' ').take(16), Modifier.weight(1f), color = DiscoveryMuted, fontSize = 11.sp)
                                 if (comment.isMine) TextButton(onClick = { deleteTarget = comment }, enabled = !busy) { Text("删除", color = Color(0xFFB4233B)) }
+                            }
                             }
                         }
                         HorizontalDivider(color = Color(0xFFF1F1F4))
@@ -460,7 +541,7 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
                     keyboard?.hide()
                     scope.launch {
                         runCatching { api.publishMomentComment(token, post.id, value) }
-                            .onSuccess { comment -> comments = listOf(comment) + comments; content = ""; actionError = null; onCountChanged(1) }
+                            .onSuccess { comment -> comments = listOf(comment) + comments; content = ""; actionError = null; if (comment.reviewStatus == "APPROVED") onCountChanged(1) }
                             .onFailure { actionError = it.message ?: "评论发送失败，请重试" }
                         busy = false
                     }
@@ -469,20 +550,21 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
         }
     }
 
-    deleteTarget?.let { comment -> AlertDialog(
-        onDismissRequest = { if (!busy) deleteTarget = null },
-        title = { Text("删除这条评论？") },
-        text = { Text("删除后将从评论列表中移除。") },
-        confirmButton = { TextButton(enabled = !busy, onClick = {
+    deleteTarget?.let { comment -> QumiConfirmSheet(
+        title = "删除这条评论？",
+        message = "删除后将从评论列表中移除。",
+        confirmLabel = if (busy) "处理中" else "删除",
+        busy = busy,
+        onDismiss = { deleteTarget = null },
+        onConfirm = {
             busy = true
             scope.launch {
                 runCatching { api.deleteMomentComment(token, post.id, comment.id) }
-                    .onSuccess { comments = comments.filterNot { it.id == comment.id }; deleteTarget = null; onCountChanged(-1) }
+                    .onSuccess { comments = comments.filterNot { it.id == comment.id }; deleteTarget = null; if (comment.reviewStatus == "APPROVED") onCountChanged(-1) }
                     .onFailure { actionError = it.message ?: "删除失败，请重试" }
                 busy = false
             }
-        }) { Text(if (busy) "处理中" else "删除") } },
-        dismissButton = { TextButton(enabled = !busy, onClick = { deleteTarget = null }) { Text("取消") } },
+        },
     ) }
 }
 
@@ -553,7 +635,7 @@ internal fun QumiUserSearchScreen(token: String, onBack: () -> Unit, onOpenUser:
                 results.forEach { user ->
                     Row(Modifier.fillMaxWidth().clickable { onOpenUser(user.id.toString(), user.username) }
                         .padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(48.dp).clip(CircleShape).background(Color(0xFFECE8FF)), contentAlignment = Alignment.Center) {
+                        QumiUserAvatar(token, user.avatar, Modifier.size(48.dp).clip(CircleShape).background(Color(0xFFECE8FF)), "${user.username}的头像") {
                             Text(user.username.take(1), color = DiscoveryPurple, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Column(Modifier.weight(1f).padding(start = 12.dp)) {

@@ -34,23 +34,35 @@ private val QumiMuted = Color(0xFF968BA8)
 
 @Composable
 internal fun QumiLoginFrame(
+    smsMode: Boolean,
     registering: Boolean,
-    accountId: String,
     username: String,
+    phone: String,
+    code: String,
+    accountId: String,
     password: String,
     error: String?,
     busy: Boolean,
-    onAccountId: (String) -> Unit,
+    codeSending: Boolean,
+    codeCooldown: Int,
+    onPhone: (String) -> Unit,
+    onCode: (String) -> Unit,
     onUsername: (String) -> Unit,
+    onAccountId: (String) -> Unit,
     onPassword: (String) -> Unit,
+    onSendCode: () -> Unit,
     onSubmit: () -> Unit,
+    onToggleMode: () -> Unit,
     onToggleRegister: () -> Unit,
 ) {
     var agreed by remember { mutableStateOf(false) }
     var showTerms by remember { mutableStateOf(false) }
     var showPrivacy by remember { mutableStateOf(false) }
-    val enabled = !busy && agreed && password.isNotBlank() &&
-        if (registering) username.isNotBlank() else accountId.isNotBlank()
+    val enabled = !busy && !codeSending && agreed && if (smsMode) {
+        phone.length == 11 && code.length == 6
+    } else {
+        (if (registering) username.isNotBlank() else accountId.isNotBlank()) && password.isNotBlank()
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFF171234))) {
         val pageHeight = maxHeight
@@ -93,9 +105,27 @@ internal fun QumiLoginFrame(
             Text("Nice to meet you", color = Color(0xFF8C80A4), fontSize = 28.sp, lineHeight = 36.sp)
             Spacer(Modifier.height(pageHeight * .078f))
 
-            if (registering) {
-                QumiInputPill("用户名", username, "输入用户名", onUsername)
+            if (smsMode) {
+                QumiInputPill(
+                    label = "手机号",
+                    value = phone,
+                    placeholder = "输入手机号",
+                    onValueChange = onPhone,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                )
+                Spacer(Modifier.height(25.dp))
+                QumiSmsCodePill(
+                    code = code,
+                    sending = codeSending,
+                    cooldown = codeCooldown,
+                    enabled = !busy && !codeSending && codeCooldown == 0 && phone.length == 11,
+                    onCode = onCode,
+                    onSendCode = onSendCode,
+                )
             } else {
+                if (registering) {
+                    QumiInputPill("用户名", username, "输入用户名", onUsername)
+                } else {
                 QumiInputPill(
                     label = "账号ID",
                     value = accountId,
@@ -103,15 +133,16 @@ internal fun QumiLoginFrame(
                     onValueChange = onAccountId,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
+                }
+                Spacer(Modifier.height(25.dp))
+                QumiInputPill(
+                    label = "密码",
+                    value = password,
+                    placeholder = "输入密码",
+                    onValueChange = onPassword,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
             }
-            Spacer(Modifier.height(25.dp))
-            QumiInputPill(
-                label = "密码",
-                value = password,
-                placeholder = "输入密码",
-                onValueChange = onPassword,
-                visualTransformation = PasswordVisualTransformation(),
-            )
 
             if (error != null) {
                 Text(error, color = Color(0xFFFFD6DC), fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp, start = 8.dp))
@@ -128,15 +159,24 @@ internal fun QumiLoginFrame(
                 ),
             ) {
                 if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
-                else Text(if (registering) "注册并登录" else "登录", color = Color.White, fontSize = 28.sp)
+                else Text(if (smsMode) "登录 / 注册" else if (registering) "注册并登录" else "登录", color = Color.White, fontSize = 28.sp)
             }
 
             TextButton(
-                onClick = onToggleRegister,
+                onClick = onToggleMode,
+                enabled = !busy && !codeSending,
                 modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 20.dp),
                 colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
             ) {
-                Text(if (registering) "已有账号？登录" else "创建新账号", fontSize = 24.sp)
+                Text(if (smsMode) "使用账号密码登录" else "短信验证码登录", fontSize = 20.sp)
+            }
+            if (!smsMode) TextButton(
+                onClick = onToggleRegister,
+                enabled = !busy && !codeSending,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+                colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
+            ) {
+                Text(if (registering) "已有账号？登录" else "创建账号", fontSize = 18.sp)
             }
 
             Spacer(Modifier.weight(1f, fill = false))
@@ -164,17 +204,69 @@ internal fun QumiLoginFrame(
     }
 
     if (showTerms || showPrivacy) {
-        AlertDialog(
-            onDismissRequest = { showTerms = false; showPrivacy = false },
-            title = { Text(if (showTerms) "用户协议" else "隐私协议") },
-            text = { Text("现场 Live 服务协议与隐私说明。登录或注册前请阅读并确认同意。") },
-            confirmButton = {
-                TextButton(onClick = { agreed = true; showTerms = false; showPrivacy = false }) { Text("同意") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showTerms = false; showPrivacy = false }) { Text("返回") }
+        QumiConfirmSheet(
+            title = if (showTerms) "用户协议" else "隐私协议",
+            message = "现场 Live 服务协议与隐私说明。登录或注册前请阅读并确认同意。",
+            confirmLabel = "同意",
+            dismissLabel = "返回",
+            onDismiss = { showTerms = false; showPrivacy = false },
+            onConfirm = { agreed = true; showTerms = false; showPrivacy = false },
+        )
+    }
+}
+
+@Composable
+private fun QumiSmsCodePill(
+    code: String,
+    sending: Boolean,
+    cooldown: Int,
+    enabled: Boolean,
+    onCode: (String) -> Unit,
+    onSendCode: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().height(83.dp).clip(CircleShape)
+            .background(Color.White.copy(alpha = if (focused) .40f else .32f))
+            .padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("验证码", color = Color(0xFFD5D0DE), fontSize = 17.sp, modifier = Modifier.width(76.dp), maxLines = 1)
+        BasicTextField(
+            value = code,
+            onValueChange = onCode,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            textStyle = TextStyle(color = Color.White, fontSize = 24.sp),
+            cursorBrush = Brush.verticalGradient(listOf(Color.White, Color.White)),
+            modifier = Modifier.weight(1f).onFocusChanged { focused = it.isFocused },
+            decorationBox = { inner ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (code.isEmpty()) Text("输入验证码", color = Color.White.copy(alpha = .78f), fontSize = 18.sp, maxLines = 1)
+                    inner()
+                }
             },
         )
+        TextButton(
+            onClick = onSendCode,
+            enabled = enabled,
+            contentPadding = PaddingValues(horizontal = 5.dp),
+            modifier = Modifier.height(48.dp),
+            colors = ButtonDefaults.textButtonColors(
+                contentColor = Color.White,
+                disabledContentColor = Color.White.copy(alpha = .55f),
+            ),
+        ) {
+            Text(
+                when {
+                    sending -> "发送中"
+                    cooldown > 0 -> "${cooldown}s"
+                    else -> "获取验证码"
+                },
+                fontSize = 14.sp,
+                maxLines = 1,
+            )
+        }
     }
 }
 

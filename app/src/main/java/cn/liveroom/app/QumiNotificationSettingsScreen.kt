@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
@@ -25,8 +26,16 @@ private val NotificationInk = Color(0xFF19191F)
 private val NotificationMuted = Color(0xFF858A98)
 
 @Composable
-internal fun QumiNotificationSettingsScreen(token: String, onBack: () -> Unit) {
+internal fun QumiNotificationSettingsScreen(
+    token: String,
+    onBack: () -> Unit,
+    onOpenVisitors: () -> Unit = {},
+    onOpenAnnouncements: () -> Unit = {},
+    onOpenMessage: (String?) -> Unit = {},
+) {
     var preferences by remember { mutableStateOf<NotificationPreferences?>(null) }
+    var notifications by remember { mutableStateOf<List<UserNotificationItem>>(emptyList()) }
+    var unreadCount by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(true) }
     var saving by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -41,6 +50,9 @@ internal fun QumiNotificationSettingsScreen(token: String, onBack: () -> Unit) {
         runCatching { api.notificationPreferences(token) }
             .onSuccess { preferences = it }
             .onFailure { error = it.message ?: "通知设置加载失败" }
+        runCatching { api.notifications(token) }
+            .onSuccess { notifications = it.items; unreadCount = it.unreadCount }
+            .onFailure { if (error == null) error = it.message ?: "通知加载失败" }
         loading = false
     }
 
@@ -98,6 +110,51 @@ internal fun QumiNotificationSettingsScreen(token: String, onBack: () -> Unit) {
                             OutlinedButton(onClick = {
                                 context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
                             }) { Text("打开系统通知设置") }
+                        }
+                    }
+                }
+                item {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("站内通知${if (unreadCount > 0) " · $unreadCount 条未读" else ""}", Modifier.weight(1f), color = NotificationInk, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        if (unreadCount > 0) TextButton(onClick = {
+                            scope.launch {
+                                runCatching { api.markNotificationsReadAll(token) }
+                                    .onSuccess {
+                                        notifications = notifications.map { item -> item.copy(readAt = item.readAt ?: "已读") }
+                                        unreadCount = 0
+                                    }
+                                    .onFailure { error = it.message ?: "标记已读失败，请重试" }
+                            }
+                        }) { Text("全部已读") }
+                    }
+                }
+                if (notifications.isEmpty()) item {
+                    Text("暂无站内通知", Modifier.padding(horizontal = 4.dp, vertical = 12.dp), color = NotificationMuted, fontSize = 13.sp)
+                }
+                items(notifications, key = { it.id }) { item ->
+                    Surface(color = Color.White, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth().clickable {
+                        scope.launch {
+                            runCatching { api.markNotificationRead(token, item.id) }
+                                .onSuccess {
+                                    val updated = notifications.map { current -> if (current.id == item.id) current.copy(readAt = current.readAt ?: "已读") else current }
+                                    notifications = updated
+                                    unreadCount = updated.count { it.readAt == null }
+                                }
+                                .onFailure { error = it.message ?: "标记已读失败，请重试" }
+                            when (item.kind) {
+                                "VISITOR" -> onOpenVisitors()
+                                "ANNOUNCEMENT" -> onOpenAnnouncements()
+                                "MESSAGE" -> onOpenMessage(item.actorId)
+                            }
+                        }
+                    }) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(item.title, Modifier.weight(1f), color = NotificationInk, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                if (item.readAt == null) Surface(color = Color(0xFFE85D75), shape = RoundedCornerShape(20.dp)) { Text("未读", Modifier.padding(horizontal = 7.dp, vertical = 2.dp), color = Color.White, fontSize = 10.sp) }
+                            }
+                            Text(item.body, color = NotificationMuted, fontSize = 13.sp, maxLines = 2)
+                            Text(item.createdAt.replace('T', ' ').take(16), color = NotificationMuted, fontSize = 11.sp)
                         }
                     }
                 }

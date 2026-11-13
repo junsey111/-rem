@@ -18,6 +18,7 @@ let cohostMode=null;
 let paidAllowed=true;
 stub('@/service/media-access',{requireMediaAccess:async()=>{if(!paidAllowed)throw Object.assign(Error('locked'),{statusCode:402});return 37;}});
 stub('@/service/media-authority', { mediaAuthority:async room=>({room,open:liveStatus==='OPEN',publishers:room.startsWith('pk-')?['1','2']:(cohostMode?['1','9']:['1']),...(cohostMode?{publish_sources:{'9':cohostMode==='AUDIO'?['microphone']:['microphone','camera']}}:{})}), mediaSessionHash:token=>'hash-'+token });
+stub('@/service/interaction-policy', { assertPeerAccess: async () => {} });
 stub('@/config/secret', { LIVEKIT_API_KEY:'fixture-key', LIVEKIT_API_SECRET:'fixture-secret', REVENUE_API_URL:'http://fixture' });
 stub('@/app/auth/authJwt', { authJwt:async ctx => ({ code:200, userInfo:{ id:Number(ctx.headers.authorization.slice(7)) } }) });
 stub('@/app/handler/success-handle', { __esModule:true, default:({ctx,data}) => { ctx.body=data; } });

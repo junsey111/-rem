@@ -12,6 +12,16 @@ import axios from '@/utils/request';
 
 const revenueRouter = new Router({ prefix: '/revenue' });
 
+// Keep routes that only proxy Revenue independent from Sequelize initialization.
+// The supporter view is the only route that needs these Billd models.
+function supporterModels() {
+  // eslint-disable-next-line global-require
+  const User = require('@/model/user.model').default;
+  // eslint-disable-next-line global-require
+  const UserBlock = require('@/model/userBlock.model').default;
+  return { User, UserBlock };
+}
+
 // Preserve actionable business refusals instead of presenting them as server errors.
 revenueRouter.use(async (_ctx, next) => {
   try {
@@ -73,6 +83,22 @@ revenueRouter.put('/profile', async (ctx, next) => {
   const result = await axios.put(`${REVENUE_API_URL}/v1/users/me/profile`, ctx.request.body || {}, { headers: { Authorization: ctx.headers.authorization || '' } });
   successHandler({ ctx, data: result });
   await next();
+});
+
+revenueRouter.get('/preferences', async ctx => {
+  await requireUser(ctx);
+  const result = await axios.get(`${REVENUE_API_URL}/v1/users/me/preferences`, {
+    headers: { Authorization: ctx.headers.authorization || '' }, timeout: 10000,
+  });
+  successHandler({ ctx, data: result });
+});
+
+revenueRouter.put('/preferences', async ctx => {
+  await requireUser(ctx);
+  const result = await axios.put(`${REVENUE_API_URL}/v1/users/me/preferences`, ctx.request.body || {}, {
+    headers: { Authorization: ctx.headers.authorization || '' }, timeout: 10000,
+  });
+  successHandler({ ctx, data: result });
 });
 
 revenueRouter.get('/gift-orders', async ctx => {
@@ -182,6 +208,19 @@ revenueRouter.get('/earnings', async (ctx, next) => {
   await next();
 });
 
+revenueRouter.get('/rose-bills', async ctx => {
+  await requireUser(ctx);
+  const cursor = ctx.query.before_id;
+  if (cursor !== undefined && (typeof cursor !== 'string' || !/^[1-9][0-9]{0,19}$/.test(cursor))) {
+    throw new CustomError('记录分页已失效，请刷新后重试', 400, 400);
+  }
+  const result = await axios.get(`${REVENUE_API_URL}/v1/creators/me/rose-bills`, {
+    params: cursor === undefined ? {} : { before_id: cursor },
+    headers: { Authorization: ctx.headers.authorization || '' },
+  });
+  successHandler({ ctx, data: result });
+});
+
 revenueRouter.get('/sessions', async ctx => {
   await requireUser(ctx);
   const result = await axios.get(`${REVENUE_API_URL}/v1/creators/me/sessions`, {
@@ -193,6 +232,24 @@ revenueRouter.get('/sessions', async ctx => {
 revenueRouter.get('/supporters', async ctx => {
   await requireUser(ctx);
   const result = await axios.get(`${REVENUE_API_URL}/v1/creators/me/supporters`, {
+    headers: { Authorization: ctx.headers.authorization || '' }, timeout: 10000,
+  });
+  successHandler({ ctx, data: result });
+});
+
+revenueRouter.get('/creators/:creatorId/supporters', async ctx => {
+  const user = await requireUser(ctx);
+  const creatorId = Number(ctx.params.creatorId);
+  if (!Number.isSafeInteger(creatorId) || creatorId < 1) throw new CustomError('主播 ID 无效', 400, 400);
+  const { User, UserBlock } = supporterModels();
+  const [target, blockedByMe, blockedMe] = await Promise.all([
+    User.findOne({ attributes: ['id'], where: { id: creatorId, status: 1 } }),
+    UserBlock.findOne({ attributes: ['blocker_id'], where: { blocker_id: user.id, blocked_id: creatorId }, raw: true }),
+    UserBlock.findOne({ attributes: ['blocker_id'], where: { blocker_id: creatorId, blocked_id: user.id }, raw: true }),
+  ]);
+  if (!target || blockedByMe || blockedMe) throw new CustomError('该用户不存在或暂不可查看', 404, 404);
+  await syncRevenueUser({ id: creatorId });
+  const result = await axios.get(`${REVENUE_API_URL}/v1/creators/${creatorId}/supporters`, {
     headers: { Authorization: ctx.headers.authorization || '' }, timeout: 10000,
   });
   successHandler({ ctx, data: result });

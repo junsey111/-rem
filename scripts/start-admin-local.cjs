@@ -24,14 +24,16 @@ Object.assign(process.env, {
   MYSQL_DATABASE:'live_ops_local_billd', JWT_SECRET:config.jwtSecret, INTERNAL_SERVICE_KEY:config.internalKey,
   PAYMENT_WEBHOOK_SECRET:'', REVENUE_API_URL:'http://127.0.0.1:24808',
   ALIPAY_DISBURSEMENTS_ENABLED:'false', ALIPAY_RECHARGE_ENABLED:'false', IDENTITY_ENABLED:'false',
+  SMS_ENABLED:'false', REDIS_HOST:'127.0.0.1', REDIS_PORT:process.env.REDIS_PORT || '26379',
 });
 dependency('module-alias').addAlias('@', path.join(backend, 'dist'));
 const children = [];
-let server, db;
+let server, db, redis;
 async function stop() {
   for (const child of children) child.kill();
   if (server) server.close();
   if (db) await db.close();
+  if (redis?.isOpen) await redis.quit();
 }
 process.once('SIGINT',()=>{stop().finally(()=>process.exit());});
 process.once('SIGTERM',()=>{stop().finally(()=>process.exit());});
@@ -50,6 +52,7 @@ process.once('SIGTERM',()=>{stop().finally(()=>process.exit());});
   for(const [binary,source] of [[apiBin,'./cmd/api'],[migrateBin,'./cmd/migrate']]) execFileSync('go',['build','-o',binary,source],{cwd:revenue,env,stdio:'inherit'});
   execFileSync(migrateBin,[],{cwd:revenue,env,stdio:'inherit'});
   db=dependency('@/config/mysql').default;
+  redis=await dependency('@/config/redis').connectRedis();
   const modelDir=path.join(backend,'dist/model');
   for(const file of fs.readdirSync(modelDir).filter(file=>file.endsWith('.model.js'))) require(path.join(modelDir,file));
   dependency('@/model/relation');
@@ -66,7 +69,7 @@ process.once('SIGTERM',()=>{stop().finally(()=>process.exit());});
   app.use(dependency('@/app/app.middleware').catchErrorMiddle);
   app.use(dependency('koa-bodyparser')({jsonLimit:'32kb'}));
   app.use(dependency('@/app/verify.middleware').apiBeforeVerify);
-  for(const file of ['user','revenue','operations','business-settings','finance','account-moderation','room-chat','cohost','cover','live','provider','identity']){
+  for(const file of ['user','revenue','operations','business-settings','finance','account-moderation','room-chat','cohost','cover','live','provider','identity','moments','notifications','notification-preferences','close-friends','social-catalog','qualification','openim','openim-hook','livekit']){
     const router=dependency(`@/router/${file}.router`).default;app.use(router.routes()).use(router.allowedMethods());
   }
   server=app.listen(24300,'127.0.0.1');

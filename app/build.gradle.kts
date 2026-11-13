@@ -4,6 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+fun buildConfigString(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
 android {
     namespace = "cn.liveroom.app"
     compileSdk = 35
@@ -17,6 +19,10 @@ android {
     val openImApiPort = providers.gradleProperty("openImApiPort").orElse("10002").get()
     val openImWsPort = providers.gradleProperty("openImWsPort").orElse("10001").get()
     val previewQumiLogin = providers.gradleProperty("previewQumiLogin").orElse("false").get().toBoolean()
+    val firebaseApiKey = providers.gradleProperty("firebaseApiKey").orElse("").get()
+    val firebaseAppId = providers.gradleProperty("firebaseAppId").orElse("").get()
+    val firebaseProjectId = providers.gradleProperty("firebaseProjectId").orElse("").get()
+    val firebaseSenderId = providers.gradleProperty("firebaseSenderId").orElse("").get()
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
@@ -39,6 +45,10 @@ android {
         buildConfigField("String", "OPENIM_API_URL", "\"http://$backendHost:$openImApiPort\"")
         buildConfigField("String", "OPENIM_WS_URL", "\"ws://$backendHost:$openImWsPort\"")
         buildConfigField("boolean", "PREVIEW_QUMI_LOGIN", previewQumiLogin.toString())
+        buildConfigField("String", "FIREBASE_API_KEY", buildConfigString(firebaseApiKey))
+        buildConfigField("String", "FIREBASE_APP_ID", buildConfigString(firebaseAppId))
+        buildConfigField("String", "FIREBASE_PROJECT_ID", buildConfigString(firebaseProjectId))
+        buildConfigField("String", "FIREBASE_SENDER_ID", buildConfigString(firebaseSenderId))
     }
 
     buildFeatures {
@@ -58,6 +68,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-messaging")
     implementation("io.livekit:livekit-android:2.29.2")
     implementation("com.github.pedroSG94.RootEncoder:library:2.6.7")
     implementation("io.socket:socket.io-client:2.1.0")

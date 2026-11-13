@@ -105,6 +105,12 @@ class OpenImGateway(private val context: Context) {
         OpenImHistory(conversationId, allMessages.filter { it.status < 4 }, result.optBoolean("isEnd"), rows.optJSONObject(0)?.optString("clientMsgID").orEmpty())
     }
 
+    suspend fun clearConversationHistory(recipientId: String) = withContext(Dispatchers.IO) {
+        val conversationId = ensureDirectConversation(recipientId)
+        awaitBase { callback -> Open_im_sdk.clearConversationAndDeleteAllMsg(callback, "android-${UUID.randomUUID()}", conversationId) }
+        _messageVersion.update { it + 1 }
+    }
+
     suspend fun markRead(conversationId: String) = withContext(Dispatchers.IO) {
         awaitBase { callback -> Open_im_sdk.markConversationMessageAsRead(callback, "android-${UUID.randomUUID()}", conversationId) }
     }

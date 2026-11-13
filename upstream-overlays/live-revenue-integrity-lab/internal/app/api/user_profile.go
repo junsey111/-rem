@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mini_station/live-revenue-integrity-lab/internal/httpx"
 )
@@ -21,8 +22,10 @@ func (s *Server) handleUserProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPut {
 		var req struct {
-			Age    int    `json:"age_years"`
-			Region string `json:"region_code"`
+			Age       int     `json:"age_years"`
+			Region    string  `json:"region_code"`
+			Gender    string  `json:"gender"`
+			BirthDate *string `json:"birth_date"`
 		}
 		if json.NewDecoder(r.Body).Decode(&req) != nil || req.Age < 1 || req.Age > 120 {
 			httpx.WriteError(w, http.StatusBadRequest, "INVALID_AGE", "age must be between 1 and 120")
@@ -34,16 +37,63 @@ func (s *Server) handleUserProfile(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadRequest, "INVALID_REGION", "two-letter region code required")
 			return
 		}
+		req.Gender = strings.ToUpper(strings.TrimSpace(req.Gender))
+		if req.Gender == "" {
+			req.Gender = "UNSPECIFIED"
+		}
+		if req.Gender != "MALE" && req.Gender != "FEMALE" && req.Gender != "UNSPECIFIED" {
+			httpx.WriteError(w, http.StatusBadRequest, "INVALID_GENDER", "gender must be MALE, FEMALE or UNSPECIFIED")
+			return
+		}
+		var birthDate any
+		if req.BirthDate != nil {
+			value := strings.TrimSpace(*req.BirthDate)
+			if value != "" {
+				parsed, err := time.Parse("2006-01-02", value)
+				if err != nil || parsed.Format("2006-01-02") != value {
+					httpx.WriteError(w, http.StatusBadRequest, "INVALID_BIRTH_DATE", "birth_date must use YYYY-MM-DD")
+					return
+				}
+				now := time.Now().UTC()
+				age := now.Year() - parsed.Year()
+				if now.Month() < parsed.Month() || (now.Month() == parsed.Month() && now.Day() < parsed.Day()) {
+					age--
+				}
+				if age < 1 || age > 120 {
+					httpx.WriteError(w, http.StatusBadRequest, "INVALID_BIRTH_DATE", "birth_date must describe an age between 1 and 120")
+					return
+				}
+				req.Age = age
+				birthDate = value
+			}
+		}
 		// Self-declared facts do not change moderation or platform permissions.
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE users SET age_years=?,region_code=?,profile_source='SELF_REPORTED' WHERE user_id=?`, req.Age, req.Region, user); err != nil {
+		result, err := s.db.ExecContext(r.Context(), `UPDATE users SET age_years=?,region_code=?,gender=COALESCE(gender,?),birth_date=IF(?,?,birth_date),profile_source='SELF_REPORTED' WHERE user_id=? AND (gender IS NULL OR gender=?)`, req.Age, req.Region, req.Gender, req.BirthDate != nil, birthDate, user, req.Gender)
+		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
+		}
+		if affected, rowsErr := result.RowsAffected(); rowsErr != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", rowsErr.Error())
+			return
+		} else if affected == 0 {
+			var currentGender sql.NullString
+			if err := s.db.QueryRowContext(r.Context(), `SELECT gender FROM users WHERE user_id=?`, user).Scan(&currentGender); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+				return
+			}
+			if currentGender.Valid && currentGender.String != req.Gender {
+				httpx.WriteError(w, http.StatusConflict, "GENDER_IMMUTABLE", "gender cannot be changed after it is set")
+				return
+			}
 		}
 	}
 	var age sql.NullInt64
 	var region sql.NullString
+	var gender sql.NullString
+	var birthDate sql.NullTime
 	var source string
-	if err := s.db.QueryRowContext(r.Context(), `SELECT CASE WHEN profile_source='SELF_REPORTED' THEN age_years END,CASE WHEN profile_source='SELF_REPORTED' THEN region_code END,profile_source FROM users WHERE user_id=?`, user).Scan(&age, &region, &source); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), `SELECT CASE WHEN profile_source='SELF_REPORTED' THEN age_years END,CASE WHEN profile_source='SELF_REPORTED' THEN region_code END,CASE WHEN profile_source='SELF_REPORTED' THEN gender END,CASE WHEN profile_source='SELF_REPORTED' THEN birth_date END,profile_source FROM users WHERE user_id=?`, user).Scan(&age, &region, &gender, &birthDate, &source); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
@@ -54,5 +104,13 @@ func (s *Server) handleUserProfile(w http.ResponseWriter, r *http.Request) {
 	if region.Valid {
 		regionValue = region.String
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"age_years": ageValue, "region_code": regionValue, "source": source})
+	var genderValue any
+	if gender.Valid {
+		genderValue = gender.String
+	}
+	var birthDateValue any
+	if birthDate.Valid {
+		birthDateValue = birthDate.Time.Format("2006-01-02")
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"age_years": ageValue, "region_code": regionValue, "gender": genderValue, "birth_date": birthDateValue, "source": source})
 }

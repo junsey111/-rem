@@ -245,6 +245,14 @@ export function joinDmCall(input: { userId: string; callId: string } & TokenConf
   });
 }
 
+/** Return the other participant while the short lived call record is still valid. */
+export function dmCallPeer(callId: string, userId: string): string | null {
+  const record = lookup(callId, Date.now());
+  if (!record || record.ended) return null;
+  if (record.callerId !== userId && record.peerId !== userId) throw new DmCallError('你不在这通通话中', 403);
+  return record.callerId === userId ? record.peerId : record.callerId;
+}
+
 export function endDmCall(input: { userId: string; callId: string; now?: number }): Promise<DmCallEnd> {
   return exclusive(() => {
     const now = nowOf(input.now);

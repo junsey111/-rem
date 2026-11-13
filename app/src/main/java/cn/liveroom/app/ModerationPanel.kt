@@ -125,20 +125,15 @@ fun ModerationPanel(session: UserSession, onDismiss: () -> Unit) {
         }
     }
 
-    if (showConfirmation) AlertDialog(
-        onDismissRequest = { if (!busy) showConfirmation = false },
-        title = { Text(if (pending == null) "确认强制下播" else "核实下播结果") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("直播场次 ${pending?.liveId ?: selected?.id}")
-                Text("结束该场直播和相关 PK，媒体连接会随后断开。此操作不能撤销。")
-                OutlinedTextField(value = pending?.reason ?: reason, onValueChange = { if (it.codePointCount(0, it.length) <= 200) reason = it }, enabled = pending == null && !busy,
-                    label = { Text("处置原因（必填）") }, minLines = 2, modifier = Modifier.fillMaxWidth())
-                operationMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = !busy && storageError == null && (pending != null || (selected != null && reason.isNotBlank())), onClick = {
+    if (showConfirmation) QumiModalSheet(onDismiss = { showConfirmation = false }, dismissEnabled = !busy) {
+        QumiSheetTitle(if (pending == null) "确认强制下播" else "核实下播结果", "直播场次 ${pending?.liveId ?: selected?.id}")
+        Text("结束该场直播和相关 PK，媒体连接会随后断开。此操作不能撤销。")
+        OutlinedTextField(value = pending?.reason ?: reason, onValueChange = { if (it.codePointCount(0, it.length) <= 200) reason = it }, enabled = pending == null && !busy,
+            label = { Text("处置原因（必填）") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+        operationMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(onClick = { showConfirmation = false }, enabled = !busy, modifier = Modifier.weight(1f)) { Text(if (pending == null) "取消" else "稍后核实") }
+            Button(enabled = !busy && storageError == null && (pending != null || (selected != null && reason.isNotBlank())), onClick = {
                 busy = true
                 operationMessage = null
                 scope.launch {
@@ -162,10 +157,9 @@ fun ModerationPanel(session: UserSession, onDismiss: () -> Unit) {
                     } catch (e: Exception) { operationMessage = if (pending != null) "结果未确认，请核实原操作。重复核实不会重复处置。" else e.message ?: "操作未能提交"
                     } finally { busy = false }
                 }
-            }) { Text(if (busy) "正在确认…" else if (pending == null) "确认下播" else "核实并重试") }
-        },
-        dismissButton = { TextButton(onClick = { showConfirmation = false }, enabled = !busy) { Text(if (pending == null) "取消" else "稍后核实") } },
-    )
+            }, modifier = Modifier.weight(1f)) { Text(if (busy) "正在确认…" else if (pending == null) "确认下播" else "核实并重试") }
+        }
+    }
 }
 
 private fun moderationTime(value: String): String = runCatching { java.time.Instant.parse(value).atZone(java.time.ZoneId.systemDefault())

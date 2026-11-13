@@ -85,3 +85,17 @@ internal fun QumiConfirmSheet(
         }
     }
 }
+
+@Composable
+internal fun QumiInfoSheet(
+    title: String,
+    message: String,
+    confirmLabel: String = "知道了",
+    onDismiss: () -> Unit,
+) {
+    QumiModalSheet(onDismiss = onDismiss) {
+        QumiSheetTitle(title, message)
+        HorizontalDivider(color = Color(0xFFE8E3EE))
+        Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text(confirmLabel) }
+    }
+}

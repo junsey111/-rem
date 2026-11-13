@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
@@ -31,6 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -172,15 +173,22 @@ fun DmVideoPlayerDialog(file: File, onDismiss: () -> Unit) {
         }
     }
     DisposableEffect(player) { onDispose { player.release() } }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
-        title = { Text("视频") },
-        text = {
-            AndroidView(
-                factory = { viewContext -> PlayerView(viewContext).apply { this.player = player } },
-                modifier = Modifier.fillMaxWidth().height(220.dp),
-            )
-        },
-    )
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("视频", style = MaterialTheme.typography.titleLarge)
+                    TextButton(onClick = onDismiss) { Text("关闭") }
+                }
+                AndroidView(
+                    factory = { viewContext -> PlayerView(viewContext).apply { this.player = player } },
+                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                )
+            }
+        }
+    }
 }

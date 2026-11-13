@@ -24,7 +24,6 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Share
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -192,14 +191,10 @@ internal fun QumiReferralPage(
     }
 
     if (showRules) {
-        AlertDialog(
-            onDismissRequest = { showRules = false },
-            icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-            title = { Text("邀请规则") },
-            text = {
-                Text("邀请奖励由平台运营后台配置。页面只展示服务端返回的邀请码、邀请人数和金币奖励；充值、提现比例等未由接口提供的数据不会在此推算。")
-            },
-            confirmButton = { TextButton(onClick = { showRules = false }) { Text("知道了") } },
+        QumiInfoSheet(
+            title = "邀请规则",
+            message = "邀请奖励由平台运营后台配置。页面只展示服务端返回的邀请码、邀请人数和金币奖励；充值、提现比例等未由接口提供的数据不会在此推算。",
+            onDismiss = { showRules = false },
         )
     }
 }

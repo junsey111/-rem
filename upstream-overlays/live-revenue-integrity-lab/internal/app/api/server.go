@@ -79,13 +79,20 @@ func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentS
 	mux.HandleFunc("/v1/internal/cohost-presence", s.requireInternalKey(s.wrap("cohost_presence", s.handleCohostPresence)))
 	mux.HandleFunc("/v1/cohosts/", s.requireAuth(s.wrap("cohosts", s.handleCohost)))
 	mux.HandleFunc("/v1/internal/business/", s.requireInternalKey(s.wrap("business_settings", s.handleBusinessSettings)))
+	mux.HandleFunc("/v1/internal/task-rewards", s.requireInternalKey(s.wrap("task_rewards", s.handleInternalTaskReward)))
+	mux.HandleFunc("/v1/internal/task-progress", s.requireInternalKey(s.wrap("task_progress", s.handleInternalTaskProgress)))
+	mux.HandleFunc("/v1/internal/catalog/purchases", s.requireInternalKey(s.wrap("catalog_purchase", s.handleInternalCatalogPurchase)))
+	mux.HandleFunc("/v1/internal/catalog/purchases/", s.requireInternalKey(s.wrap("catalog_reverse", s.handleInternalCatalogReverse)))
 	mux.HandleFunc("/v1/internal/admission", s.requireInternalKey(s.wrap("admission", s.handleAdmission)))
 	mux.HandleFunc("/v1/wallets/me", s.requireAuth(s.wrap("wallet_balance", s.handleWalletBalance)))
 	mux.HandleFunc("/v1/users/me/profile", s.requireAuth(s.wrap("user_profile", s.handleUserProfile)))
+	mux.HandleFunc("/v1/users/me/preferences", s.requireAuth(s.wrap("user_preferences", s.handleUserPreferences)))
 	mux.HandleFunc("/v1/users/discovery", s.requireAuth(s.wrap("user_discovery", s.handleUserDiscovery)))
 	mux.HandleFunc("/v1/creators/me/earnings", s.requireAuth(s.wrap("creator_earnings", s.handleCreatorEarnings)))
+	mux.HandleFunc("/v1/creators/me/rose-bills", s.requireAuth(s.wrap("creator_rose_bills", s.handleRoseBills)))
 	mux.HandleFunc("/v1/creators/me/sessions", s.requireAuth(s.wrap("creator_sessions", s.handleCreatorSessions)))
 	mux.HandleFunc("/v1/creators/me/supporters", s.requireAuth(s.wrap("creator_supporters", s.handleCreatorSupporters)))
+	mux.HandleFunc("/v1/creators/", s.requireAuth(s.wrap("public_creator_supporters", s.handlePublicCreatorSupporters)))
 	mux.HandleFunc("/v1/users/me/level", s.requireAuth(s.wrap("user_level", s.handleUserLevel)))
 	mux.HandleFunc("/v1/referrals/me", s.requireAuth(s.wrap("referral_me", s.handleReferralMe)))
 	mux.HandleFunc("/v1/referrals/redeem", s.requireAuth(s.wrap("referral_redeem", s.handleReferralRedeem)))
@@ -290,6 +297,69 @@ func (s *Server) handleCreatorSupporters(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"period_days": 7, "supporters": supporters})
+}
+
+func (s *Server) handlePublicCreatorSupporters(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
+		return
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) != 4 || parts[0] != "v1" || parts[1] != "creators" || parts[3] != "supporters" {
+		http.NotFound(w, r)
+		return
+	}
+	creatorID, err := strconv.ParseUint(parts[2], 10, 64)
+	if err != nil || creatorID == 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_CREATOR_ID", "creator id is invalid")
+		return
+	}
+	var hidden, disabled bool
+	var standing string
+	err = s.db.QueryRowContext(r.Context(), `SELECT hide_guardian,account_standing,EXISTS(SELECT 1 FROM platform_account_state p WHERE p.user_id=users.user_id AND p.disabled=TRUE) FROM users WHERE user_id=?`, creatorID).Scan(&hidden, &standing, &disabled)
+	if err == sql.ErrNoRows || err == nil && (standing != "GOOD" || disabled) {
+		httpx.WriteError(w, http.StatusNotFound, "CREATOR_NOT_FOUND", "creator not found")
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if hidden {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"hidden": true, "period_days": 7, "supporters": []any{}})
+		return
+	}
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT g.viewer_id, COUNT(*), COALESCE(SUM(g.charged_coins),0)
+		FROM gift_orders g JOIN users u ON u.user_id=g.viewer_id
+		WHERE g.creator_id=? AND g.status='ACCEPTED' AND g.created_at>=UTC_TIMESTAMP(6)-INTERVAL 7 DAY
+			AND u.account_standing='GOOD'
+			AND NOT EXISTS (SELECT 1 FROM platform_account_state p WHERE p.user_id=u.user_id AND p.disabled=TRUE)
+		GROUP BY g.viewer_id ORDER BY 3 DESC, g.viewer_id ASC LIMIT 50`, creatorID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	defer rows.Close()
+	type supporter struct {
+		UserID uint64 `json:"user_id"`
+		Gifts  int64  `json:"gift_count"`
+		Coins  int64  `json:"coins"`
+	}
+	supporters := make([]supporter, 0)
+	for rows.Next() {
+		var item supporter
+		if err := rows.Scan(&item.UserID, &item.Gifts, &item.Coins); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
+		supporters = append(supporters, item)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"hidden": false, "period_days": 7, "supporters": supporters})
 }
 
 func (s *Server) handleUserLevel(w http.ResponseWriter, r *http.Request) {

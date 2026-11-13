@@ -24,7 +24,7 @@
 - LiveKit Android SDK + LiveKit Server：双人 PK、连麦和实时音视频。
 - OpenIM SDK Core + OpenIM Server：私信和聊天。
 - ZLMediaKit：SRS 的可选替代媒体底座。
-- Billd Live Server：当前 checkout 提供用户、直播房间、Socket.IO 信令和支付宝入口；README 中提到但源码尚未提供的礼物、金币、收益、榜单、商品订单和 PK 业务需要后续补齐。
+- Billd Live Server：上游提供用户、直播房间、Socket.IO 信令和支付宝入口；本仓库覆盖层补充账号会话、社交动态与审核、通知、直播权限、运营 API，并通过 Live Revenue Integrity Lab 提供钱包、礼物、榜单和结算。支付、实名仍按后端环境开关控制，不能以接口存在推断真实渠道已启用。
 - Billd Live Kotlin：已拉取到 `third_party/billd-live-kotlin` 供复用；当前是 Android Studio 模板级工程，首页是占位页，API 默认连作者线上服务，不能直接作为完整客户端。版本见 `UPSTREAM.lock`。
 - Live Revenue Integrity Lab：已拉取到 `third_party/live-revenue-integrity-lab`，作为业务账务服务。它提供充值、礼物扣币、双重记账、PK 比分、贡献榜/活动榜和直播结算对账 API，版本见 `UPSTREAM.lock`。
 
@@ -59,7 +59,7 @@ OpenIM 用户注册和 `/auth/get_user_token` 由 Billd 的 `POST /openim/sessio
 
 消息会话现在通过 `openim_session` 表绑定当前 App 登录会话的 SHA-256 摘要；同一会话重复请求会先核实并复用有效消息令牌。签发前先提交待处理记录，远程签发超时或本地提交失败后仍能撤销孤立令牌。后台每轮完成后等待 5 秒，按数据库账号状态、当前令牌及期限核对；失效、禁用、删除或被替换的会话调用 OpenIM 强制下线，失败保留记录重试。新迁移 `20261102_openim_sessions.sql` 必须先执行；既有未绑定的 Android 消息令牌部署时重置一次。仅覆盖配置的 Android platform ID 与本应用记录，其他独立客户端不在本轮范围。
 
-私信里的礼物和视频是 OpenIM 自定义消息（`dm_gift`、`dm_video`），不是第二套钱包。Android 先调用 Billd，再把服务端返回的 `im_custom` 原样发给对方。`POST /openim/dm-gifts` 转发到 Revenue `POST /v1/dm/gifts`（可用 `REVENUE_DM_GIFTS_PATH` 改路径）；对方尚未提供该接口时返回 501，`settlement=UNAVAILABLE`，不发礼物消息，也不在 Billd 记账。付费视频解锁同样转发 `POST /v1/dm/video-unlocks`，播放权限优先看 `GET /v1/dm/videos/:id/access`。免费视频不走结算。视频文件只存在 Billd 磁盘，消息体里没有播放地址。`GET /openim/support` 使用 `OPENIM_SUPPORT_USER_ID`；留空则 App 不显示客服入口，也不会放一套预设回复。各入口按钮调用 `openSupportConversation`，复用当前 OpenIM 登录。`OPENIM_SECRET` 仍然只在服务端。
+私信里的礼物和视频是 OpenIM 自定义消息（`dm_gift`、`dm_video`），不是第二套钱包。Android 先调用 Billd，再把 Revenue 已确认的 `im_custom` 原样发给对方。Revenue 仓库已实现 `POST /v1/dm/gifts`、`GET /v1/dm/gifts/:request_id`、`POST /v1/dm/video-unlocks` 和 `GET /v1/dm/videos/:id/access`；私信结算表由 `00020_dm_settlement.sql` 创建。部署时必须升级 Revenue 并应用该迁移，旧版或缺少路由的服务会 fail closed，不会发送带扣款结果的私信消息，也不会在 Billd 记账。Billd 路径可通过 `REVENUE_DM_GIFTS_PATH`、`REVENUE_DM_VIDEO_UNLOCK_PATH`、`REVENUE_DM_VIDEO_ACCESS_PATH` 覆盖。免费视频不走结算。视频文件只存在 Billd 磁盘，消息体里没有播放地址。`GET /openim/support` 使用 `OPENIM_SUPPORT_USER_ID`；留空则 App 不显示客服入口，也不会放一套预设回复。各入口按钮调用 `openSupportConversation`，复用当前 OpenIM 登录。`OPENIM_SECRET` 仍然只在服务端。
 
 `POST /user/logout` 只撤销请求对应的当前 App 会话，迟到请求不会清除新登录。Android 退出前持久化待同步记录，联网时调用真实退出接口；离线可先退出本机，App 运行时每 10 秒重试，下次启动继续，并在新登录前同步。App 完全关闭且离线时无法立即通知服务端，远程会话仍需等同步或原登录到期。消息撤销也受核对轮次、服务故障及排队影响，不是零延迟。设备离线退出、重连与 SDK 交互仍待实测。
 
@@ -80,6 +80,8 @@ OpenIM 上游 Compose 使用固定的 `mongo`、`redis` 等容器名，在其独
 ```
 
 生成的 APK 在 `app/build/outputs/apk/debug/app-debug.apk`。实体手机必须能访问 VMware 的桥接/局域网地址；模拟器仍使用默认的 `10.0.2.2`。如果首页显示“暂时没有在线直播”，说明服务可达但当前没有主播通过 Socket.IO 开播，不代表前端页面缺失。
+
+Android 推送为可选配置。构建时传入 `-PfirebaseApiKey=... -PfirebaseAppId=... -PfirebaseProjectId=... -PfirebaseSenderId=...` 后，登录成功会向 Billd 登记 FCM 令牌；Android 13 及以上还需用户允许通知。不传这些参数时不会初始化 Firebase。Billd 容器需要同时设置 `FCM_SERVICE_ACCOUNT_JSON`（可传服务账号 JSON 字符串或容器内文件路径），否则通知保存在站内通知中心但不会调用 FCM。服务账号和构建参数只放本地环境，不要提交到 Git。
 
 `LiveKitRoomGateway` 已调用官方 SDK 的 `LiveKit.create()` 和 `Room.connect()`。礼物、充值、榜单、收益、审核和管理员操作必须接入业务 API，由服务端校验余额和权限，不能在客户端计算或保存真实账目。
 
@@ -138,7 +140,7 @@ LiveKit 房间 token 入口为 `POST /livekit/token`（JSON：`live_session_id`�
 
 既有数据库部署前执行 Billd 的 `migrations/20261102_recharge_orders.sql`，并部署对应订单 model 与路由。初始化使用 DB_SYNC_MODE=3 时不会自动创建新表，必须执行该迁移。新模型已在 initDb 中显式注册，以便正常数据库同步模式创建。商户缺少配置时接口返回 503；需要支付宝可访问的 PUBLIC_BASE_URL 才能接收真实通知。当前 VM 未配置有效商户，尚不能完成真实支付。
 
-关注关系、动态、评论、访客和用户屏蔽功能需要先在既有 Billd 数据库执行 `migrations/20261105_user_follow_relation.sql`、`migrations/20261105_user_moments.sql`、`migrations/20261105_profile_visits.sql` 和 `migrations/20261105_user_blocks.sql`；这些脚本可重复执行，不会清理已有数据。动态支持纯文字发布、全部/关注/本人/指定用户主页列表、点赞、评论分页、评论发布/本人删除及本人动态删除；图片和内容审核后台尚未接入，不能据此开放不受审核的公开生产发布。访客记录在查看其他用户主页时产生，每个访客只保留最近查看时间。屏蔽关系从用户搜索和推荐中双向隐藏账号，并过滤动态与评论；OpenIM 私信端的权限拦截尚未接入。
+关注关系、动态、评论、访客和用户屏蔽功能需要先在既有 Billd 数据库执行 `migrations/20261105_user_follow_relation.sql`、`migrations/20261105_user_moments.sql`、`migrations/20261105_profile_visits.sql` 和 `migrations/20261105_user_blocks.sql`；这些脚本可重复执行，不会清理已有数据。动态支持纯文字与图片发布、全部/关注/本人/指定用户主页列表、点赞、评论分页、评论发布/本人删除及本人动态删除；所有新动态统一进入运营审核队列，通过后才会展示给其他用户，尚无自动内容识别或单独的评论审核队列。待审核动态不能通过评论和点赞接口被其他用户访问。访客记录在查看其他用户主页时产生，每个访客只保留最近查看时间。屏蔽关系会双向隐藏搜索、推荐、动态和评论，并阻止 OpenIM 私信送礼/视频及一对一通话；正式公开运营前仍需配置评论审核流程。
 
 充值路由回归：先在 Billd 目录执行 `pnpm build`，再运行 `node --test tests/alipay-orders.test.cjs`。测试用临时 RSA 密钥验证真实 SDK 验签，订单和账务边界隔离；不能代替真实付款验收。
 
@@ -174,7 +176,7 @@ docker compose -p live-openim -f openim-local-compose.yml up -d
 
 ### 运营入口与权限
 
-运营概览和账号分页仅对数据库中拥有 `SUPER_ADMIN` 角色的有效账号开放；普通用户不显示运营导航，直接请求接口也会被拒绝。新注册账号不会自动获得管理员权限。现有真实统计、账号读取，以及「直播管理与处置记录」：选择尚未结束的真实直播场次，填写原因并确认后强制下播，同时结束相关 PK，媒体随后由扫描清理。操作与审计在同一事务提交，同一单号重试不会再次执行；手机保存未确认操作，可重启后继续核实。部署先执行 Revenue 迁移 `00009_moderation_actions.sql`。账号封禁/解禁及审核仍未完成。正式环境管理员账号须明确指定，不能根据昵称或客户端参数推断。
+运营概览和账号分页仅对数据库中拥有 `SUPER_ADMIN` 角色的有效账号开放；普通用户不显示运营导航，直接请求接口也会被拒绝。新注册账号不会自动获得管理员权限。现有真实统计、账号读取、账号禁用/恢复、主播与举报审核，以及「直播管理与处置记录」：选择尚未结束的真实直播场次，填写原因并确认后强制下播，同时结束相关 PK，媒体随后由扫描清理。操作与审计按各自服务端事务提交，同一单号重试不会再次执行；手机保存未确认操作，可重启后继续核实。部署先执行 Revenue 迁移 `00009_moderation_actions.sql`。正式环境管理员账号须明确指定，不能根据昵称或客户端参数推断。
 
 
 ### 临时限流与业务状态
@@ -185,9 +187,11 @@ docker compose -p live-openim -f openim-local-compose.yml up -d
 
 Billd 通过内部 `LIVEKIT_API_URL`（默认 `http://livekit:7880`）调用 LiveKit 控制接口，每轮扫描完成后等待 5 秒，再按 Revenue 中真实直播、PK 和开播资格核对应用房间。关闭的房间和已结束 PK 会清理；禁用、删除、过期或被替换会话的参与者会移除，过期房间目录会清理。媒体令牌绑定当前登录会话，并禁止客户端自行修改元数据。旧版缺少绑定信息的媒体连接会被移除，重新进入后获取新令牌。
 
-这是持续核对，不是即时撤销旧令牌：旧令牌在有效期内可能再次建连，后续扫描仍会移除。依赖故障、房间数量会延长处理时间，正式环境双端音视频及高负载验收尚未完成。Android 会根据 SDK 事件显示连接中断和恢复状态；运营封禁入口仍待完成，强制下播入口见上文。
+这是持续核对，不是即时撤销旧令牌：旧令牌在有效期内可能再次建连，后续扫描仍会移除。依赖故障、房间数量会延长处理时间，正式环境双端音视频及高负载验收尚未完成。Android 会根据 SDK 事件显示连接中断和恢复状态；运营账号禁用/恢复和强制下播入口均已接入后台，具体权限与状态传播见 [ADMIN_BACKEND.md](ADMIN_BACKEND.md)。
 
 ### 登录会话与真实账号资料
+
+Android 会先读取 `GET /user/auth-methods`；短信服务已配置时默认展示短信登录，否则默认使用账号 ID/密码登录，用户可随时切换。`POST /user/sms/send-code` 通过服务端 HTTPS 短信适配器发送验证码，验证码 5 分钟有效、手机号 60 秒冷却、手机号每天最多 10 次、单 IP 每天最多 50 次，错误 5 次后失效并且只能成功使用一次。首次短信登录会创建普通 `USER` 账号；手机号只以 `PHONE_HASH_SECRET` 生成的 HMAC 摘要保存在 `user_phone_identity`，数据库和日志不会保存明文手机号。`SMS_ENABLED` 默认 `false`；启用前设置 `SMS_PROVIDER_URL`、至少 32 字符的 `SMS_PROVIDER_SECRET`、`SMS_PROVIDER_TEMPLATE_ID` 和至少 32 字符的稳定 `PHONE_HASH_SECRET`。适配器接收 JSON `{request_id,to,template_id,parameters:{code,expires_minutes}}`，校验 `X-Request-Timestamp` 与 `X-Request-Signature: sha256=<hex>`，签名为 `HMAC-SHA256(secret, timestamp + "." + 原始请求体)`；成功接收返回任意 2xx。密钥只配置在服务器环境，不能放入 APK。既有数据库需应用 Billd 迁移 `20261113_user_phone_identity.sql`。
 
 密码登录在用户行事务锁内检查凭据及禁用状态，再保存新会话。令牌有效期由服务端固定为 24 小时，不接受客户端延长；每次生成独立会话，后续登录使旧会话失效。账号核对只接受 HS256、带有效签发/到期时间和当前数据库会话的令牌，账号查询故障返回 503。`GET /user/me` 只返回真实账号 ID、昵称和状态，不返回密码或令牌。Android 登录后及会话存续时读取该接口，昵称不再用「用户 + ID」替代；明确失效返回登录页，临时故障保留会话。旧版超长或缺少期限的令牌需重新登录。新增和修改密码使用 Node 原生 scrypt 加盐散列；既有明文密码仅在成功登录或修改密码时事务升级，不批量改写。Android「我的 → 修改密码」核对原密码，成功后注销旧会话并重新登录。迁移先将密码列扩至 255；任何账号升级后，回退必须保留散列认证能力，不能直接恢复明文校验旧镜像或缩短列。完整生产安全与设备验收仍未完成。
 
@@ -203,8 +207,12 @@ Billd 通过内部 `LIVEKIT_API_URL`（默认 `http://livekit:7880`）调用 Liv
 
 SRS 推流票据、HLS 播放列表/分片鉴权、数据库权威试看窗口及 LiveKit 观看权限已接入，配置、迁移、新旧 APK 兼容和测试范围见 [MEDIA_SECURITY.md](MEDIA_SECURITY.md)。启动前须设置独立随机 `MEDIA_AUTH_KEY`，Revenue 迁移到 00022。旧文档所述直接访问 SRS 播放端口不再适用于新版配置。
 
-消息通知偏好需要在既有 Billd 数据库执行 `migrations/20261106_user_notification_preferences.sql`；Android 通知设置页的四类偏好会按账号保存。系统推送仍需单独接入推送服务和设备令牌，当前设置不会伪装成已送达的推送。
+消息通知偏好需要在既有 Billd 数据库执行 `migrations/20261106_user_notification_preferences.sql`；Android 通知设置页的四类偏好会按账号保存。Android 可选接入 FCM，需配置客户端 Firebase 参数、服务端 `FCM_SERVICE_ACCOUNT_JSON` 并取得用户通知权限；未配置时消息仍保存在站内通知中心，不会伪装成已送达的系统推送。
 
-发现页的性别、年龄、同城筛选依赖 Revenue 的 `00025_profile_gender.sql`，部署 Revenue 时需按顺序执行该迁移。性别是用户自填资料；筛选只匹配本人填写的完整资料，不对未填写信息作推断。主播后台最近 30 场记录通过 Revenue `/v1/creators/me/sessions` 按当前登录主播查询。守护页展示当前主播近 7 日成功收礼用户及金额，需执行 Revenue `00026_creator_supporter_index.sql`；该列表不授予守护身份或权益。
+发现页的性别、年龄、同城筛选依赖 Revenue 的 `00025_profile_gender.sql`，任务奖励使用 `00026_task_rewards.sql`，守护页索引使用 `00027_creator_supporter_index.sql`，商城购买账本使用 `00028_social_catalog_purchases.sql`。部署 Revenue 时需按顺序执行这些迁移。性别是用户自填资料；筛选只匹配本人填写的完整资料，不对未填写信息作推断。主播后台最近 30 场记录通过 Revenue `/v1/creators/me/sessions` 按当前登录主播查询。守护页展示当前主播近 7 日成功收礼用户及金额；该列表不授予守护身份或权益。
 
-任务中心的日常互动进度通过 Billd `/moments/tasks/today` 读取 UTC 当日的动态、点赞和评论记录。每日签到由 `/moments/tasks/checkin` 按 UTC 日期幂等记录；部署前执行 Billd `migrations/20261107_user_daily_checkin.sql`。当前没有任务积分账本，页面只展示真实签到和互动次数，不显示或发放奖励。新手任务、直播任务及签到奖励需在服务端配置任务规则和奖励账本后再开放。
+任务中心支持每日签到、关注用户、首次关注、填写城市、发布动态、点赞、评论、直播送礼和开播九类任务。`/moments/tasks/today` 返回真实记录计算的进度；首次关注和填写城市只能领取一次，其余按 UTC 日期领取。送礼与开播进度由 Revenue 查询已提交记录。奖励经金币账本入账，并发同单重试返回同一回执；同单修改参数会被拒绝。每日签到由 `/moments/tasks/checkin` 幂等记录。管理后台只允许配置已有计算器的任务，未支持的旧配置在用户端隐藏。部署前执行 Billd 对应增量 SQL，并将 Revenue 迁移到 `00032`。
+
+### 当前验证状态（2026-11-13）
+
+Android、Billd、Revenue 和 Web 管理后台本轮接入与回归范围见 [最新验收记录](BACKEND_VALIDATION.md#2026-11-13本地业务接口与管理后台回归)。本地后台当前运行在 http://127.0.0.1:8002/ ，API 为 24300、Revenue 为 24808。真实支付、短信供应商和实名仍未启用；完整媒体、离线推送和 Android 双设备流程尚未完成本轮验收。

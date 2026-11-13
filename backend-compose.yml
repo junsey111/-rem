@@ -1,3 +1,12 @@
+x-revenue-image: &revenue-image
+  build: ./third_party/live-revenue-integrity-lab
+  image: live-revenue-integrity-lab:local
+
+x-revenue-env: &revenue-env
+  MYSQL_DSN: "root:${REVENUE_MYSQL_ROOT_PASSWORD:-change-revenue-root-password}@tcp(revenue-mysql:3306)/live_revenue?parseTime=true&multiStatements=true"
+  REDIS_ADDR: revenue-redis:6379
+  KAFKA_BROKER: revenue-kafka:9092
+
 services:
   mysql:
     restart: unless-stopped
@@ -57,21 +66,36 @@ services:
       OPENIM_API_URL: ${OPENIM_API_URL:-http://openim-server:10002}
       OPENIM_PUBLIC_API_URL: ${OPENIM_PUBLIC_API_URL:-http://10.0.2.2:10002}
       OPENIM_SECRET: ${OPENIM_SECRET:-openIM123}
+      OPENIM_CALLBACK_SECRET: ${OPENIM_CALLBACK_SECRET:-change-me-openim-callback-secret}
       OPENIM_ADMIN_USER_ID: ${OPENIM_ADMIN_USER_ID:-imAdmin}
       OPENIM_PLATFORM_ID: ${OPENIM_PLATFORM_ID:-1}
       OPENIM_WS_URL: ${OPENIM_WS_URL:-ws://10.0.2.2:10001}
       OPENIM_SUPPORT_USER_ID: ${OPENIM_SUPPORT_USER_ID:-}
       OPENIM_SUPPORT_NICKNAME: ${OPENIM_SUPPORT_NICKNAME:-客服}
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
+      SMS_ENABLED: ${SMS_ENABLED:-false}
+      SMS_PROVIDER_URL: ${SMS_PROVIDER_URL:-}
+      SMS_PROVIDER_SECRET: ${SMS_PROVIDER_SECRET:-}
+      SMS_PROVIDER_TEMPLATE_ID: ${SMS_PROVIDER_TEMPLATE_ID:-}
+      PHONE_HASH_SECRET: ${PHONE_HASH_SECRET:-}
       OPENIM_DM_MEDIA_DIR: /var/lib/billd/openim-dm-video
+      MOMENT_MEDIA_DIR: /var/lib/billd/moments
+      REPORT_EVIDENCE_DIR: /var/lib/billd/report-evidence
+      USER_AVATAR_DIR: /var/lib/billd/user-avatars
       REVENUE_DM_GIFTS_PATH: ${REVENUE_DM_GIFTS_PATH:-/v1/dm/gifts}
       REVENUE_DM_VIDEO_UNLOCK_PATH: ${REVENUE_DM_VIDEO_UNLOCK_PATH:-/v1/dm/video-unlocks}
       REVENUE_DM_VIDEO_ACCESS_PATH: ${REVENUE_DM_VIDEO_ACCESS_PATH:-/v1/dm/videos}
     volumes:
       - billd-dm-video:/var/lib/billd/openim-dm-video
+      - billd-moments:/var/lib/billd/moments
+      - billd-report-evidence:/var/lib/billd/report-evidence
+      - billd-user-avatars:/var/lib/billd/user-avatars
     depends_on:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      revenue-api:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -82,6 +106,174 @@ services:
       start_period: 30s
     ports:
       - "${BILLD_PORT:-4300}:4300"
+  revenue-mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    command: ["--transaction-isolation=READ-COMMITTED"]
+    environment:
+      MYSQL_DATABASE: live_revenue
+      MYSQL_ROOT_PASSWORD: ${REVENUE_MYSQL_ROOT_PASSWORD:-change-revenue-root-password}
+    volumes:
+      - revenue-mysql:/var/lib/mysql
+    networks:
+      - revenue_private
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+  revenue-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - revenue_private
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  revenue-kafka:
+    image: apache/kafka:4.1.1
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://revenue-kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@revenue-kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+    networks:
+      - revenue_private
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  revenue-kafka-init:
+    image: apache/kafka:4.1.1
+    restart: "no"
+    depends_on:
+      revenue-kafka:
+        condition: service_healthy
+    networks:
+      - revenue_private
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - |
+        for topic in wallet.transaction.posted.v1 live.gift.accepted.v1 live.gift.rejected.v1 live.comment.created.v1 live.watch.minute.v1 live.session.closed.v1; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server revenue-kafka:9092 --create --if-not-exists --topic "$$topic" --partitions 6 --replication-factor 1;
+        done
+  revenue-migrate:
+    <<: *revenue-image
+    restart: "no"
+    depends_on:
+      revenue-mysql:
+        condition: service_healthy
+    environment:
+      <<: *revenue-env
+    command: ["/usr/local/bin/migrate"]
+    networks:
+      - revenue_private
+  revenue-api:
+    <<: *revenue-image
+    restart: unless-stopped
+    depends_on:
+      revenue-migrate:
+        condition: service_completed_successfully
+      revenue-redis:
+        condition: service_healthy
+    environment:
+      <<: *revenue-env
+      HTTP_ADDR: ":8080"
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-development}
+      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-change-me-payment-webhook}
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-change-me-internal-key}
+      BILLD_ACCOUNT_URL: http://billd-live-server:4300/user/me
+      REFERRALS_ENABLED: ${REFERRALS_ENABLED:-false}
+      REFERRAL_INVITER_COINS: ${REFERRAL_INVITER_COINS:-100}
+      REFERRAL_INVITEE_COINS: ${REFERRAL_INVITEE_COINS:-50}
+    networks:
+      revenue_private:
+      default:
+        aliases:
+          - revenue-api
+    ports:
+      - "127.0.0.1:${REVENUE_PORT:-24808}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+  revenue-outbox-relay:
+    <<: *revenue-image
+    restart: unless-stopped
+    depends_on:
+      revenue-migrate:
+        condition: service_completed_successfully
+      revenue-kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *revenue-env
+    command: ["/usr/local/bin/outbox-relay"]
+    networks:
+      - revenue_private
+  revenue-leaderboard-projector:
+    <<: *revenue-image
+    restart: unless-stopped
+    depends_on:
+      revenue-migrate:
+        condition: service_completed_successfully
+      revenue-kafka-init:
+        condition: service_completed_successfully
+      revenue-redis:
+        condition: service_healthy
+    environment:
+      <<: *revenue-env
+      LEADERBOARD_METRICS_ADDR: ":9101"
+    command: ["/usr/local/bin/leaderboard-projector"]
+    networks:
+      - revenue_private
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9101/metrics >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  revenue-points-projector:
+    <<: *revenue-image
+    restart: unless-stopped
+    depends_on:
+      revenue-migrate:
+        condition: service_completed_successfully
+      revenue-kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *revenue-env
+      POINTS_METRICS_ADDR: ":9102"
+    command: ["/usr/local/bin/points-projector"]
+    networks:
+      - revenue_private
+  revenue-settlement-worker:
+    <<: *revenue-image
+    restart: unless-stopped
+    depends_on:
+      revenue-migrate:
+        condition: service_completed_successfully
+      revenue-kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *revenue-env
+    command: ["/usr/local/bin/settlement-worker"]
+    networks:
+      - revenue_private
   srs:
     restart: unless-stopped
     image: ossrs/srs:6
@@ -124,7 +316,13 @@ services:
 volumes:
   srs-hls:
   billd-mysql:
+  revenue-mysql:
   billd-dm-video:
+  billd-moments:
+  billd-report-evidence:
+  billd-user-avatars:
 networks:
   default:
     name: live_backend
+  revenue_private:
+    name: live_revenue_private

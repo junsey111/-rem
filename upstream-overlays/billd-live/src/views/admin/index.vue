@@ -131,6 +131,33 @@
         </p>
       </section>
       <section
+        v-else-if="active === 'qualification'"
+        class="page"
+      >
+        <div class="section-heading">
+          <div>
+            <h2>平台资质</h2>
+            <p>仅发布已核验的主体与许可证信息；未发布时客户端不会展示资料。</p>
+          </div>
+        </div>
+        <form class="settings" @submit.prevent="saveQualification">
+          <div class="form-grid">
+            <label>平台名称<input v-model="qualification.platform_name" maxlength="120" required /></label>
+            <label>主体名称<input v-model="qualification.subject_name" maxlength="160" required /></label>
+            <label>登记注册号<input v-model="qualification.registration_number" maxlength="64" required /></label>
+            <label>联系邮箱<input v-model="qualification.contact_email" type="email" maxlength="160" /></label>
+            <label>ICP备案<input v-model="qualification.icp_record" maxlength="120" /></label>
+            <label>网络文化许可证<input v-model="qualification.network_culture_license" maxlength="120" /></label>
+            <label>直播服务许可证<input v-model="qualification.live_service_license" maxlength="120" /></label>
+          </div>
+          <label>办公地址<input v-model="qualification.office_address" maxlength="240" /></label>
+          <label class="toggle"><input v-model="qualification.published" type="checkbox" />向客户端发布</label>
+          <label>修改原因<input v-model="qualification.reason" maxlength="200" required /></label>
+          <button class="primary" :disabled="saving || loading || !!pendingCommand">保存资质</button>
+          <p class="form-note">{{ qualification.configured ? '已有资质记录' : '尚未配置资质记录' }} · 保存后写入审计记录</p>
+        </form>
+      </section>
+      <section
         v-if="review"
         class="command-panel"
       >
@@ -236,6 +263,44 @@
                   暂无开放直播
                 </td>
               </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section
+        v-else-if="active === 'announcements'"
+        class="page"
+      >
+        <div class="section-heading">
+          <div>
+            <h2>平台公告</h2>
+            <p>公告发布后会同步出现在客户端；每次创建、编辑和上下架都会写入审计记录。</p>
+          </div>
+          <button class="primary" :disabled="!!pendingCommand" @click="editAnnouncement()">新建公告</button>
+        </div>
+        <form v-if="announcementEditor" class="settings" @submit.prevent="saveAnnouncement">
+          <div class="form-grid">
+            <label>标题<input v-model="announcementEditor.title" maxlength="120" required /></label>
+            <label>摘要<input v-model="announcementEditor.summary" maxlength="240" /></label>
+          </div>
+          <label>正文<textarea v-model="announcementEditor.content" maxlength="30000" rows="9" required /></label>
+          <label class="toggle"><input v-model="announcementEditor.enabled" type="checkbox" />立即发布</label>
+          <label>操作原因<input v-model="announcementEditor.reason" maxlength="200" required /></label>
+          <button class="primary" :disabled="saving || !!pendingCommand">保存公告</button>
+          <button type="button" class="ghost" @click="announcementEditor = null">取消</button>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>标题</th><th>摘要</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+            <tbody>
+              <tr v-for="item in announcements" :key="item.id">
+                <td>{{ item.title }}<small class="mono">{{ item.id }}</small></td>
+                <td>{{ item.summary || '—' }}</td>
+                <td>{{ item.enabled ? '已发布' : '已下架' }}</td>
+                <td>{{ formatDate(item.updated_at) }}</td>
+                <td><button class="outline" :disabled="!!pendingCommand" @click="editAnnouncement(item)">编辑</button></td>
+              </tr>
+              <tr v-if="!announcements.length"><td colspan="5" class="empty">暂无公告</td></tr>
             </tbody>
           </table>
         </div>
@@ -373,6 +438,67 @@
         </button>
       </section>
       <section
+        v-else-if="active === 'moments' || active === 'comments'"
+        class="page"
+      >
+        <div class="section-heading">
+          <p>{{ active === 'comments' ? '新评论审核通过后公开展示；作者可查看自己的待审或驳回内容。' : '新发布的文字和图片动态均先进入审核队列；审核通过后才会公开展示。' }}</p>
+          <label
+            >状态<select v-model="momentStatus" @change="refresh">
+              <option value="PENDING">待审核</option>
+              <option value="REJECTED">已驳回</option>
+              <option value="APPROVED">已通过</option>
+              <option value="ALL">全部</option>
+            </select></label
+          >
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>{{ active === 'comments' ? '评论 / 用户' : '动态 / 用户' }}</th>
+                <th>内容</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in rows" :key="row.id">
+                <td>
+                  #{{ row.id }} / {{ row.user_id }}<small v-if="row.moment_id">所属动态 #{{ row.moment_id }}</small><small>{{ row.author.username }} · {{ formatDate(row.created_at) }}</small>
+                </td>
+                <td>
+                  <span>{{ row.content || '图片动态' }}</span>
+                  <div v-if="row.media.length" class="moment-media-grid">
+                    <img
+                      v-for="media in row.media"
+                      :key="media.id"
+                      :src="momentMediaUrls[media.id]"
+                      alt="动态图片"
+                    />
+                  </div>
+                </td>
+                <td>
+                  {{ statusLabel(row.review_status) }}<small>{{ row.moderation_reason || '—' }}</small>
+                </td>
+                <td>
+                  <template v-if="row.review_status === 'PENDING'">
+                    <button class="outline" :disabled="!!pendingCommand" @click="reviewMoment(row, 'APPROVED')">通过</button>
+                    <button class="danger-link" :disabled="!!pendingCommand" @click="reviewMoment(row, 'REJECTED')">驳回</button>
+                  </template>
+                  <button v-else-if="row.review_status === 'REJECTED'" class="outline" :disabled="!!pendingCommand" @click="reviewMoment(row, 'RESTORE')">恢复</button>
+                  <button v-else class="danger-link" :disabled="!!pendingCommand" @click="reviewMoment(row, 'HIDE')">隐藏</button>
+                </td>
+              </tr>
+              <tr v-if="!rows.length">
+                <td colspan="4" class="empty">{{ error ? '加载失败，请刷新' : loading ? '正在加载…' : active === 'comments' ? '暂无评论' : '暂无动态' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <button v-if="nextCursor" class="outline" :disabled="loading" @click="loadMore">加载更多</button>
+      </section>
+      <section
         v-else-if="active === 'creators' || active === 'reports'"
         class="page"
       >
@@ -434,7 +560,15 @@
                   {{ row.target_type }} · {{ row.target_id
                   }}<small>{{ row.content }}</small>
                 </td>
-                <td>{{ row.evidence_reference }}</td>
+                <td>
+                  <span>{{ row.evidence_reference || '—' }}</span>
+                  <div v-if="reportEvidenceUrls[row.evidence_reference]" class="report-evidence-grid">
+                    <img
+                      :src="reportEvidenceUrls[row.evidence_reference]"
+                      alt="举报图片证据"
+                    />
+                  </div>
+                </td>
                 <td>
                   {{ statusLabel(row.status)
                   }}<small>{{ row.decision_reason }}</small>
@@ -1080,6 +1214,193 @@
         </div>
       </section>
       <section
+        v-else-if="active === 'guilds'"
+        class="page"
+      >
+        <div class="section-heading">
+          <div>
+            <h2>公会管理</h2>
+            <p>查看公会规模并处理平台状态。关闭公会会取消待处理的加入申请。</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID / 名称</th>
+                <th>会长</th>
+                <th>成员</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="guild in guilds" :key="guild.id">
+                <td class="mono">{{ guild.id }}<small>{{ guild.name }}</small></td>
+                <td>{{ guild.owner?.username || guild.owner_id }}</td>
+                <td>{{ guild.member_count }}</td>
+                <td>{{ guild.status }}</td>
+                <td>
+                  <button class="outline" :disabled="!!pendingCommand" @click="openGuild(guild)">详情</button>
+                  <button v-if="guild.status === 'ACTIVE'" class="danger-link" :disabled="!!pendingCommand" @click="setGuildStatus(guild, 'SUSPENDED')">暂停</button>
+                  <button v-else class="outline" :disabled="!!pendingCommand" @click="setGuildStatus(guild, 'ACTIVE')">恢复</button>
+                  <button v-if="guild.status !== 'CLOSED'" class="danger-link" :disabled="!!pendingCommand" @click="setGuildStatus(guild, 'CLOSED')">关闭</button>
+                </td>
+              </tr>
+              <tr v-if="!guilds.length"><td colspan="5" class="empty">{{ loading ? '正在加载…' : '暂无公会' }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <section v-if="guildDetail" class="command-panel guild-detail">
+          <div class="section-heading">
+            <div>
+              <h3>{{ guildDetail.guild.name }} · 运营详情</h3>
+              <p>{{ guildDetail.guild.description || '暂无公会简介' }} · {{ guildDetail.members.length }} 名成员</p>
+            </div>
+            <button class="ghost" @click="guildDetail = null">关闭详情</button>
+          </div>
+          <h4>成员</h4>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>用户</th><th>角色</th><th>加入时间</th></tr></thead>
+              <tbody>
+                <tr v-for="member in guildDetail.members" :key="member.id">
+                  <td>{{ member.user?.username || member.user_id }}<small>{{ member.user_id }}</small></td>
+                  <td>{{ member.role }}</td>
+                  <td>{{ formatDate(member.created_at) }}</td>
+                </tr>
+                <tr v-if="!guildDetail.members.length"><td colspan="3" class="empty">暂无成员</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h4>待审核申请</h4>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>申请人</th><th>留言</th><th>时间</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr v-for="application in guildDetail.applications" :key="application.id">
+                  <td>{{ application.user?.username || application.user_id }}</td>
+                  <td>{{ application.message || '—' }}</td>
+                  <td>{{ formatDate(application.created_at) }}</td>
+                  <td>
+                    <button class="outline" :disabled="!!pendingCommand" @click="reviewGuildApplication(application, 'APPROVED')">通过</button>
+                    <button class="danger-link" :disabled="!!pendingCommand" @click="reviewGuildApplication(application, 'REJECTED')">拒绝</button>
+                  </td>
+                </tr>
+                <tr v-if="!guildDetail.applications.length"><td colspan="4" class="empty">暂无待审核申请</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+      <section
+        v-else-if="active === 'tasks'"
+        class="page"
+      >
+        <div class="section-heading">
+          <div>
+            <h2>任务配置</h2>
+            <p>任务完成条件和奖励由后台控制；客户端只读取已启用配置。</p>
+          </div>
+          <button class="primary" :disabled="!!pendingCommand || !availableTaskTypes.length" @click="editTask()">新增任务</button>
+        </div>
+        <form v-if="taskEditor" class="settings" @submit.prevent="saveTask">
+          <div class="form-grid">
+            <label>任务类型<select v-model="taskEditor.task_key" :disabled="taskEditor.existing" required><option v-for="type in taskEditor.existing ? supportedTaskTypes : availableTaskTypes" :key="type.key" :value="type.key">{{ type.label }}</option></select></label>
+            <label>分类<input v-model="taskEditor.category" maxlength="24" pattern="[a-z][a-z0-9_-]{0,23}" required /></label>
+            <label>目标次数<input v-model.number="taskEditor.target_count" type="number" min="1" max="1000" required /></label>
+            <label>奖励金币<input v-model.number="taskEditor.reward_coins" type="number" min="1" max="1000000" required /></label>
+          </div>
+          <label>任务标题<input v-model="taskEditor.title" maxlength="100" required /></label>
+          <label>任务说明<input v-model="taskEditor.description" maxlength="255" /></label>
+          <label class="toggle"><input v-model="taskEditor.enabled" type="checkbox" />启用任务</label>
+          <button class="primary" :disabled="saving || !!pendingCommand">保存任务</button>
+          <button type="button" class="ghost" @click="taskEditor = null">取消</button>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>标识</th><th>分类 / 标题</th><th>目标</th><th>奖励</th><th>状态</th><th>操作</th></tr></thead>
+            <tbody>
+              <tr v-for="task in tasks" :key="task.task_key">
+                <td class="mono">{{ task.task_key }}</td><td>{{ task.category }}<small>{{ task.title }}</small></td><td>{{ task.target_count }}</td><td>{{ task.reward_coins }} 金币</td><td>{{ !task.progress_supported ? '类型未接通' : task.enabled ? '启用中' : '已停用' }}</td>
+                <td><button v-if="task.progress_supported" class="outline" :disabled="!!pendingCommand" @click="editTask(task)">编辑</button><button v-else class="outline" :disabled="!!pendingCommand || !task.enabled" @click="disableTask(task)">停用</button></td>
+              </tr>
+              <tr v-if="!tasks.length"><td colspan="6" class="empty">暂无任务配置</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section
+        v-else-if="active === 'nobles'"
+        class="page"
+      >
+        <div class="section-heading">
+          <div>
+            <h2>贵族等级配置</h2>
+            <p>这里只配置目录和展示规则。真实购买在资金服务启用前不会发生。</p>
+          </div>
+          <button class="primary" :disabled="!!pendingCommand" @click="editNoble()">新增等级</button>
+        </div>
+        <form v-if="nobleEditor" class="settings" @submit.prevent="saveNoble">
+          <div class="form-grid">
+            <label>等级<input v-model.number="nobleEditor.level" type="number" min="1" max="100" :disabled="nobleEditor.existing" required /></label>
+            <label>名称<input v-model="nobleEditor.name" maxlength="40" required /></label>
+            <label>价格（金币）<input v-model.number="nobleEditor.price_coins" type="number" min="0" required /></label>
+            <label>有效期（天）<input v-model.number="nobleEditor.duration_days" type="number" min="1" max="3650" required /></label>
+          </div>
+          <label>权益说明<input v-model="nobleEditor.description" maxlength="255" /></label>
+          <label class="toggle"><input v-model="nobleEditor.enabled" type="checkbox" />对用户展示</label>
+          <button class="primary" :disabled="saving || !!pendingCommand">保存等级</button>
+          <button type="button" class="ghost" @click="nobleEditor = null">取消</button>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>等级</th><th>名称</th><th>价格</th><th>期限</th><th>状态</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr v-for="level in nobleLevels" :key="level.level" @click="editNoble(level)">
+                <td>{{ level.level }}</td><td>{{ level.name }}</td><td>{{ level.price_coins }}</td><td>{{ level.duration_days }} 天</td><td>{{ level.enabled ? '展示中' : '未展示' }}</td><td>{{ level.description || '—' }}</td>
+              </tr>
+              <tr v-if="!nobleLevels.length"><td colspan="6" class="empty">暂无等级配置</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section
+        v-else-if="active === 'costumes'"
+        class="page"
+      >
+        <div class="section-heading">
+          <div>
+            <h2>装扮目录</h2>
+            <p>上架后会出现在客户端目录；购买与金币扣款仍由资金规则控制。</p>
+          </div>
+          <button class="primary" :disabled="!!pendingCommand" @click="editCostume()">新增装扮</button>
+        </div>
+        <form v-if="costumeEditor" class="settings" @submit.prevent="saveCostume">
+          <div class="form-grid">
+            <label>分类<input v-model="costumeEditor.category" maxlength="32" required /></label>
+            <label>名称<input v-model="costumeEditor.name" maxlength="80" required /></label>
+            <label>价格（金币）<input v-model.number="costumeEditor.price_coins" type="number" min="0" required /></label>
+            <label>资源地址<input v-model="costumeEditor.asset_url" maxlength="512" /></label>
+          </div>
+          <label>说明<input v-model="costumeEditor.description" maxlength="255" /></label>
+          <label class="toggle"><input v-model="costumeEditor.enabled" type="checkbox" />上架</label>
+          <button class="primary" :disabled="saving || !!pendingCommand">保存装扮</button>
+          <button type="button" class="ghost" @click="costumeEditor = null">取消</button>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>分类 / 名称</th><th>金币</th><th>资源</th><th>状态</th><th>操作</th></tr></thead>
+            <tbody>
+              <tr v-for="item in costumes" :key="item.id">
+                <td class="mono">{{ item.id }}</td><td>{{ item.category }}<small>{{ item.name }}</small></td><td>{{ item.price_coins }}</td><td class="mono">{{ item.asset_url || '—' }}</td><td>{{ item.enabled ? '已上架' : '已下架' }}</td><td><button class="outline" :disabled="!!pendingCommand" @click="editCostume(item)">编辑</button></td>
+              </tr>
+              <tr v-if="!costumes.length"><td colspan="6" class="empty">暂无装扮</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section
         v-else-if="active === 'finance'"
         class="page"
       >
@@ -1228,7 +1549,7 @@ const integrations = reactive({
 });
 const initialView = window.location.pathname.split('/')[2];
 const active = ref(
-  ['users', 'finance', 'creators', 'reports', 'chat'].includes(initialView)
+    ['users', 'finance', 'qualification', 'creators', 'reports', 'moments', 'comments', 'chat', 'guilds', 'tasks', 'nobles', 'costumes', 'announcements'].includes(initialView)
     ? initialView
     : 'overview'
 );
@@ -1243,15 +1564,23 @@ const nav = [
   { key: 'lives', label: '直播管理' },
   { key: 'orders', label: '充值订单' },
   { key: 'gifts', label: '礼物目录' },
+  { key: 'guilds', label: '公会管理' },
+  { key: 'tasks', label: '任务配置' },
+  { key: 'announcements', label: '平台公告' },
+  { key: 'nobles', label: '贵族等级' },
+  { key: 'costumes', label: '装扮目录' },
   { key: 'referrals', label: '邀请奖励' },
   { key: 'business-actions', label: '业务设置记录' },
   { key: 'creators', label: '主播审核' },
   { key: 'reports', label: '举报处理' },
+  { key: 'moments', label: '动态审核' },
+  { key: 'comments', label: '评论审核' },
   { key: 'chat', label: '公屏管理' },
   { key: 'withdrawals', label: '提现审核' },
   { key: 'refunds', label: '退款审核' },
   { key: 'finance', label: '资金规则' },
   { key: 'integrations', label: '服务接入' },
+  { key: 'qualification', label: '平台资质' },
   { key: 'actions', label: '处置记录' },
   { key: 'account-actions', label: '账号处置记录' },
   { key: 'audit', label: '资金审计' },
@@ -1276,10 +1605,24 @@ const recordPage = ref(1),
   recordMore = ref(false);
 const gifts = ref<any[]>([]),
   giftEditor = ref<any>(null);
+const guilds = ref<any[]>([]),
+  tasks = ref<any[]>([]),
+  supportedTaskTypes = ref<any[]>([]),
+  announcements = ref<any[]>([]),
+  guildDetail = ref<any>(null),
+  taskEditor = ref<any>(null),
+  nobleLevels = ref<any[]>([]),
+  costumes = ref<any[]>([]),
+  nobleEditor = ref<any>(null),
+  costumeEditor = ref<any>(null);
+const availableTaskTypes = computed(() => supportedTaskTypes.value.filter(type => !tasks.value.some(task => task.task_key === type.key)));
 const chatRoomId = ref(''),
   chatMessages = ref<any[]>([]),
   chatActions = ref<any[]>([]),
   chatBefore = ref('');
+const momentStatus = ref('PENDING');
+const momentMediaUrls = reactive<Record<string, string>>({});
+const reportEvidenceUrls = reactive<Record<string, string>>({});
 const settings = reactive<any>({
   version: 0,
   configured: false,
@@ -1294,8 +1637,22 @@ const settings = reactive<any>({
   },
   reason: '',
 });
+const qualification = reactive<any>({
+  configured: false,
+  platform_name: '',
+  subject_name: '',
+  registration_number: '',
+  office_address: '',
+  contact_email: '',
+  icp_record: '',
+  network_culture_license: '',
+  live_service_license: '',
+  published: false,
+  reason: '',
+});
 const payoutMethods = ref(''),
   review = ref<any>(null);
+const announcementEditor = ref<any>(null);
 const pendingCommand = ref<any>(null);
 try {
   pendingCommand.value = JSON.parse(
@@ -1317,6 +1674,35 @@ const request = async (url: string, config: any = {}) => {
     throw new Error(response.data.message || '请求失败');
   return response.data.data;
 };
+async function loadMomentMedia(items: any[]) {
+  const token = sessionStorage.getItem('live_ops_token') || '';
+  const media = items.flatMap((row) => row.media || []);
+  await Promise.all(media.map(async (item) => {
+    if (momentMediaUrls[item.id]) return;
+    try {
+      const response = await fetch(apiBase + item.path, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) return;
+      momentMediaUrls[item.id] = URL.createObjectURL(await response.blob());
+    } catch {}
+  }));
+}
+async function loadReportEvidence(items: any[]) {
+  const token = sessionStorage.getItem('live_ops_token') || '';
+  const references = items
+    .map((row) => String(row.evidence_reference || ''))
+    .filter((reference) => /^report-evidence:[1-9][0-9]{0,19}$/.test(reference));
+  await Promise.all(references.map(async (reference) => {
+    if (reportEvidenceUrls[reference]) return;
+    const id = reference.slice('report-evidence:'.length);
+    try {
+      const response = await fetch(apiBase + `/operations/reports/evidence/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return;
+      reportEvidenceUrls[reference] = URL.createObjectURL(await response.blob());
+    } catch {}
+  }));
+}
 const formatDate = (value: string) =>
   value ? new Date(value).toLocaleString('zh-CN') : '—';
 const money = (fen: number) =>
@@ -1397,6 +1783,12 @@ async function refresh() {
       nextCursor.value = result.next_before_id;
     } else if (view === 'integrations') {
       Object.assign(integrations, await request('/operations/integrations'));
+    } else if (view === 'qualification') {
+      const result = await request('/operations/qualification');
+      if (active.value !== view) return;
+      qualification.configured = result.configured;
+      Object.assign(qualification, result.qualification || {});
+      qualification.reason = '';
     } else if (view === 'overview') {
       const [summary, rooms] = await Promise.all([
         request('/operations/summary'),
@@ -1416,6 +1808,28 @@ async function refresh() {
       const result = await request('/operations/gifts');
       if (active.value !== view) return;
       gifts.value = result.gifts;
+    } else if (view === 'guilds') {
+      const result = await request('/operations/guilds');
+      if (active.value !== view) return;
+      guilds.value = result.guilds;
+    } else if (view === 'tasks') {
+      const result = await request('/operations/tasks');
+      if (active.value !== view) return;
+      tasks.value = result.tasks;
+      supportedTaskTypes.value = result.supported_task_types;
+    } else if (view === 'announcements') {
+      const result = await request('/operations/announcements');
+      if (active.value !== view) return;
+      announcements.value = result.announcements;
+      nextCursor.value = result.next_before_id;
+    } else if (view === 'nobles') {
+      const result = await request('/operations/nobles');
+      if (active.value !== view) return;
+      nobleLevels.value = result.levels;
+    } else if (view === 'costumes') {
+      const result = await request('/operations/costumes');
+      if (active.value !== view) return;
+      costumes.value = result.items;
     } else if (view === 'creators' || view === 'reports') {
       if (view === 'creators') {
         const policy = await request('/operations/admission');
@@ -1425,6 +1839,13 @@ async function refresh() {
       if (active.value !== view) return;
       rows.value = result.reviews;
       nextCursor.value = result.next_before_id;
+      if (view === 'reports') await loadReportEvidence(result.reviews);
+    } else if (view === 'moments' || view === 'comments') {
+      const result = await request('/operations/' + view, { params: { status: momentStatus.value } });
+      if (active.value !== view) return;
+      rows.value = result[view];
+      nextCursor.value = result.next_before_id;
+      if (view === 'moments') await loadMomentMedia(result.moments);
     } else if (view === 'users') {
       const result = await request('/operations/users', {
         params: { page: userPage.value },
@@ -1475,13 +1896,20 @@ async function loadMore() {
       '/operations/' +
         (['withdrawals', 'refunds'].includes(view) ? 'finance/' : '') +
         view,
-      { params: { before_id: nextCursor.value } }
+      { params: { before_id: nextCursor.value, ...(['moments', 'comments'].includes(view) ? { status: momentStatus.value } : {}) } }
     );
     if (view === 'lives') lives.value.push(...result.lives);
+    else if (view === 'announcements') announcements.value.push(...result.announcements);
     else if (view === 'actions' || view === 'business-actions')
       rows.value.push(...result.actions);
-    else if (view === 'creators' || view === 'reports')
+    else if (view === 'creators' || view === 'reports') {
       rows.value.push(...result.reviews);
+      if (view === 'reports') await loadReportEvidence(result.reviews);
+    }
+    else if (view === 'moments' || view === 'comments') {
+      rows.value.push(...result[view]);
+      if (view === 'moments') await loadMomentMedia(result.moments);
+    }
     else financeRows.value.push(...result[view]);
     nextCursor.value = result.next_before_id;
   } catch (e) {
@@ -1530,6 +1958,15 @@ function reviewRequest(row: any, decision: string) {
     decision,
   };
 }
+function reviewMoment(row: any, decision: string) {
+  review.value = {
+    title: (active.value === 'comments' ? '评论审核 · ' : '动态审核 · ') + row.id,
+    path: `/operations/${active.value}/${row.id}`,
+    reason: '',
+    action: 'MOMENT',
+    decision,
+  };
+}
 async function submitReview() {
   const r = review.value;
   const data: any = { request_id: crypto.randomUUID(), reason: r.reason };
@@ -1539,6 +1976,8 @@ async function submitReview() {
     data.decision = r.decision;
   } else if (r.action === 'ACCOUNT') {
     data.disabled = r.disabled;
+  } else if (r.action === 'MOMENT') {
+    data.action = r.decision;
   } else if (r.action !== 'CLOSE') {
     data.action = r.action;
     data.payment_ref = r.payment_ref;
@@ -1605,6 +2044,10 @@ async function sendCommand() {
     review.value = null;
     settings.reason = '';
     giftEditor.value = null;
+    taskEditor.value = null;
+    announcementEditor.value = null;
+    nobleEditor.value = null;
+    costumeEditor.value = null;
     referral.reason = '';
     priceEditor.value = null;
     notice.value = '操作已保存';
@@ -1633,6 +2076,14 @@ async function saveSettings() {
       reason: settings.reason,
       rules: JSON.parse(JSON.stringify(settings.rules)),
     },
+  });
+}
+async function saveQualification() {
+  const { configured, reason, ...data } = qualification;
+  await commitCommand({
+    path: '/operations/qualification',
+    method: 'PUT',
+    data: { ...data, reason, request_id: crypto.randomUUID() },
   });
 }
 async function saveReferrals() {
@@ -1700,6 +2151,73 @@ function editGift(gift?: any) {
         existing: false,
       };
 }
+
+function editNoble(level?: any) {
+  nobleEditor.value = level
+    ? { ...level, existing: true }
+    : { level: null, name: '', description: '', price_coins: 0, duration_days: 30, enabled: false, existing: false };
+}
+
+async function saveNoble() {
+  const { existing, ...data } = nobleEditor.value;
+  await commitCommand({ path: `/operations/nobles/${data.level}`, method: 'PUT', data });
+}
+
+function editCostume(item?: any) {
+  costumeEditor.value = item
+    ? { ...item, existing: true }
+    : { category: '', name: '', description: '', price_coins: 0, asset_url: '', enabled: false, existing: false };
+}
+
+async function saveCostume() {
+  const { existing, id, ...data } = costumeEditor.value;
+  await commitCommand({ path: existing ? `/operations/costumes/${id}` : '/operations/costumes', method: existing ? 'PUT' : 'POST', data });
+}
+
+function setGuildStatus(guild: any, status: string) {
+  commitCommand({ path: `/operations/guilds/${guild.id}/status`, method: 'POST', data: { status } });
+}
+async function openGuild(guild: any) {
+  loading.value = true;
+  error.value = '';
+  try {
+    guildDetail.value = await request(`/operations/guilds/${guild.id}`);
+  } catch (e) {
+    showError(e);
+  } finally {
+    loading.value = false;
+  }
+}
+function reviewGuildApplication(application: any, decision: string) {
+  if (!guildDetail.value) return;
+  commitCommand({ path: `/operations/guilds/${guildDetail.value.guild.id}/applications/${application.id}`, method: 'POST', data: { decision } });
+}
+function editTask(task?: any) {
+  if (task && !task.progress_supported) return;
+  taskEditor.value = task
+    ? { ...task, existing: true }
+    : { task_key: availableTaskTypes.value[0]?.key || '', category: availableTaskTypes.value[0]?.category || 'daily', title: '', description: '', target_count: 1, reward_coins: 1, enabled: false, existing: false };
+}
+function disableTask(task: any) {
+  commitCommand({ path: `/operations/tasks/${encodeURIComponent(task.task_key)}`, method: 'DELETE' });
+}
+function editAnnouncement(item?: any) {
+  announcementEditor.value = item
+    ? { ...item, reason: '', existing: true }
+    : { title: '', summary: '', content: '', enabled: false, reason: '', existing: false };
+}
+async function saveAnnouncement() {
+  const { existing, id, reason, ...data } = announcementEditor.value;
+  await commitCommand({
+    path: existing ? `/operations/announcements/${id}` : '/operations/announcements',
+    method: existing ? 'PUT' : 'POST',
+    data: { ...data, reason, request_id: crypto.randomUUID() },
+  });
+}
+async function saveTask() {
+  const { existing, task_key: taskKey, ...data } = taskEditor.value;
+  await commitCommand({ path: `/operations/tasks/${encodeURIComponent(taskKey)}`, method: 'PUT', data: { ...data, task_key: taskKey } });
+}
 async function saveGift() {
   const { existing, ...data } = giftEditor.value;
   await commitCommand({
@@ -1714,6 +2232,17 @@ watch(active, () => {
   review.value = null;
   financeRows.value = [];
   rows.value = [];
+  guilds.value = [];
+  tasks.value = [];
+  announcements.value = [];
+  guildDetail.value = null;
+  taskEditor.value = null;
+  announcementEditor.value = null;
+  nobleLevels.value = [];
+  costumes.value = [];
+  nobleEditor.value = null;
+  costumeEditor.value = null;
+  qualification.reason = '';
   userPage.value = 1;
   recordPage.value = 1;
   refresh();
@@ -1992,6 +2521,31 @@ table {
   border-collapse: collapse;
   text-align: left;
   font-size: 13px;
+}
+.moment-media-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.moment-media-grid img {
+  width: 88px;
+  height: 88px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #eef2f6;
+}
+.report-evidence-grid {
+  display: flex;
+  margin-top: 8px;
+}
+.report-evidence-grid img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #eef2f6;
 }
 th {
   background: #f8fafc;
