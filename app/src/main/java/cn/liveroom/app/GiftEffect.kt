@@ -235,6 +235,17 @@ fun Gift.yyevaSource(): YyevaSource? = when (val admit = admitFullscreen(this, "
     else -> null
 }
 
+/** Code-drawn stage. YYEVA replaces it only when a mixed MP4 is actually playable. */
+enum class GiftStageStyle { SMALL, MID, LARGE }
+
+fun giftStageStyle(coinPrice: Int): GiftStageStyle = when {
+    coinPrice >= 500 -> GiftStageStyle.LARGE
+    coinPrice >= 100 -> GiftStageStyle.MID
+    else -> GiftStageStyle.SMALL
+}
+
+fun Gift.stageStyle(): GiftStageStyle? = if (yyevaSource() == null) giftStageStyle(coinPrice) else null
+
 fun admitFullscreen(gift: Gift, requestId: String, trigger: GiftEffectTrigger): FullscreenAdmit {
     if (trigger != GiftEffectTrigger.ACCEPTED && trigger != GiftEffectTrigger.ROOM_BROADCAST) return FullscreenAdmit.Skip
     if (gift.effectType != EFFECT_YYEVA) return FullscreenAdmit.Skip

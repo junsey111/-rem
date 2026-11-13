@@ -25,7 +25,6 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun QumiGiftCelebration(gift: Gift, nonce: Int, demo: Boolean,
     senderName: String, senderAvatar: String?, quantity: Int = 1, bottomPadding: Dp = 310.dp,
-    premiumFallback: Boolean? = null,
     onFinished: () -> Unit) {
     val opacity = remember { Animatable(0f) }
     val entrance = remember { Animatable(-56f) }
@@ -40,9 +39,7 @@ internal fun QumiGiftCelebration(gift: Gift, nonce: Int, demo: Boolean,
     }
     // No backdrop or touch handlers: the room and conversation remain usable.
     Box(Modifier.fillMaxSize()) {
-        if (premiumFallback ?: (gift.coinPrice >= 500 && gift.yyevaSource() == null)) {
-            QumiPremiumGiftEffect(gift, nonce)
-        }
+        gift.stageStyle()?.let { GiftStageEffect(gift, nonce, it) }
         Row(Modifier.align(Alignment.BottomStart).navigationBarsPadding()
             .padding(start = 14.dp, bottom = bottomPadding).widthIn(max = 316.dp).fillMaxWidth(.88f)
             .graphicsLayer { alpha = opacity.value; translationX = entrance.value }

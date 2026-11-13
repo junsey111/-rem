@@ -37,6 +37,20 @@ class GiftEffectTest {
         assertEquals(EFFECT_LOTTIE, giftFromCatalogFields("X", "X", 1, 1, "lottie").effectType)
     }
 
+    @Test fun catalogGiftsWithoutYyevaUseACodeDrawnStage() {
+        assertEquals(GiftStageStyle.SMALL, giftStageStyle(1))
+        assertEquals(GiftStageStyle.SMALL, giftStageStyle(99))
+        assertEquals(GiftStageStyle.MID, giftStageStyle(100))
+        assertEquals(GiftStageStyle.MID, giftStageStyle(499))
+        assertEquals(GiftStageStyle.LARGE, giftStageStyle(500))
+        assertEquals(GiftStageStyle.LARGE, giftStageStyle(1999))
+        val rose = giftFromCatalogFields("ROSE", "Rose", 1, 1)
+        assertNull(rose.yyevaSource())
+        assertEquals(GiftStageStyle.SMALL, rose.stageStyle())
+        assertEquals(GiftStageStyle.LARGE, giftFromCatalogFields("CASTLE", "Castle", 999, 999).stageStyle())
+        assertNull(yyeva().stageStyle())
+    }
+
     @Test fun onlyAcceptedOrBroadcastYyevaMp4EntersTheFullscreenQueue() {
         val gift = yyeva()
         assertTrue(admitFullscreen(gift, request, GiftEffectTrigger.OUTBOX_SAVED) is FullscreenAdmit.Skip)
