@@ -306,7 +306,7 @@ internal fun QumiVideoFeed(token: String, currentUserId: Long, liveCreatorIds: S
                                     if (post.content.isNotBlank()) Text(post.content, Modifier.padding(top = 8.dp),
                                         color = Color.White, fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                                 }
-                                Column(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 96.dp),
+                                Column(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 132.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     val authorLive = post.userId in liveCreatorIds
                                     Box(Modifier.size(64.dp).then(if (authorLive) Modifier.clickable {
