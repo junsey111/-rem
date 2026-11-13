@@ -56,6 +56,11 @@ process.once('SIGTERM',()=>{stop().finally(()=>process.exit());});
   const modelDir=path.join(backend,'dist/model');
   for(const file of fs.readdirSync(modelDir).filter(file=>file.endsWith('.model.js'))) require(path.join(modelDir,file));
   dependency('@/model/relation');
+  const tables=await db.getQueryInterface().showAllTables();
+  if(tables.includes('user')){
+    const columns=await db.getQueryInterface().describeTable('user');
+    if(!columns.public_id) await db.query('ALTER TABLE `user` ADD COLUMN `public_id` INT UNSIGNED NULL, ADD UNIQUE KEY `uq_user_public_id` (`public_id`)');
+  }
   await db.sync(); // Fixed local database only; never alter or reset existing tables.
   const User=dependency('@/model/user.model').default, Role=dependency('@/model/role.model').default, UserRole=dependency('@/model/userRole.model').default;
   let user=await User.findOne({where:{username:config.username}});

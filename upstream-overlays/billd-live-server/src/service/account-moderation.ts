@@ -13,7 +13,7 @@ export async function moderateAccount(operatorId:number,token:string,userId:numb
   const accounts:any[]=await User.findAll({where:{id:{[Op.in]:[operatorId,userId]}},order:[['id','ASC']],transaction,lock:transaction.LOCK.UPDATE});
   const operator=accounts.find(row=>Number(row.id)===operatorId),target=accounts.find(row=>Number(row.id)===userId);
   if(!operator||operator.status!==1||operator.token!==token)throw new CustomError('登录已失效',401,401);
-  const roles:any[]=await sequelize.query(`SELECT ur.user_id,r.role_value FROM user_role ur JOIN role r ON r.id=ur.role_id WHERE ur.user_id IN (?,?) AND ur.deleted_at IS NULL AND r.deleted_at IS NULL FOR SHARE`,{replacements:[operatorId,userId],type:QueryTypes.SELECT,transaction});
+  const roles:any[]=await sequelize.query(`SELECT ur.user_id,r.role_value FROM user_role ur JOIN role r ON r.id=ur.role_id WHERE ur.user_id IN (?,?) AND ur.deleted_at IS NULL AND r.deleted_at IS NULL LOCK IN SHARE MODE`,{replacements:[operatorId,userId],type:QueryTypes.SELECT,transaction});
   if(!roles.some(row=>Number(row.user_id)===operatorId&&row.role_value==='SUPER_ADMIN'))throw new CustomError('无运营权限',403,403);
   if(!target)throw new CustomError('账号不存在',404,404);
   if(roles.some(row=>Number(row.user_id)===userId&&row.role_value==='SUPER_ADMIN'))throw new CustomError('不能在此禁用管理员账号',409,409);

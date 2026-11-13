@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const path = require('node:path');
 const Koa = require('koa');
+const { Op } = require('sequelize');
 
 require('module-alias').addAlias('@', path.resolve(__dirname, '../dist'));
 function stub(file, exports) {
@@ -13,60 +14,130 @@ class CustomError extends Error {
   constructor(message, statusCode) { super(message); this.statusCode = statusCode; }
 }
 
-const rows = [{ id: 5, user_id: 2, content: '真实动态', created_at: new Date('2026-11-05T10:00:00Z') }];
+const rows = [{ id: 5, user_id: 2, content: '真实动态', visible: true, hidden: false,
+  created_at: new Date('2026-11-05T10:00:00Z') }];
+const mediaRows = new Map();
+const commentMediaRows = new Map();
+const reviewRows = new Map();
+stub('@/model/momentReview.model', { __esModule: true, default: {
+  findAll: async () => [...reviewRows.values()],
+  create: async value => { reviewRows.set(String(value.moment_id), value); return value; },
+} });
+let nextMomentId = 6;
 const comments = [{ id: 50, moment_id: 5, user_id: 2, content: '真实评论', created_at: new Date('2026-11-05T10:01:00Z') }];
+let nextCommentId = 51;
 const likes = new Set();
+const favorites = new Set();
 const checkinDates = [];
 let feedWhere;
 const taskWhere = [];
 stub('@/app/auth/authJwt', { authJwt: async ctx => ({ code: 200, userInfo: { id: Number(ctx.get('authorization').slice(7)) } }) });
 stub('@/model/customError.model', { CustomError });
 stub('@/app/handler/success-handle', { __esModule: true, default: ({ ctx, data }) => { ctx.status = 200; ctx.body = { data }; } });
-stub('@/config/mysql', { __esModule: true, default: { transaction: async callback => callback({}) } });
-stub('@/model/user.model', { __esModule: true, default: { findAll: async () => [{ id: 2, username: '作者', avatar: null }] } });
-stub('@/model/followRelation.model', { __esModule: true, default: {} });
-stub('@/model/userSocialProfile.model', { __esModule: true, default: { findOne: async () => null } });
+stub('@/config/secret', { REVENUE_API_URL: 'http://revenue.test' });
+stub('@/utils/request', { __esModule: true, default: { get: async (_url, options) => ({
+  reviews: options.headers.Authorization === 'Bearer 1' ? [{ status: 'APPROVED' }] : [],
+}) } });
+stub('@/model/user.model', { __esModule: true, default: {
+  findAll: async () => [{ id: 1, username: '我', avatar: null }, { id: 2, username: '作者', avatar: null }],
+  findOne: async ({ where }) => ({ id: where.id, username: where.id === 2 ? '作者' : '我' }),
+} });
+stub('@/model/followRelation.model', { __esModule: true, default: { findAll: async () => [] } });
 stub('@/model/dailyCheckin.model', { __esModule: true, default: {
   findAll: async () => [...checkinDates].sort().reverse().map(checkin_date => ({ checkin_date })),
-  count: async () => 0,
   findOrCreate: async ({ where }) => {
     const created = !checkinDates.includes(where.checkin_date);
     if (created) checkinDates.push(where.checkin_date);
     return [{ ...where }, created];
   },
 } });
-stub('@/model/taskConfig.model', { __esModule: true, default: {
-  findOne: async () => null,
-  findAll: async () => [],
-} });
-stub('@/model/taskClaim.model', { __esModule: true, default: {
-  findAll: async () => [],
-  findOne: async () => null,
-  findOrCreate: async ({ defaults }) => [{ get: () => defaults }, true],
-} });
-stub('@/model/reportEvidence.model', { __esModule: true, default: {} });
 stub('@/model/moment.model', { Moment: {
-  findAll: async ({ where }) => { feedWhere = where; return rows; },
+  sequelize: { transaction: async callback => callback({}) },
+  findAll: async ({ where }) => {
+    feedWhere = where;
+    return rows.filter(row => (where[Op.and] || []).every(condition => {
+      if (condition.visible !== undefined && row.visible !== condition.visible) return false;
+      if (condition.hidden !== undefined && row.hidden !== condition.hidden) return false;
+      if (condition.val?.includes('moment_review') && reviewRows.get(String(row.id))?.status !== undefined && reviewRows.get(String(row.id)).status !== 'APPROVED') return false;
+      if (typeof condition.user_id === 'number' && row.user_id !== condition.user_id) return false;
+      const inQuery = condition.id?.[Op.in]?.val || '';
+      if (inQuery.includes('user_moment_like') && (!inQuery.includes('user_id = 1') || !likes.has(String(row.id)))) return false;
+      if (inQuery.includes('user_moment_favorite') && (!inQuery.includes('user_id = 1') || !favorites.has(String(row.id)))) return false;
+      if (inQuery.includes("media_kind = 'video'") && mediaRows.get(String(row.id))?.media_kind !== 'video') return false;
+      if (condition.id?.[Op.notIn] && mediaRows.get(String(row.id))?.media_kind === 'video') return false;
+      return true;
+    }));
+  },
   count: async ({ where }) => { taskWhere.push(where); return 2; },
-  create: async value => ({ id: 6, user_id: 1, content: value.content, created_at: new Date() }),
-  update: async () => [1],
-  findOne: async () => ({ id: 5 }),
+  create: async value => {
+    const row = { id: nextMomentId++, user_id: value.user_id, content: value.content,
+      visible: true, hidden: false, created_at: new Date() };
+    rows.push(row);
+    return row;
+  },
+  update: async (values, { where }) => {
+    const row = rows.find(item => String(item.id) === String(where.id) &&
+      item.user_id === where.user_id && item.visible === where.visible);
+    if (!row) return [0];
+    Object.assign(row, values);
+    return [1];
+  },
+  findOne: async ({ where }) => {
+    const row = rows.find(item => String(item.id) === String(where.id) && item.visible === where.visible);
+    if (!row) return null;
+    const permitted = (where[Op.or] || []).some(condition =>
+      (condition.hidden === false && !row.hidden) || condition.user_id === row.user_id);
+    return permitted ? { id: row.id, user_id: row.user_id } : null;
+  },
+}, MomentMedia: {
+  findAll: async () => [...mediaRows.values()].map(({ moment_id, media_kind }) => ({ moment_id, media_kind })),
+  findByPk: async id => mediaRows.get(String(id)) || null,
+  create: async value => { mediaRows.set(String(value.moment_id), value); return value; },
+  destroy: async ({ where }) => mediaRows.delete(String(where.moment_id)),
+}, MomentCommentMedia: {
+  findAll: async ({ where }) => [...commentMediaRows.values()].filter(row =>
+    where.comment_id[Op.in].some(id => String(id) === String(row.comment_id))).map(({ comment_id }) => ({ comment_id })),
+  findByPk: async id => commentMediaRows.get(String(id)) || null,
+  create: async value => { commentMediaRows.set(String(value.comment_id), value); return value; },
 }, MomentComment: {
   count: async ({ where }) => { taskWhere.push(where); return 4; },
-  findAll: async options => options.group ? [{ moment_id: 5, count: String(comments.filter(row => row.visible !== false).length) }] : comments.filter(row => row.visible !== false),
+  findAll: async options => {
+    if (options.group) {
+      if (options.group[0] === 'parent_id') return comments.filter(row => row.parent_id && row.visible !== false)
+        .map(row => ({ parent_id: row.parent_id, count: '1' }));
+      return [{ moment_id: 5, count: String(comments.filter(row => row.visible !== false).length) }];
+    }
+    return comments.filter(row => row.visible !== false &&
+      (!options.where.moment_id || String(row.moment_id) === String(options.where.moment_id)) &&
+      (options.where.parent_id === null ? !row.parent_id : options.where.parent_id ? row.parent_id === Number(options.where.parent_id) : true));
+  },
+  findOne: async ({ where }) => comments.find(row => row.id === Number(where.id) && row.visible !== false &&
+    (!where.moment_id || String(row.moment_id) === String(where.moment_id)) &&
+    (where.user_id === undefined || typeof where.user_id !== 'number' || row.user_id === where.user_id) &&
+    (where.parent_id !== null || !row.parent_id)) || null,
   create: async value => {
-    const row = { id: 51, ...value, created_at: new Date() };
+    const row = { id: nextCommentId++, ...value, created_at: new Date() };
     comments.push(row);
     return row;
   },
-  update: async (_values, { where }) => [comments.some(row => row.id === Number(where.id) && row.user_id === where.user_id && row.visible !== false) ? 1 : 0],
+  update: async (_values, { where }) => {
+    const found = comments.filter(row => row.visible !== false && (where.id
+      ? row.id === Number(where.id) && row.user_id === where.user_id
+      : row.parent_id === Number(where.parent_id)));
+    found.forEach(row => { row.visible = false; });
+    return [found.length];
+  },
 }, MomentLike: {
   count: async ({ where }) => { taskWhere.push(where); return 3; },
   findAll: async options => options.group ? [{ moment_id: 5, count: '2' }] : [...likes].map(moment_id => ({ moment_id })),
   findOrCreate: async ({ where }) => { likes.add(String(where.moment_id)); return [null, true]; },
   destroy: async ({ where }) => likes.delete(String(where.moment_id)),
-}, MomentMedia: {
-  findAll: async () => [],
+}, MomentFavorite: {
+  findAll: async options => options.group
+    ? [...favorites].map(moment_id => ({ moment_id, count: '1' }))
+    : [...favorites].map(moment_id => ({ moment_id })),
+  findOrCreate: async ({ where }) => { favorites.add(String(where.moment_id)); return [null, true]; },
+  destroy: async ({ where }) => favorites.delete(String(where.moment_id)),
 } });
 
 test('authenticated moments support feed, text publishing, comments, likes, and owned deletion', async () => {
@@ -79,9 +150,9 @@ test('authenticated moments support feed, text publishing, comments, likes, and 
   app.use(router.routes());
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
-  const call = async (url, method = 'GET', body) => {
+  const call = async (url, method = 'GET', body, userId = 1) => {
     const response = await fetch(`http://127.0.0.1:${server.address().port}${url}`, {
-      method, headers: { authorization: 'Bearer 1', ...(body ? { 'content-type': 'application/json' } : {}) },
+      method, headers: { authorization: `Bearer ${userId}`, ...(body ? { 'content-type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     return { status: response.status, json: await response.json() };
@@ -92,14 +163,21 @@ test('authenticated moments support feed, text publishing, comments, likes, and 
     assert.equal(feed.json.data.moments[0].author.username, '作者');
     assert.equal(feed.json.data.moments[0].like_count, 2);
     assert.equal(feed.json.data.moments[0].comment_count, 1);
+    assert.equal(feed.json.data.moments[0].favorite_count, 0);
+    assert.equal(feed.json.data.moments[0].is_favorited, false);
+    const videos = await call('/moments?scope=video');
+    assert.equal(videos.status, 200);
+    const [videoAndKey] = Object.getOwnPropertySymbols(feedWhere);
+    const videoCondition = feedWhere[videoAndKey].find(condition => condition.id)?.id;
+    assert.match(videoCondition[Object.getOwnPropertySymbols(videoCondition)[0]].val, /media_kind = 'video'/);
     const following = await call('/moments?scope=following');
     assert.equal(following.status, 200);
     const userFeed = await call('/moments?scope=user&user_id=2');
     assert.equal(userFeed.status, 200);
     assert.equal(userFeed.json.data.moments[0].user_id, 2);
     const [userFeedAndKey] = Object.getOwnPropertySymbols(feedWhere);
-    assert.equal(feedWhere[userFeedAndKey][2].user_id, 2);
-    const blockedCondition = feedWhere[userFeedAndKey][1].user_id;
+    assert.ok(feedWhere[userFeedAndKey].some(condition => condition.user_id === 2));
+    const blockedCondition = feedWhere[userFeedAndKey].find(condition => condition.user_id?.[Op.notIn])?.user_id;
     const [notInKey] = Object.getOwnPropertySymbols(blockedCondition);
     assert.match(blockedCondition[notInKey].val, /user_block_relation/);
     assert.equal((await call('/moments?scope=user')).status, 400);
@@ -108,15 +186,15 @@ test('authenticated moments support feed, text publishing, comments, likes, and 
     await call('/moments?scope=following');
     const [andKey] = Object.getOwnPropertySymbols(feedWhere);
     assert.equal(feedWhere[andKey].length, 4);
-    const blockedUsers = feedWhere[andKey][1].user_id[Object.getOwnPropertySymbols(feedWhere[andKey][1].user_id)[0]];
-    const followedUsers = feedWhere[andKey][2].user_id[Object.getOwnPropertySymbols(feedWhere[andKey][2].user_id)[0]];
+    const blockedUsers = feedWhere[andKey].find(condition => condition.user_id?.[Op.notIn]).user_id[Op.notIn];
+    const followedUsers = feedWhere[andKey].find(condition => condition.user_id?.[Op.in]).user_id[Op.in];
     assert.match(blockedUsers.val, /user_block_relation/);
     assert.match(followedUsers.val, /user_follow_relation/);
     const dailyProgress = await call('/moments/tasks/today');
     assert.equal(dailyProgress.status, 200);
-    assert.deepEqual(dailyProgress.json.data, { published: 2, liked: 3, commented: 4, tasks: [] });
+    assert.deepEqual(dailyProgress.json.data, { published: 2, liked: 3, commented: 4 });
     assert.equal(taskWhere.length, 3);
-    assert.ok(taskWhere.every(where => where.user_id === 1 && where.created_at));
+    assert.ok(taskWhere.every(where => where.user_id === 1 && where.createdAt));
     assert.equal(taskWhere[0].visible, true);
     const beforeCheckin = await call('/moments/tasks/checkin');
     assert.equal(beforeCheckin.json.data.checked_in, false);
@@ -136,14 +214,138 @@ test('authenticated moments support feed, text publishing, comments, likes, and 
     assert.equal(createdComment.status, 200);
     assert.equal(createdComment.json.data.comment.content, '我的评论');
     assert.equal((await call('/moments/5/comments', 'POST', { content: ' ' })).status, 400);
+    const reply = await call('/moments/5/comments', 'POST', { content: '回复作者', reply_to_comment_id: '50' });
+    assert.equal(reply.status, 200);
+    assert.equal(reply.json.data.comment.parent_id, '50');
+    const roots = await call('/moments/5/comments');
+    assert.equal(roots.json.data.comments.find(comment => comment.id === '50').reply_count, 1);
+    assert.equal(roots.json.data.comments.some(comment => comment.id === reply.json.data.comment.id), false);
+    const replies = await call('/moments/5/comments/50/replies');
+    assert.equal(replies.json.data.replies[0].content, '回复作者');
+    assert.equal(replies.json.data.replies[0].reply_to_username, '作者');
+    assert.equal((await call('/moments/5/comments/50/replies?after_id=bad')).status, 400);
     assert.equal((await call('/moments/5/comments/50', 'DELETE')).status, 404);
+    assert.equal((await call(`/moments/5/comments/${reply.json.data.comment.id}`, 'DELETE')).json.data.deleted_count, 1);
     assert.equal((await call('/moments/5/comments/51', 'DELETE')).status, 200);
     assert.equal((await call('/moments', 'POST', { content: '  新动态  ' })).json.data.content, '新动态');
     assert.equal((await call('/moments', 'POST', { content: ' ' })).status, 400);
+    const png = await require('sharp')({ create: { width: 2, height: 2, channels: 3, background: '#8844cc' } }).png().toBuffer();
+    const base = 'http://127.0.0.1:' + server.address().port;
+    const uploadComment = (bytes, content = '', replyToId, kind = 'image', authorization = 'Bearer 1') => fetch(base + '/moments/5/comments', {
+      method: 'POST', headers: { authorization, 'content-type': 'application/octet-stream',
+        'x-moment-meta': Buffer.from(JSON.stringify({ kind, content, reply_to_comment_id: replyToId })).toString('base64') }, body: bytes,
+    });
+    const emoji = await call('/moments/5/comments', 'POST', { content: '好喜欢这个视频😍🌸' });
+    assert.equal(emoji.json.data.comment.content, '好喜欢这个视频😍🌸');
+    const imageOnlyResponse = await uploadComment(png);
+    assert.equal(imageOnlyResponse.status, 200);
+    const imageOnly = (await imageOnlyResponse.json()).data.comment;
+    assert.equal(imageOnly.content, '');
+    assert.equal(imageOnly.media_path, '/moments/5/comments/' + imageOnly.id + '/media');
+    const pictureReplyResponse = await uploadComment(png, '图片回复😊', '50');
+    assert.equal(pictureReplyResponse.status, 200);
+    const pictureReply = (await pictureReplyResponse.json()).data.comment;
+    assert.equal(pictureReply.parent_id, '50');
+    const longPictureComment = await uploadComment(png, '好'.repeat(500));
+    assert.equal(longPictureComment.status, 200);
+    assert.equal((await longPictureComment.json()).data.comment.content.length, 500);
+    assert.equal((await call('/moments/5/comments')).json.data.comments.find(row => row.id === imageOnly.id).media_path, imageOnly.media_path);
+    assert.equal((await call('/moments/5/comments/50/replies')).json.data.replies.find(row => row.id === pictureReply.id).media_path, pictureReply.media_path);
+    const picture = await fetch(base + imageOnly.media_path, { headers: { authorization: 'Bearer 1' } });
+    assert.equal(picture.status, 200);
+    assert.match(picture.headers.get('content-type'), /image\/jpeg/);
+    assert.equal(picture.headers.get('cache-control'), 'private, no-store');
+    assert.ok((await picture.arrayBuffer()).byteLength > 100);
+    assert.equal((await fetch(base + imageOnly.media_path)).status, 401);
+    assert.equal((await fetch(base + imageOnly.media_path.replace('/moments/5/', '/moments/6/'), { headers: { authorization: 'Bearer 1' } })).status, 404);
+    const beforeInvalid = comments.length;
+    assert.equal((await uploadComment(Buffer.from('invalid image'))).status, 400);
+    assert.equal((await uploadComment(png, '', undefined, 'video')).status, 400);
+    assert.equal((await uploadComment(Buffer.alloc(5 * 1024 * 1024 + 1))).status, 413);
+    assert.equal((await uploadComment(png, 'a'.repeat(501))).status, 400);
+    assert.equal((await uploadComment(png, '', '9999')).status, 404);
+    assert.equal(comments.length, beforeInvalid);
+    assert.equal((await call('/moments/5/comments/' + imageOnly.id, 'DELETE')).status, 200);
+    assert.equal((await fetch(base + imageOnly.media_path, { headers: { authorization: 'Bearer 1' } })).status, 404);
+    await call('/moments/5/comments/50', 'DELETE', undefined, 2);
+    assert.equal((await fetch(base + pictureReply.media_path, { headers: { authorization: 'Bearer 1' } })).status, 404);
+    const upload = async (kind, bytes, content = '', userId = 1) => fetch(`http://127.0.0.1:${server.address().port}/moments`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${userId}`, 'content-type': 'application/octet-stream',
+        'x-moment-meta': Buffer.from(JSON.stringify({ kind, content })).toString('base64') },
+      body: bytes,
+    });
+    const imagePostResponse = await upload('image', png, '带图片的动态');
+    assert.equal(imagePostResponse.status, 200);
+    const imagePost = (await imagePostResponse.json()).data;
+    assert.equal(imagePost.media_kind, 'image');
+    const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 16]), Buffer.from('ftypisom'), Buffer.alloc(8)]);
+    assert.equal((await upload('video', mp4, '未认证视频', 2)).status, 403);
+    const videoPost = (await (await upload('video', mp4, '测试视频')).json()).data;
+    const myVideos = await call('/moments?scope=mine_video');
+    assert.equal(myVideos.json.data.moments.some(post => post.id === videoPost.id), true);
+    const myPosts = await call('/moments?scope=mine_post');
+    assert.equal(myPosts.json.data.moments.some(post => post.id === videoPost.id), false);
+    assert.equal(myPosts.json.data.moments.some(post => post.id === imagePost.id), true);
+    const image = await fetch(`http://127.0.0.1:${server.address().port}${imagePost.media_path}`, { headers: { authorization: 'Bearer 1' } });
+    assert.equal(image.status, 200);
+    assert.match(image.headers.get('content-type'), /image\/jpeg/);
+    const imageBytes = Buffer.from(await image.arrayBuffer());
+    assert.ok(imageBytes.length > 100);
+    const range = await fetch(`http://127.0.0.1:${server.address().port}${imagePost.media_path}`, {
+      headers: { authorization: 'Bearer 1', range: 'bytes=0-9' },
+    });
+    assert.equal(range.status, 206);
+    assert.deepEqual(Buffer.from(await range.arrayBuffer()), imageBytes.subarray(0, 10));
+    assert.equal((await upload('video', png)).status, 400);
+    assert.equal((await call('/moments/5/hidden', 'PUT', { hidden: true })).status, 404);
+    assert.equal((await call('/moments/5/hidden', 'PUT', { hidden: true }, 2)).status, 200);
+    assert.equal((await call('/moments?scope=all')).json.data.moments.some(post => post.id === '5'), false);
+    const ownerPosts = await call('/moments?scope=mine_post', 'GET', null, 2);
+    assert.equal(ownerPosts.json.data.moments.find(post => post.id === '5')?.hidden, true);
+    assert.equal((await call('/moments/5/like', 'PUT')).status, 404);
+    assert.equal((await call(`/moments/${imagePost.id}/hidden`, 'PUT', { hidden: true }, 2)).status, 404);
+    assert.equal((await call(`/moments/${imagePost.id}/hidden`, 'PUT', { hidden: true })).status, 200);
+    const hiddenMedia = await fetch(`http://127.0.0.1:${server.address().port}${imagePost.media_path}`,
+      { headers: { authorization: 'Bearer 2' } });
+    assert.equal(hiddenMedia.status, 404);
+    assert.equal((await fetch(`http://127.0.0.1:${server.address().port}${imagePost.media_path}`,
+      { headers: { authorization: 'Bearer 1' } })).status, 200);
+    assert.equal((await call(`/moments/${imagePost.id}/hidden`, 'PUT', { hidden: false })).status, 200);
+    assert.equal((await call('/moments/5/hidden', 'PUT', { hidden: false }, 2)).status, 200);
+    const feedWithMedia = await call('/moments?scope=all');
+    assert.equal(feedWithMedia.json.data.moments.some(post => post.id === imagePost.id), false);
+    assert.equal((await call('/moments?scope=mine_post')).json.data.moments.find(post => post.id === imagePost.id)?.media_kind, 'image');
     assert.equal((await call('/moments/5/like', 'PUT')).status, 200);
     assert.equal(likes.has('5'), true);
     assert.equal((await call('/moments/5/like', 'DELETE')).status, 200);
     assert.equal(likes.has('5'), false);
+    assert.equal((await call('/moments/5/favorite', 'PUT')).status, 200);
+    assert.equal(favorites.has('5'), true);
+    const favoredFeed = await call('/moments?scope=all');
+    assert.equal(favoredFeed.json.data.moments.find(post => post.id === '5')?.is_favorited, true);
+    assert.equal(favoredFeed.json.data.moments.find(post => post.id === '5')?.favorite_count, 1);
+    assert.equal((await call('/moments/5/favorite', 'DELETE')).status, 200);
+    assert.equal(favorites.has('5'), false);
+    reviewRows.get(videoPost.id).status = 'APPROVED';
+    await call('/moments/5/like', 'PUT');
+    await call(`/moments/${videoPost.id}/like`, 'PUT');
+    await call(`/moments/${videoPost.id}/favorite`, 'PUT');
+    const likedPosts = await call('/moments?scope=liked_post');
+    assert.equal(likedPosts.status, 200);
+    assert.equal(likedPosts.json.data.moments.some(post => post.id === '5'), true);
+    assert.equal(likedPosts.json.data.moments.some(post => post.id === videoPost.id), false);
+    const likedVideos = await call('/moments?scope=liked_video');
+    assert.equal(likedVideos.json.data.moments.some(post => post.id === videoPost.id), true);
+    assert.equal(likedVideos.json.data.moments.some(post => post.id === '5'), false);
+    const favoriteVideos = await call('/moments?scope=favorite_video');
+    assert.equal(favoriteVideos.json.data.moments.some(post => post.id === videoPost.id), true);
+    assert.equal(favoriteVideos.json.data.moments.some(post => post.id === '5'), false);
+    assert.equal((await call('/moments?scope=liked_video', 'GET', null, 2)).json.data.moments.length, 0);
+    assert.equal((await call('/moments?scope=favorite_video', 'GET', null, 2)).json.data.moments.length, 0);
+    await call('/moments/5/like', 'DELETE');
+    await call(`/moments/${videoPost.id}/like`, 'DELETE');
+    await call(`/moments/${videoPost.id}/favorite`, 'DELETE');
     assert.equal((await call('/moments/6', 'DELETE')).status, 200);
   } finally {
     await new Promise(resolve => server.close(resolve));

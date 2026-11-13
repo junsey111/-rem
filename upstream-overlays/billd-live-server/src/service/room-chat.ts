@@ -137,7 +137,7 @@ export async function moderateChat(
     )
       throw new CustomError('登录已失效', 401, 401);
     const roles: any[] = await sequelize.query(
-      'SELECT r.role_value FROM user_role ur JOIN role r ON r.id=ur.role_id WHERE ur.user_id=? AND ur.deleted_at IS NULL AND r.deleted_at IS NULL FOR SHARE',
+      'SELECT r.role_value FROM user_role ur JOIN role r ON r.id=ur.role_id WHERE ur.user_id=? AND ur.deleted_at IS NULL AND r.deleted_at IS NULL LOCK IN SHARE MODE',
       { replacements: [operatorId], type: QueryTypes.SELECT, transaction }
     );
     if (!roles.some((role) => role.role_value === 'SUPER_ADMIN'))

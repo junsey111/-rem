@@ -10,6 +10,7 @@ stub('@/app/auth/authJwt',{authJwt:async()=>({code:signedIn?200:401,userInfo:sig
 stub('@/config/secret',{INTERNAL_SERVICE_KEY:'gateway-internal',REVENUE_API_URL:'http://ledger'});
 stub('@/utils/request',{__esModule:true,default:{request:async options=>{lastCall=options;return{configured:false,version:0,rules:null};}}});
 stub('@/model/rechargeOrder.model',{__esModule:true,default:{findOne:async({where})=>where.user_id===42&&where.request_id==='owned'?{request_id:'owned',amount_fen:599}:null}});
+stub('@/model/user.model',{__esModule:true,default:{findByPk:async id=>({id,status:1})}});
 let attempt;
 stub('@/model/providerAttempt.model',{__esModule:true,default:{findOrCreate:async({defaults})=>[attempt ||= defaults]}});
 test('finance gateway protects admin routes, replaces claimed operator, and sources refunds from owned payment records',async()=>{
@@ -19,6 +20,8 @@ test('finance gateway protects admin routes, replaces claimed operator, and sour
  for(const route of ['/operations/finance/settings','/operations/finance/audit','/operations/finance/withdrawals','/operations/finance/refunds','/operations/gifts'])assert.equal((await call(route)).status,403);
  for(const route of ['/operations/finance/withdrawals/1','/operations/finance/refunds/1'])assert.equal((await call(route,'POST',{operator_id:1})).status,403);
  admin=true;const result=await call('/operations/finance/settings');assert.equal(result.status,200);assert.equal(result.body.data.configured,false);assert.equal(lastCall.headers['X-Internal-Key'],'gateway-internal');
+ assert.equal((await call('/operations/levels/settings')).status,200);assert.equal(lastCall.url,'http://ledger/v1/internal/business/levels');
+ assert.equal((await call('/operations/levels/settings','PUT',{operator_id:99,expected_version:0,viewer_thresholds:[1,2,3,4,5]})).status,200);assert.equal(lastCall.data.operator_id,7);
  await call('/operations/finance/settings','PUT',{operator_id:1,rules:{}});assert.equal(lastCall.data.operator_id,7);
  await call('/operations/gifts','PUT',{operator_id:1});assert.equal(lastCall.data.operator_id,7);
  const paid={action:'PAID',request_id:'12345678-1234-4234-8234-123456789012',reason:'核实外部回执',payment_ref:'receipt-1'};

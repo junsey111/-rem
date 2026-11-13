@@ -100,7 +100,7 @@ func (s *Service) SendGift(ctx context.Context, req GiftRequest) (GiftResponse, 
 		SELECT status, creator_id, campaign_id
 		FROM live_sessions
 		WHERE live_session_id = ?
-		FOR SHARE
+		LOCK IN SHARE MODE
 	`, req.LiveSessionID).Scan(&liveStatus, &liveCreatorID, &campaignID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return s.rejectGift(ctx, tx, req, bodyHash, "LIVE_SESSION_NOT_FOUND", 404)
@@ -143,12 +143,14 @@ func (s *Service) SendGift(ctx context.Context, req GiftRequest) (GiftResponse, 
 	var match *matchData
 	if req.MatchID != nil {
 		match = &matchData{}
+		var matchInTime bool
 		err = tx.QueryRowContext(ctx, `
-			SELECT match_id, live_session_id, opponent_live_session_id, creator_id, opponent_creator_id, mode, specific_gift_id, status
+			SELECT match_id, live_session_id, opponent_live_session_id, creator_id, opponent_creator_id, mode, specific_gift_id, status,
+				(ends_at IS NULL OR ends_at > UTC_TIMESTAMP(6))
 			FROM live_matches
 			WHERE match_id = ?
-			FOR SHARE
-		`, *req.MatchID).Scan(&match.MatchID, &match.LiveSessionID, &match.OpponentLiveSessionID, &match.CreatorID, &match.OpponentCreatorID, &match.Mode, &match.SpecificGiftID, &match.Status)
+			LOCK IN SHARE MODE
+		`, *req.MatchID).Scan(&match.MatchID, &match.LiveSessionID, &match.OpponentLiveSessionID, &match.CreatorID, &match.OpponentCreatorID, &match.Mode, &match.SpecificGiftID, &match.Status, &matchInTime)
 		if errors.Is(err, sql.ErrNoRows) {
 			return s.rejectGift(ctx, tx, req, bodyHash, "MATCH_CLOSED", 409)
 		}
@@ -157,7 +159,7 @@ func (s *Service) SendGift(ctx context.Context, req GiftRequest) (GiftResponse, 
 		}
 		validSession := match.LiveSessionID == req.LiveSessionID && match.CreatorID == req.CreatorID
 		validOpponent := match.OpponentLiveSessionID.Valid && match.OpponentCreatorID.Valid && uint64(match.OpponentLiveSessionID.Int64) == req.LiveSessionID && uint64(match.OpponentCreatorID.Int64) == req.CreatorID
-		if (!validSession && !validOpponent) || match.Status != "OPEN" {
+		if (!validSession && !validOpponent) || match.Status != "OPEN" || !matchInTime {
 			return s.rejectGift(ctx, tx, req, bodyHash, "MATCH_CLOSED", 409)
 		}
 	}

@@ -47,6 +47,8 @@ func TestFinanceRulesReservationRefundAndAudit(t *testing.T) {
 			w, e := svc.CreateWithdrawal(ctx, 1, c)
 			if e == nil {
 				records <- w
+			} else {
+				t.Logf("concurrent withdrawal: %v", e)
 			}
 		}(request)
 	}

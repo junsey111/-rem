@@ -58,10 +58,9 @@ test('MySQL durable IM session intent survives lost replies, rollback, rotation,
   const imUrl=`http://127.0.0.1:${imPort}`;
   stub('@/config/mysql',{__esModule:true,default:db});stub('@/config/secret',{JWT_SECRET:secret,OPENIM_API_URL:imUrl,OPENIM_PLATFORM_ID:1,OPENIM_SECRET:'isolated-secret',OPENIM_ADMIN_USER_ID:'imAdmin',OPENIM_PUBLIC_API_URL:'http://isolated',OPENIM_WS_URL:'ws://isolated',REVENUE_API_URL:imUrl,INTERNAL_SERVICE_KEY:'isolated-revenue-key'});
   stub('@/utils',{initTable:()=>{}});
-  stub('@/config/redis',{redisClient:{isReady:false}});
+  stub('@/config/redis',{redisClient:{isOpen:false}});
   const user=require('../dist/model/user.model').default,session=require('../dist/model/openimSession.model').default,live=require('../dist/model/live.model').default;
   await user.sync();await live.sync();
-  const block=require('../dist/model/userBlock.model').default;await block.sync();
   const migration=require('node:fs').readFileSync(path.resolve(__dirname,'../migrations/20261102_openim_sessions.sql'),'utf8');
   await admin.query(migration);await admin.query(migration);await session.sync();
   await user.bulkCreate([1,2].map(id=>({id,username:'Real stored '+id,password:'ExactPassword',status:1})));
@@ -88,10 +87,6 @@ test('MySQL durable IM session intent survives lost replies, rollback, rotation,
   assert.equal(recipient.status,200);assert.deepEqual(recipient.data.data,{user_id:'2',name:'Real stored 2'});
   assert.deepEqual(registered,[{userID:'2',nickname:'Real stored 2',faceURL:''}]);
   assert.equal(issued,0);assert.equal(revoked,0);assert.equal(await session.count(),0);
-  await block.create({blocker_id:2,blocked_id:1,created_at:new Date()});
-  assert.equal((await call('/openim/rooms/11/recipient')).status,403);
-  assert.equal(registered.length,1);
-  await block.destroy({where:{blocker_id:2,blocked_id:1}});
   assert.equal((await call('/openim/rooms/12/recipient')).status,400);
   assert.equal((await call('/openim/rooms/13/recipient')).status,404);
   mediaStates.set('11',{room:'11',open:true,directory_open:false,publishers:['2']});

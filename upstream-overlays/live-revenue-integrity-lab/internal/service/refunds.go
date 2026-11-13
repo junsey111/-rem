@@ -89,7 +89,7 @@ func (s *Service) CreateRefund(ctx context.Context, c RefundRequest) (Refund, er
 	if exists != 0 {
 		return old, financeError(409, "REFUND_ALREADY_REQUESTED", "该充值已申请退款，请查看原退款单")
 	}
-	settings, err := scanFinanceSettings(tx.QueryRowContext(ctx, `SELECT version,rules_json FROM finance_settings WHERE singleton=1 FOR SHARE`))
+	settings, err := scanFinanceSettings(tx.QueryRowContext(ctx, `SELECT version,rules_json FROM finance_settings WHERE singleton=1 LOCK IN SHARE MODE`))
 	if err != nil {
 		return old, err
 	}

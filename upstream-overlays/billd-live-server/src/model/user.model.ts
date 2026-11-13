@@ -26,6 +26,11 @@ const model = sequelize.define<UserModel>(
       allowNull: false,
       autoIncrement: true,
     },
+    public_id: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+      unique: 'uq_user_public_id',
+    },
     // uuid: {
     //   type: DataTypes.UUID,
     //   defaultValue: DataTypes.UUIDV4, // 或 Sequelize.UUIDV1

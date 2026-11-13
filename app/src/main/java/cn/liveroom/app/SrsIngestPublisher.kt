@@ -7,9 +7,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.pedro.common.ConnectChecker
 import com.pedro.encoder.input.video.CameraHelper
-import com.pedro.encoder.input.gl.render.filters.BeautyFilterRender
-import com.pedro.encoder.input.gl.render.filters.BrightnessFilterRender
-import com.pedro.encoder.input.gl.render.filters.SaturationFilterRender
 import com.pedro.library.rtmp.RtmpCamera2
 import com.pedro.library.view.OpenGlView
 import kotlinx.coroutines.CancellableContinuation
@@ -29,6 +26,9 @@ class SrsIngestPublisher(context: Context, private var beautySettings: CameraBea
     private var preview: OpenGlView? = null
     private var started = false
     private var stopped = false
+    private val beautyTracker = BeautyFaceTracker(appContext, beautySettings)
+
+    internal val beautyTrackingError: String? get() = beautyTracker.trackingError
 
     var onDropped: ((String) -> Unit)? = null
 
@@ -55,16 +55,16 @@ class SrsIngestPublisher(context: Context, private var beautySettings: CameraBea
         check(!started && !stopped) { "推流已经结束" }
         started = true
         camera.streamClient.setReTries(0)
-        applyBeautyFilters()
         if (!camera.prepareVideo() || !camera.prepareAudio()) {
             throw IllegalStateException("无法准备摄像头或麦克风")
         }
+        preview?.let { camera.replaceView(it) }
+        applyBeautyFilters()
         runCatching { camera.startPreview(CameraHelper.Facing.FRONT) }
         suspendCancellableCoroutine { continuation ->
             synchronized(this@SrsIngestPublisher) { connectResult = continuation }
             try {
                 camera.startStream(url)
-                preview?.let { view -> runCatching { camera.replaceView(view) } }
             } catch (error: Throwable) {
                 val pending = takeConnect()
                 if (pending != null && pending.isActive) pending.resumeWithException(error)
@@ -75,40 +75,41 @@ class SrsIngestPublisher(context: Context, private var beautySettings: CameraBea
     fun updateBeauty(settings: CameraBeautySettings) {
         if (stopped || beautySettings == settings) return
         beautySettings = settings
-        if (started) applyBeautyFilters()
+        beautyTracker.settings = settings
     }
 
     private fun applyBeautyFilters() {
         val gl = camera.glInterface
         gl.clearFilters()
-        var first = true
-        fun add(filter: com.pedro.encoder.input.gl.render.filters.BaseFilterRender) {
-            if (first) {
-                gl.setFilter(filter)
-                first = false
-            } else gl.addFilter(filter)
-        }
-        if (beautySettings.smoothing) add(BeautyFilterRender())
-        if (beautySettings.brightness != 0f) {
-            add(BrightnessFilterRender().apply { brightness = beautySettings.brightness })
-        }
-        if (beautySettings.saturation != 1f) {
-            add(SaturationFilterRender().apply { saturation = beautySettings.saturation })
-        }
+        gl.setFilter(BeautyFilterRenderer(beautyTracker))
     }
+
+    /** Camera-only preview. This never opens an audio source, a stream, or a room. */
+    fun startLocalPreview(view: OpenGlView) {
+        check(!stopped) { "预览已关闭" }
+        if (started) return
+        preview = view
+        camera.replaceView(view)
+        check(camera.prepareVideo(1280, 720, 30, 1800 * 1024, 90)) { "摄像头暂时无法预览，请退出后重试" }
+        started = true
+        applyBeautyFilters()
+        camera.startPreview(CameraHelper.Facing.FRONT)
+    }
+
+    fun flipCamera() { if (started && !stopped) camera.switchCamera() }
 
     fun attachPreview(view: OpenGlView) {
         if (preview === view) return
         preview = view
-        if (!started || stopped) return
-        runCatching { camera.replaceView(view) }
+        if (stopped) return
+        runCatching { camera.replaceView(view); if (started) applyBeautyFilters() }
     }
 
     fun detachPreview(view: OpenGlView) {
         if (preview !== view) return
         preview = null
         if (!started || stopped) return
-        runCatching { camera.replaceView(appContext) }
+        runCatching { camera.replaceView(appContext); applyBeautyFilters() }
     }
 
     fun stop() {
@@ -118,6 +119,7 @@ class SrsIngestPublisher(context: Context, private var beautySettings: CameraBea
         runCatching { if (camera.isStreaming) camera.stopStream() }
         runCatching { camera.stopPreview() }
         runCatching { camera.stopCamera() }
+        beautyTracker.close()
     }
 
     @Synchronized

@@ -4,6 +4,7 @@ import org.json.JSONObject
 
 sealed class ChatBody {
     data class Text(val text: String) : ChatBody()
+    data class Image(val url: String?) : ChatBody()
     data class Gift(
         val requestId: String,
         val giftOrderId: String,
@@ -28,6 +29,7 @@ private val uuidV4 = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]
 
 fun chatPreview(body: ChatBody): String = when (body) {
     is ChatBody.Text -> body.text
+    is ChatBody.Image -> "[图片]"
     is ChatBody.Gift -> "礼物 ${body.giftName} × ${body.quantity}"
     is ChatBody.Video -> if (body.paywalled) "付费视频 ${body.title}" else "视频 ${body.title}"
     is ChatBody.Other -> body.label
@@ -39,6 +41,7 @@ fun parseOpenImMessage(row: JSONObject): OpenImMessage {
     val body = when (type) {
         110 -> parseCustomData(custom)
         101 -> ChatBody.Text(row.optJSONObject("textElem")?.optString("content")?.takeIf { it.isNotEmpty() } ?: row.optString("content"))
+        102 -> ChatBody.Image(imageUrl(row))
         else -> ChatBody.Other("[非文字消息]")
     }
     val id = row.optString("clientMsgID").ifBlank { row.optString("serverMsgID") }
@@ -52,13 +55,21 @@ fun parseOpenImMessage(row: JSONObject): OpenImMessage {
         row.optInt("status"),
         type,
         if (type == 110) custom else null,
+        if (type == 102) imageUrl(row) else null,
     )
 }
 
 fun chatBody(message: OpenImMessage): ChatBody = when (message.contentType) {
     110 -> parseCustomData(message.customData)
     101 -> ChatBody.Text(message.content)
+    102 -> ChatBody.Image(message.mediaUrl)
     else -> ChatBody.Other(message.content.ifBlank { "[非文字消息]" })
+}
+
+private fun imageUrl(row: JSONObject): String? {
+    val picture = row.optJSONObject("pictureElem") ?: return null
+    return listOf("sourcePicture", "bigPicture", "snapshotPicture")
+        .firstNotNullOfOrNull { picture.optJSONObject(it)?.optString("url")?.takeIf(String::isNotBlank) }
 }
 
 fun previewLatest(latest: String): String {

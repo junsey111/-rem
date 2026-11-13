@@ -10,12 +10,13 @@ import (
 )
 
 type cohostRequest struct {
-	ID        uint64 `json:"cohost_id,string"`
-	RequestID string `json:"request_id"`
-	LiveID    uint64 `json:"live_session_id,string"`
-	UserID    uint64 `json:"user_id,string"`
-	Mode      string `json:"mode"`
-	Status    string `json:"status"`
+	ID            uint64 `json:"cohost_id,string"`
+	RequestID     string `json:"request_id"`
+	LiveID        uint64 `json:"live_session_id,string"`
+	UserID        uint64 `json:"user_id,string"`
+	Mode          string `json:"mode"`
+	Status        string `json:"status"`
+	QueuePosition uint64 `json:"queue_position"`
 }
 
 const cohostColumns = `SELECT cohost_id,request_id,live_session_id,user_id,mode,status FROM cohost_requests `
@@ -57,7 +58,7 @@ func (s *Server) handleCohost(w http.ResponseWriter, r *http.Request) {
 			query += `AND user_id=? `
 			args = append(args, user)
 		}
-		query += `ORDER BY cohost_id DESC LIMIT 100`
+		query += `ORDER BY CASE WHEN status='PENDING' THEN 0 WHEN status IN ('ACCEPTED','MUTED') THEN 1 ELSE 2 END, cohost_id ASC LIMIT 100`
 		rows, e := s.db.QueryContext(r.Context(), query, args...)
 		if e != nil {
 			cohostError(w, 503, "读取连麦失败")
@@ -76,6 +77,16 @@ func (s *Server) handleCohost(w http.ResponseWriter, r *http.Request) {
 		if rows.Err() != nil {
 			cohostError(w, 503, "读取连麦失败")
 			return
+		}
+		rows.Close()
+		for index := range items {
+			if items[index].Status == "PENDING" {
+				err = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM cohost_requests WHERE live_session_id=? AND status='PENDING' AND cohost_id<=?`, liveID, items[index].ID).Scan(&items[index].QueuePosition)
+				if err != nil {
+					cohostError(w, 503, "读取排队顺序失败")
+					return
+				}
+			}
 		}
 		httpx.WriteJSON(w, 200, map[string]any{"requests": items, "live_status": status})
 		return
@@ -174,7 +185,7 @@ func (s *Server) handleCohost(w http.ResponseWriter, r *http.Request) {
 		if fail(tx.Commit()) {
 			return
 		}
-		httpx.WriteJSON(w, 200, cohostRequest{uint64(id), c.RequestID, liveID, user, c.Mode, "PENDING"})
+		httpx.WriteJSON(w, 200, cohostRequest{ID: uint64(id), RequestID: c.RequestID, LiveID: liveID, UserID: user, Mode: c.Mode, Status: "PENDING"})
 		return
 	}
 	id, e := strconv.ParseUint(parts[1], 10, 64)

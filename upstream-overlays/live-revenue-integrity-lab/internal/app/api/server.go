@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -60,11 +61,13 @@ func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentS
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/healthz", s.wrap("healthz", s.handleHealth))
 	mux.HandleFunc("/v1/internal/users", s.requireInternalKey(s.wrap("internal_user_sync", s.handleInternalUserSync)))
+	mux.HandleFunc("/v1/internal/dm-call-settle", s.requireInternalKey(s.wrap("dm_call_settle", s.handleInternalDmCallSettle)))
 	mux.HandleFunc("/v1/internal/lives", s.requireInternalKey(s.wrap("internal_live_sync", s.handleInternalLiveSync)))
 	mux.HandleFunc("/v1/internal/matches", s.requireInternalKey(s.wrap("internal_match_sync", s.handleInternalMatchSync)))
 	mux.HandleFunc("/v1/internal/media-access", s.requireInternalKey(s.wrap("internal_media_access", s.handleMediaAccess)))
 	mux.HandleFunc("/v1/internal/media-rooms/", s.requireInternalKey(s.wrap("internal_media_room", s.handleMediaRoom)))
 	mux.HandleFunc("/v1/internal/operations/", s.requireInternalKey(s.wrap("internal_operations", s.handleInternalOperations)))
+	mux.HandleFunc("/v1/internal/admin-insights/", s.requireInternalKey(s.wrap("admin_insights", s.handleAdminInsights)))
 	mux.HandleFunc("/v1/internal/finance/", s.requireInternalKey(s.wrap("internal_finance", s.handleFinanceAdmin)))
 	mux.HandleFunc("/v1/internal/platform-account", s.requireInternalKey(s.wrap("platform_account", s.handlePlatformAccount)))
 	mux.HandleFunc("/v1/creators/me/withdrawals", s.requireAuth(s.wrap("withdrawals", s.handleWithdrawals)))
@@ -79,28 +82,27 @@ func New(addr string, db *sql.DB, redisClient *redis.Client, jwtSecret, paymentS
 	mux.HandleFunc("/v1/internal/cohost-presence", s.requireInternalKey(s.wrap("cohost_presence", s.handleCohostPresence)))
 	mux.HandleFunc("/v1/cohosts/", s.requireAuth(s.wrap("cohosts", s.handleCohost)))
 	mux.HandleFunc("/v1/internal/business/", s.requireInternalKey(s.wrap("business_settings", s.handleBusinessSettings)))
-	mux.HandleFunc("/v1/internal/task-rewards", s.requireInternalKey(s.wrap("task_rewards", s.handleInternalTaskReward)))
-	mux.HandleFunc("/v1/internal/task-progress", s.requireInternalKey(s.wrap("task_progress", s.handleInternalTaskProgress)))
-	mux.HandleFunc("/v1/internal/catalog/purchases", s.requireInternalKey(s.wrap("catalog_purchase", s.handleInternalCatalogPurchase)))
-	mux.HandleFunc("/v1/internal/catalog/purchases/", s.requireInternalKey(s.wrap("catalog_reverse", s.handleInternalCatalogReverse)))
 	mux.HandleFunc("/v1/internal/admission", s.requireInternalKey(s.wrap("admission", s.handleAdmission)))
 	mux.HandleFunc("/v1/wallets/me", s.requireAuth(s.wrap("wallet_balance", s.handleWalletBalance)))
+	mux.HandleFunc("/v1/users/me/recharges", s.requireAuth(s.wrap("my_recharges", s.handleMyRecharges)))
 	mux.HandleFunc("/v1/users/me/profile", s.requireAuth(s.wrap("user_profile", s.handleUserProfile)))
-	mux.HandleFunc("/v1/users/me/preferences", s.requireAuth(s.wrap("user_preferences", s.handleUserPreferences)))
 	mux.HandleFunc("/v1/users/discovery", s.requireAuth(s.wrap("user_discovery", s.handleUserDiscovery)))
 	mux.HandleFunc("/v1/creators/me/earnings", s.requireAuth(s.wrap("creator_earnings", s.handleCreatorEarnings)))
-	mux.HandleFunc("/v1/creators/me/rose-bills", s.requireAuth(s.wrap("creator_rose_bills", s.handleRoseBills)))
+	mux.HandleFunc("/v1/creators/me/dashboard", s.requireAuth(s.wrap("creator_dashboard", s.handleCreatorDashboard)))
+	mux.HandleFunc("/v1/creators/me/income", s.requireAuth(s.wrap("creator_income", s.handleCreatorIncome)))
 	mux.HandleFunc("/v1/creators/me/sessions", s.requireAuth(s.wrap("creator_sessions", s.handleCreatorSessions)))
 	mux.HandleFunc("/v1/creators/me/supporters", s.requireAuth(s.wrap("creator_supporters", s.handleCreatorSupporters)))
-	mux.HandleFunc("/v1/creators/", s.requireAuth(s.wrap("public_creator_supporters", s.handlePublicCreatorSupporters)))
 	mux.HandleFunc("/v1/users/me/level", s.requireAuth(s.wrap("user_level", s.handleUserLevel)))
 	mux.HandleFunc("/v1/referrals/me", s.requireAuth(s.wrap("referral_me", s.handleReferralMe)))
+	mux.HandleFunc("/v1/referrals/rewards", s.requireAuth(s.wrap("referral_rewards", s.handleReferralRewards)))
 	mux.HandleFunc("/v1/referrals/redeem", s.requireAuth(s.wrap("referral_redeem", s.handleReferralRedeem)))
 	mux.HandleFunc("/v1/rankings/creators", s.requireAuth(s.wrap("creator_rankings", s.handleCreatorRankings)))
 	mux.HandleFunc("/v1/rankings/contributors", s.requireAuth(s.wrap("contributor_rankings", s.handleContributorRankings)))
 	mux.HandleFunc("/v1/wallets/recharges", s.wrap("wallet_recharge", s.handleRecharge))
 	mux.HandleFunc("/v1/gifts", s.requireAuth(s.wrap("gift_send", s.handleGift)))
 	mux.HandleFunc("/v1/dm/gifts", s.requireAuth(s.wrap("dm_gifts", s.handleDmGifts)))
+	mux.HandleFunc("/v1/dm/call-price", s.requireAuth(s.wrap("dm_call_price", s.handleDmCallPrice)))
+	mux.HandleFunc("/v1/dm/call-prices/", s.requireAuth(s.wrap("dm_call_price_user", s.handleDmCallPriceByUser)))
 	mux.HandleFunc("/v1/dm/gifts/", s.requireAuth(s.wrap("dm_gift_read", s.handleDmGiftRead)))
 	mux.HandleFunc("/v1/dm/video-unlocks", s.requireAuth(s.wrap("dm_video_unlock", s.handleDmVideoUnlock)))
 	mux.HandleFunc("/v1/dm/videos/", s.requireAuth(s.wrap("dm_video_access", s.handleDmVideoAccess)))
@@ -137,7 +139,7 @@ func (s *Server) handleGiftCatalog(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT gift_id, display_name, coin_price, match_points, diamond_reward, effect_type, effect_url, effect_video_mode, effect_md5, icon_url FROM gift_catalog WHERE enabled = TRUE ORDER BY coin_price`)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT gift_id, display_name, coin_price, match_points, diamond_reward, effect_type, effect_url, effect_video_mode, effect_md5, icon_url, category FROM gift_catalog WHERE enabled = TRUE ORDER BY coin_price`)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -154,11 +156,12 @@ func (s *Server) handleGiftCatalog(w http.ResponseWriter, r *http.Request) {
 		EffectVideoMode string `json:"effect_video_mode"`
 		EffectMD5       string `json:"effect_md5"`
 		IconURL         string `json:"icon_url"`
+		Category        string `json:"category"`
 	}
 	items := []gift{}
 	for rows.Next() {
 		var item gift
-		if err := rows.Scan(&item.GiftID, &item.Name, &item.Coins, &item.MatchPoints, &item.Diamonds, &item.EffectType, &item.EffectURL, &item.EffectVideoMode, &item.EffectMD5, &item.IconURL); err != nil {
+		if err := rows.Scan(&item.GiftID, &item.Name, &item.Coins, &item.MatchPoints, &item.Diamonds, &item.EffectType, &item.EffectURL, &item.EffectVideoMode, &item.EffectMD5, &item.IconURL, &item.Category); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
@@ -195,6 +198,9 @@ func requestedPeriod(r *http.Request) (time.Time, string, bool) {
 	switch period {
 	case "daily":
 		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC), period, true
+	case "weekly":
+		midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		return midnight.AddDate(0, 0, -int((now.Weekday()+6)%7)), period, true
 	case "monthly":
 		return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC), period, true
 	default:
@@ -209,7 +215,7 @@ func (s *Server) handleCreatorEarnings(w http.ResponseWriter, r *http.Request) {
 	}
 	start, period, ok := requestedPeriod(r)
 	if !ok {
-		httpx.WriteError(w, http.StatusBadRequest, "INVALID_PERIOD", "period must be daily or monthly")
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_PERIOD", "period must be daily, weekly or monthly")
 		return
 	}
 	userID := authenticatedUserID(r)
@@ -227,16 +233,111 @@ func (s *Server) handleCreatorEarnings(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"creator_id": userID, "period": period, "diamonds": diamonds + dmDiamonds, "gifts": gifts + dmGifts})
 }
 
+// dashboardIncomeFen converts earned diamonds using the current configured gross
+// exchange rate. A missing rule must not turn nonzero earnings into a false zero.
+func dashboardIncomeFen(diamonds int64, rules *service.FinanceRules) *int64 {
+	if diamonds == 0 {
+		zero := int64(0)
+		return &zero
+	}
+	if diamonds < 0 || rules == nil || rules.DiamondUnits <= 0 || rules.FiatFen <= 0 {
+		return nil
+	}
+	amount := new(big.Int).Mul(big.NewInt(diamonds), big.NewInt(rules.FiatFen))
+	amount.Div(amount, big.NewInt(rules.DiamondUnits))
+	if !amount.IsInt64() {
+		return nil
+	}
+	fen := amount.Int64()
+	return &fen
+}
+
+func (s *Server) handleCreatorDashboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
+		return
+	}
+	userID := authenticatedUserID(r)
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	var monthGiftDiamonds, totalGiftDiamonds, monthWatchDiamonds, totalWatchDiamonds int64
+	if err := s.db.QueryRowContext(r.Context(), `
+		SELECT COALESCE(SUM(CASE WHEN created_at >= ? THEN diamond_reward ELSE 0 END),0),
+		       COALESCE(SUM(diamond_reward),0)
+		FROM gift_orders WHERE creator_id=? AND status='ACCEPTED'`, monthStart, userID).
+		Scan(&monthGiftDiamonds, &totalGiftDiamonds); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if err := s.db.QueryRowContext(r.Context(), `
+		SELECT COALESCE(SUM(CASE WHEN created_at >= ? THEN diamond_reward ELSE 0 END),0),
+		       COALESCE(SUM(diamond_reward),0)
+		FROM live_watch_unlocks WHERE creator_id=?`, monthStart, userID).
+		Scan(&monthWatchDiamonds, &totalWatchDiamonds); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	var monthlySessions, totalSessions, monthlySeconds, totalSeconds int64
+	if err := s.db.QueryRowContext(r.Context(), `
+		SELECT COALESCE(SUM(CASE WHEN started_at >= ? THEN 1 ELSE 0 END),0), COUNT(*),
+		       COALESCE(SUM(CASE WHEN started_at >= ? THEN duration_seconds ELSE 0 END),0),
+		       COALESCE(SUM(duration_seconds),0)
+		FROM (
+			SELECT started_at, GREATEST(0, TIMESTAMPDIFF(SECOND, started_at,
+			       COALESCE(closed_at, UTC_TIMESTAMP(6)))) AS duration_seconds
+			FROM live_sessions WHERE creator_id=?
+		) AS own_sessions`, monthStart, monthStart, userID).
+		Scan(&monthlySessions, &totalSessions, &monthlySeconds, &totalSeconds); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	settings, err := s.svc.GetFinanceSettings(r.Context())
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	monthlyDiamonds := monthGiftDiamonds + monthWatchDiamonds
+	totalDiamonds := totalGiftDiamonds + totalWatchDiamonds
+	_, monthPrivate, _, err := s.dmPointTotals(r.Context(), userID, &monthStart)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	_, totalPrivate, _, err := s.dmPointTotals(r.Context(), userID, nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	monthlyDiamonds += monthPrivate
+	totalDiamonds += totalPrivate
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"monthly_income_fen": dashboardIncomeFen(monthlyDiamonds, settings.Rules),
+		"total_income_fen":   dashboardIncomeFen(totalDiamonds, settings.Rules),
+		"monthly_diamonds":   monthlyDiamonds, "total_diamonds": totalDiamonds,
+		"monthly_sessions": monthlySessions, "total_sessions": totalSessions,
+		"monthly_minutes": monthlySeconds / 60, "total_minutes": totalSeconds / 60,
+	})
+}
+
 func (s *Server) handleCreatorSessions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
 		return
 	}
 	userID := authenticatedUserID(r)
+	settings, err := s.svc.GetFinanceSettings(r.Context())
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT live_session_id, status, started_at,
-			GREATEST(0, TIMESTAMPDIFF(SECOND, started_at, COALESCE(closed_at, UTC_TIMESTAMP(6))))
-		FROM live_sessions WHERE creator_id=? ORDER BY started_at DESC LIMIT 30`, userID)
+		SELECT ls.live_session_id, ls.status, ls.started_at,
+			GREATEST(0, TIMESTAMPDIFF(SECOND, ls.started_at, COALESCE(ls.closed_at, UTC_TIMESTAMP(6)))),
+			COALESCE((SELECT SUM(g.diamond_reward) FROM gift_orders g
+				WHERE g.live_session_id=ls.live_session_id AND g.status='ACCEPTED'),0) +
+			COALESCE((SELECT SUM(u.diamond_reward) FROM live_watch_unlocks u
+				WHERE u.live_session_id=ls.live_session_id),0)
+		FROM live_sessions ls WHERE ls.creator_id=? ORDER BY ls.started_at DESC LIMIT 30`, userID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -248,12 +349,14 @@ func (s *Server) handleCreatorSessions(w http.ResponseWriter, r *http.Request) {
 		var status string
 		var startedAt time.Time
 		var duration int64
-		if err := rows.Scan(&id, &status, &startedAt, &duration); err != nil {
+		var diamonds int64
+		if err := rows.Scan(&id, &status, &startedAt, &duration, &diamonds); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
 		sessions = append(sessions, map[string]any{"live_session_id": strconv.FormatUint(id, 10), "status": status,
-			"started_at": startedAt.UTC().Format(time.RFC3339), "duration_seconds": duration})
+			"started_at": startedAt.UTC().Format(time.RFC3339), "duration_seconds": duration,
+			"income_fen": dashboardIncomeFen(diamonds, settings.Rules)})
 	}
 	if err := rows.Err(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
@@ -299,69 +402,6 @@ func (s *Server) handleCreatorSupporters(w http.ResponseWriter, r *http.Request)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"period_days": 7, "supporters": supporters})
 }
 
-func (s *Server) handlePublicCreatorSupporters(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
-		return
-	}
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) != 4 || parts[0] != "v1" || parts[1] != "creators" || parts[3] != "supporters" {
-		http.NotFound(w, r)
-		return
-	}
-	creatorID, err := strconv.ParseUint(parts[2], 10, 64)
-	if err != nil || creatorID == 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "INVALID_CREATOR_ID", "creator id is invalid")
-		return
-	}
-	var hidden, disabled bool
-	var standing string
-	err = s.db.QueryRowContext(r.Context(), `SELECT hide_guardian,account_standing,EXISTS(SELECT 1 FROM platform_account_state p WHERE p.user_id=users.user_id AND p.disabled=TRUE) FROM users WHERE user_id=?`, creatorID).Scan(&hidden, &standing, &disabled)
-	if err == sql.ErrNoRows || err == nil && (standing != "GOOD" || disabled) {
-		httpx.WriteError(w, http.StatusNotFound, "CREATOR_NOT_FOUND", "creator not found")
-		return
-	}
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	if hidden {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"hidden": true, "period_days": 7, "supporters": []any{}})
-		return
-	}
-	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT g.viewer_id, COUNT(*), COALESCE(SUM(g.charged_coins),0)
-		FROM gift_orders g JOIN users u ON u.user_id=g.viewer_id
-		WHERE g.creator_id=? AND g.status='ACCEPTED' AND g.created_at>=UTC_TIMESTAMP(6)-INTERVAL 7 DAY
-			AND u.account_standing='GOOD'
-			AND NOT EXISTS (SELECT 1 FROM platform_account_state p WHERE p.user_id=u.user_id AND p.disabled=TRUE)
-		GROUP BY g.viewer_id ORDER BY 3 DESC, g.viewer_id ASC LIMIT 50`, creatorID)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	defer rows.Close()
-	type supporter struct {
-		UserID uint64 `json:"user_id"`
-		Gifts  int64  `json:"gift_count"`
-		Coins  int64  `json:"coins"`
-	}
-	supporters := make([]supporter, 0)
-	for rows.Next() {
-		var item supporter
-		if err := rows.Scan(&item.UserID, &item.Gifts, &item.Coins); err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-			return
-		}
-		supporters = append(supporters, item)
-	}
-	if err := rows.Err(); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"hidden": false, "period_days": 7, "supporters": supporters})
-}
-
 func (s *Server) handleUserLevel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only GET is allowed")
@@ -386,14 +426,19 @@ func (s *Server) handleUserLevel(w http.ResponseWriter, r *http.Request) {
 	}
 	spent += dmSpent
 	earned += dmEarned
+	levelSettings, err := s.readLevelSettings(r.Context())
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user_id":                   userID,
 		"viewer_points":             spent,
-		"viewer_level":              service.LevelForPoints(spent),
-		"viewer_next_level_points":  service.NextLevelPoints(spent),
+		"viewer_level":              service.LevelForPointsWithThresholds(spent, levelSettings.ViewerThresholds),
+		"viewer_next_level_points":  service.NextLevelPointsWithThresholds(spent, levelSettings.ViewerThresholds),
 		"creator_points":            earned,
-		"creator_level":             service.LevelForPoints(earned),
-		"creator_next_level_points": service.NextLevelPoints(earned),
+		"creator_level":             service.LevelForPointsWithThresholds(earned, levelSettings.CreatorThresholds),
+		"creator_next_level_points": service.NextLevelPointsWithThresholds(earned, levelSettings.CreatorThresholds),
 	})
 }
 
@@ -404,7 +449,7 @@ func (s *Server) handleCreatorRankings(w http.ResponseWriter, r *http.Request) {
 	}
 	start, period, ok := requestedPeriod(r)
 	if !ok {
-		httpx.WriteError(w, http.StatusBadRequest, "INVALID_PERIOD", "period must be daily or monthly")
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_PERIOD", "period must be daily, weekly or monthly")
 		return
 	}
 	limit := parseLimit(r.URL.Query().Get("limit"))
@@ -442,7 +487,7 @@ func (s *Server) handleContributorRankings(w http.ResponseWriter, r *http.Reques
 	}
 	start, period, ok := requestedPeriod(r)
 	if !ok {
-		httpx.WriteError(w, http.StatusBadRequest, "INVALID_PERIOD", "period must be daily or monthly")
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_PERIOD", "period must be daily, weekly or monthly")
 		return
 	}
 	limit := parseLimit(r.URL.Query().Get("limit"))
@@ -489,8 +534,11 @@ func (s *Server) handleMatchScore(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadRequest, "BAD_PATH", "invalid match id")
 			return
 		}
-		var creatorID, opponentCreatorID sql.NullInt64
-		if err := s.db.QueryRowContext(r.Context(), `SELECT creator_id,opponent_creator_id FROM live_matches WHERE match_id=?`, matchID).Scan(&creatorID, &opponentCreatorID); err != nil {
+		var creatorID, opponentCreatorID, remaining sql.NullInt64
+		var duration int
+		if err := s.db.QueryRowContext(r.Context(), `SELECT creator_id,opponent_creator_id,duration_minutes,
+			CASE WHEN ends_at IS NULL THEN NULL ELSE GREATEST(TIMESTAMPDIFF(SECOND,UTC_TIMESTAMP(6),ends_at),0) END
+			FROM live_matches WHERE match_id=?`, matchID).Scan(&creatorID, &opponentCreatorID, &duration, &remaining); err != nil {
 			if err == sql.ErrNoRows {
 				httpx.WriteError(w, http.StatusNotFound, "MATCH_NOT_FOUND", "match not found")
 				return
@@ -528,7 +576,12 @@ func (s *Server) handleMatchScore(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"match_id": matchID, "scores": result})
+		var seconds any
+		if remaining.Valid {
+			seconds = remaining.Int64
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"match_id": matchID, "scores": result,
+			"duration_minutes": duration, "remaining_seconds": seconds})
 		return
 	}
 	if len(parts) == 3 && parts[0] == "v1" && parts[1] == "matches" {
@@ -708,7 +761,7 @@ func (s *Server) handleMatchInvitations(w http.ResponseWriter, r *http.Request) 
 	userID := authenticatedUserID(r)
 	if r.Method == http.MethodGet {
 		rows, err := s.db.QueryContext(r.Context(), `
-			SELECT invitation_id, match_id, live_session_id, creator_id, opponent_live_session_id, opponent_creator_id, mode, status, created_at
+			SELECT invitation_id, match_id, live_session_id, creator_id, opponent_live_session_id, opponent_creator_id, mode, status, created_at, duration_minutes
 			FROM live_match_invitations
 			WHERE opponent_creator_id=? AND status='PENDING'
 			AND EXISTS (SELECT 1 FROM live_sessions s WHERE s.live_session_id=live_match_invitations.live_session_id AND s.status='OPEN')
@@ -730,11 +783,12 @@ func (s *Server) handleMatchInvitations(w http.ResponseWriter, r *http.Request) 
 			Mode                  string    `json:"mode"`
 			Status                string    `json:"status"`
 			CreatedAt             time.Time `json:"created_at"`
+			DurationMinutes       int       `json:"duration_minutes"`
 		}
 		items := []invitation{}
 		for rows.Next() {
 			var item invitation
-			if err := rows.Scan(&item.InvitationID, &item.MatchID, &item.LiveSessionID, &item.CreatorID, &item.OpponentLiveSessionID, &item.OpponentCreatorID, &item.Mode, &item.Status, &item.CreatedAt); err != nil {
+			if err := rows.Scan(&item.InvitationID, &item.MatchID, &item.LiveSessionID, &item.CreatorID, &item.OpponentLiveSessionID, &item.OpponentCreatorID, &item.Mode, &item.Status, &item.CreatedAt, &item.DurationMinutes); err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 				return
 			}
@@ -756,6 +810,7 @@ func (s *Server) handleMatchInvitations(w http.ResponseWriter, r *http.Request) 
 		OpponentLiveSessionID uint64  `json:"opponent_live_session_id"`
 		Mode                  string  `json:"mode"`
 		SpecificGiftID        *string `json:"specific_gift_id"`
+		DurationMinutes       int     `json:"duration_minutes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.LiveSessionID == 0 || req.OpponentLiveSessionID == 0 || req.LiveSessionID == req.OpponentLiveSessionID {
 		httpx.WriteError(w, http.StatusBadRequest, "BAD_JSON", "two distinct live sessions are required")
@@ -763,6 +818,13 @@ func (s *Server) handleMatchInvitations(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.Mode == "" {
 		req.Mode = "ALL_GIFTS"
+	}
+	if req.DurationMinutes == 0 {
+		req.DurationMinutes = 5
+	}
+	if req.DurationMinutes != 2 && req.DurationMinutes != 3 && req.DurationMinutes != 5 && req.DurationMinutes != 10 {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_DURATION", "duration must be 2, 3, 5 or 10 minutes")
+		return
 	}
 	if req.Mode != "ALL_GIFTS" && req.Mode != "SPECIFIC_GIFT" {
 		httpx.WriteError(w, http.StatusBadRequest, "INVALID_MODE", "mode must be ALL_GIFTS or SPECIFIC_GIFT")
@@ -787,14 +849,15 @@ func (s *Server) handleMatchInvitations(w http.ResponseWriter, r *http.Request) 
 	}
 	baseID := uint64(time.Now().UnixMilli())*1000 + uint64(time.Now().Nanosecond()%1000)
 	_, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO live_match_invitations (invitation_id,match_id,live_session_id,creator_id,opponent_live_session_id,opponent_creator_id,mode,specific_gift_id,status,created_at)
-		VALUES (?,?,?,?,?,?,?,?, 'PENDING', UTC_TIMESTAMP(6))
-	`, baseID, baseID, req.LiveSessionID, creatorID, req.OpponentLiveSessionID, opponentCreatorID, req.Mode, req.SpecificGiftID)
+		INSERT INTO live_match_invitations (invitation_id,match_id,live_session_id,creator_id,opponent_live_session_id,opponent_creator_id,mode,specific_gift_id,status,created_at,duration_minutes)
+		VALUES (?,?,?,?,?,?,?,?, 'PENDING', UTC_TIMESTAMP(6), ?)
+	`, baseID, baseID, req.LiveSessionID, creatorID, req.OpponentLiveSessionID, opponentCreatorID, req.Mode, req.SpecificGiftID, req.DurationMinutes)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"invitation_id": baseID, "match_id": baseID, "status": "PENDING"})
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"invitation_id": baseID, "match_id": baseID,
+		"status": "PENDING", "duration_minutes": req.DurationMinutes})
 }
 
 func (s *Server) handleMatchInvitationResponse(w http.ResponseWriter, r *http.Request) {
@@ -827,8 +890,9 @@ func (s *Server) handleMatchInvitationResponse(w http.ResponseWriter, r *http.Re
 	defer tx.Rollback()
 	var matchID, liveID, creatorID, opponentLiveID, opponentID uint64
 	var mode, status string
+	var duration int
 	var specificGift sql.NullString
-	err = tx.QueryRowContext(r.Context(), `SELECT match_id,live_session_id,creator_id,opponent_live_session_id,opponent_creator_id,mode,specific_gift_id,status FROM live_match_invitations WHERE invitation_id=? FOR UPDATE`, id).Scan(&matchID, &liveID, &creatorID, &opponentLiveID, &opponentID, &mode, &specificGift, &status)
+	err = tx.QueryRowContext(r.Context(), `SELECT match_id,live_session_id,creator_id,opponent_live_session_id,opponent_creator_id,mode,specific_gift_id,status,duration_minutes FROM live_match_invitations WHERE invitation_id=? FOR UPDATE`, id).Scan(&matchID, &liveID, &creatorID, &opponentLiveID, &opponentID, &mode, &specificGift, &status, &duration)
 	if err == sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusNotFound, "INVITATION_NOT_FOUND", "invitation not found")
 		return
@@ -870,6 +934,10 @@ func (s *Server) handleMatchInvitationResponse(w http.ResponseWriter, r *http.Re
 			}
 		}
 		var active int
+		if _, err := tx.ExecContext(r.Context(), `UPDATE live_matches SET status='CLOSED' WHERE status='OPEN' AND ends_at IS NOT NULL AND ends_at<=UTC_TIMESTAMP(6) AND (creator_id IN (?,?) OR opponent_creator_id IN (?,?))`, creatorID, opponentID, creatorID, opponentID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
 		if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM live_matches WHERE status='OPEN' AND (creator_id IN (?,?) OR opponent_creator_id IN (?,?))`, creatorID, opponentID, creatorID, opponentID).Scan(&active); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
@@ -878,7 +946,7 @@ func (s *Server) handleMatchInvitationResponse(w http.ResponseWriter, r *http.Re
 			httpx.WriteError(w, http.StatusConflict, "CREATOR_IN_MATCH", "a creator is already in a match")
 			return
 		}
-		if _, err := tx.ExecContext(r.Context(), `INSERT INTO live_matches (match_id,live_session_id,creator_id,opponent_live_session_id,opponent_creator_id,mode,specific_gift_id,status) VALUES (?,?,?,?,?,?,?, 'OPEN')`, matchID, liveID, creatorID, opponentLiveID, opponentID, mode, specificGift); err != nil {
+		if _, err := tx.ExecContext(r.Context(), `INSERT INTO live_matches (match_id,live_session_id,creator_id,opponent_live_session_id,opponent_creator_id,mode,specific_gift_id,status,duration_minutes,started_at,ends_at) VALUES (?,?,?,?,?,?,?, 'OPEN', ?, UTC_TIMESTAMP(6), DATE_ADD(UTC_TIMESTAMP(6), INTERVAL ? MINUTE))`, matchID, liveID, creatorID, opponentLiveID, opponentID, mode, specificGift, duration, duration); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return
 		}
@@ -892,7 +960,7 @@ func (s *Server) handleMatchInvitationResponse(w http.ResponseWriter, r *http.Re
 		httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"invitation_id": id, "match_id": matchID, "status": newStatus, "live_session_id": liveID, "opponent_live_session_id": opponentLiveID, "creator_id": creatorID, "opponent_creator_id": opponentID})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"invitation_id": id, "match_id": matchID, "status": newStatus, "live_session_id": liveID, "opponent_live_session_id": opponentLiveID, "creator_id": creatorID, "opponent_creator_id": opponentID, "duration_minutes": duration})
 }
 
 func (s *Server) handleRecharge(w http.ResponseWriter, r *http.Request) {
@@ -1009,6 +1077,9 @@ func (s *Server) handleLivesPrefix(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && parts[3] == "watch-access":
 		s.handleWatchAccess(w, r, liveSessionID)
 		return
+	case r.Method == http.MethodGet && parts[3] == "stats":
+		s.handleLiveStats(w, r, liveSessionID)
+		return
 	case r.Method == http.MethodPost && parts[3] == "watch-heartbeat":
 		s.handleWatchHeartbeat(w, r, liveSessionID)
 		return
@@ -1019,6 +1090,10 @@ func (s *Server) handleLivesPrefix(w http.ResponseWriter, r *http.Request) {
 		s.handleWatchPrice(w, r, liveSessionID)
 		return
 	case r.Method == http.MethodGet && parts[3] == "match":
+		if _, err := s.db.ExecContext(r.Context(), `UPDATE live_matches SET status='CLOSED' WHERE status='OPEN' AND ends_at IS NOT NULL AND ends_at<=UTC_TIMESTAMP(6) AND (live_session_id=? OR opponent_live_session_id=?)`, liveSessionID, liveSessionID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+			return
+		}
 		var matchID uint64
 		err := s.db.QueryRowContext(r.Context(), `SELECT match_id FROM live_matches WHERE status='OPEN' AND (live_session_id=? OR opponent_live_session_id=?) ORDER BY match_id DESC LIMIT 1`, liveSessionID, liveSessionID).Scan(&matchID)
 		if err != nil && err != sql.ErrNoRows {
@@ -1054,7 +1129,34 @@ func (s *Server) handleLivesPrefix(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodGet && parts[3] == "contributors":
 		limit := parseLimit(r.URL.Query().Get("limit"))
-		rows, err := s.getLiveContributors(r.Context(), liveSessionID, limit)
+		var rows []service.ContributorSummary
+		var err error
+		if r.URL.Query().Get("period") != "" {
+			start, _, ok := requestedPeriod(r)
+			if !ok {
+				httpx.WriteError(w, http.StatusBadRequest, "INVALID_PERIOD", "period must be daily, weekly or monthly")
+				return
+			}
+			// Period rankings belong to this host across their live sessions.
+			var result *sql.Rows
+			result, err = s.db.QueryContext(r.Context(), `SELECT g.viewer_id,SUM(g.charged_coins) AS coins FROM gift_orders g JOIN live_sessions l ON l.live_session_id=g.live_session_id WHERE g.status='ACCEPTED' AND g.created_at>=? AND l.creator_id=(SELECT creator_id FROM live_sessions WHERE live_session_id=?) GROUP BY g.viewer_id ORDER BY coins DESC,g.viewer_id ASC LIMIT ?`, start, liveSessionID, limit)
+			if err == nil {
+				defer result.Close()
+				rows = []service.ContributorSummary{}
+				for result.Next() {
+					var row service.ContributorSummary
+					if err = result.Scan(&row.ViewerID, &row.Coins); err != nil {
+						break
+					}
+					rows = append(rows, row)
+				}
+				if err == nil {
+					err = result.Err()
+				}
+			}
+		} else {
+			rows, err = s.getLiveContributors(r.Context(), liveSessionID, limit)
+		}
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 			return

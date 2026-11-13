@@ -38,7 +38,7 @@ func testAccountAuthority(t *testing.T, secret string) string {
 }
 
 func TestRequestedPeriod(t *testing.T) {
-	for _, period := range []string{"daily", "monthly"} {
+	for _, period := range []string{"daily", "weekly", "monthly"} {
 		req := httptest.NewRequest("GET", "/v1/rankings?period="+url.QueryEscape(period), nil)
 		start, got, ok := requestedPeriod(req)
 		if !ok || got != period || start.Location() != time.UTC {
@@ -49,6 +49,9 @@ func TestRequestedPeriod(t *testing.T) {
 		}
 		if period == "monthly" && (start.Day() != 1 || start.Hour() != 0) {
 			t.Fatalf("monthly period not aligned to first UTC day: %v", start)
+		}
+		if period == "weekly" && (start.Weekday() != time.Monday || start.Hour() != 0 || time.Since(start) >= 7*24*time.Hour) {
+			t.Fatalf("weekly period not aligned to current UTC Monday: %v", start)
 		}
 	}
 	req := httptest.NewRequest("GET", "/v1/rankings?period=yearly", nil)

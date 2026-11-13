@@ -114,6 +114,7 @@ fun giftFromCatalogFields(
     effectVideoMode: String? = null,
     effectMd5: String? = null,
     iconUrl: String? = null,
+    category: String? = null,
 ) = Gift(
     id = id,
     name = name,
@@ -124,6 +125,7 @@ fun giftFromCatalogFields(
     effectVideoMode = effectVideoMode?.trim()?.take(64).orEmpty(),
     effectMd5 = effectMd5?.trim()?.take(64).orEmpty(),
     iconUrl = iconUrl?.trim()?.take(512).orEmpty(),
+    category = category?.takeIf { it in setOf("recommend", "heart", "party", "premium") } ?: "recommend",
 )
 
 fun parseGiftRow(row: JSONObject) = giftFromCatalogFields(
@@ -136,6 +138,7 @@ fun parseGiftRow(row: JSONObject) = giftFromCatalogFields(
     effectVideoMode = if (row.has("effect_video_mode") && !row.isNull("effect_video_mode")) row.optString("effect_video_mode") else null,
     effectMd5 = if (row.has("effect_md5") && !row.isNull("effect_md5")) row.optString("effect_md5") else null,
     iconUrl = if (row.has("icon_url") && !row.isNull("icon_url")) row.optString("icon_url") else null,
+    category = row.optString("category").takeIf { it.isNotBlank() },
 )
 
 sealed class FullscreenAdmit {

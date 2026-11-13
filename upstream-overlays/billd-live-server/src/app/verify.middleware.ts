@@ -4,7 +4,6 @@ import chalk from 'chalk';
 import { ParameterizedContext } from 'koa';
 
 import { authJwt } from '@/app/auth/authJwt';
-import { OPENIM_CALLBACK_PATH } from '@/config/secret';
 import {
   ALLOW_HTTP_CODE,
   BLACKLIST_TYPE,
@@ -25,8 +24,8 @@ const frontendWhiteList = [
   '/visitor_log/create', // 访客记录，这个接口是post的
   '/user/login', // 登录，这个接口是post的
   '/user/create', // 用户注册
-  '/user/sms/send-code', // 短信验证码登录
-  '/user/sms/login', // 短信验证码登录
+  '/user/email/code', // 邮箱验证码
+  '/user/email/login', // 邮箱验证码登录
   '/qq_user/login', // 登录，这个接口是post的
   '/email_user/login', // 登录，这个接口是post的
   '/github_user/login', // 登录，这个接口是post的
@@ -60,8 +59,6 @@ const rateLimiter = new RequestRateLimiter();
 
 export const apiBeforeVerify = async (ctx: ParameterizedContext, next) => {
   const url = ctx.request.path;
-  const openImCallback = ctx.method === 'POST' && url === OPENIM_CALLBACK_PATH;
-  const displayUrl = openImCallback ? '/openim/hooks/[redacted]/callbackBeforeSendSingleMsgCommand' : url;
   const ip = peerAddress(ctx);
   const admin = url === '/admin' || url.startsWith('/admin/');
   const consoleEnd = () => {
@@ -69,7 +66,7 @@ export const apiBeforeVerify = async (ctx: ParameterizedContext, next) => {
       chalkINFO(
         `日期：${new Date().toLocaleString()}，ip：${ip}，响应${
           admin ? '后' : '前'
-        }台接口 ${ctx.request.method} ${displayUrl}`
+        }台接口 ${ctx.request.method} ${url}`
       )
     );
   };
@@ -78,7 +75,7 @@ export const apiBeforeVerify = async (ctx: ParameterizedContext, next) => {
     chalkINFO(
       `日期：${new Date().toLocaleString()}，ip：${ip}，收到${
         admin ? '后' : '前'
-      }台接口 ${ctx.request.method} ${displayUrl}请求`
+      }台接口 ${ctx.request.method} ${url}请求`
     )
   );
 
@@ -103,12 +100,12 @@ export const apiBeforeVerify = async (ctx: ParameterizedContext, next) => {
 
   // Normal polling must not become a permanent ban for everyone behind one IP.
   const authPath = url.replace(/^\/admin(?=\/)/, '');
-  const sensitive = openImCallback || (ctx.method === 'POST' && ['/user/login', '/user/create', '/user/sms/send-code', '/user/sms/login'].includes(authPath));
+  const sensitive = ctx.method === 'POST' && ['/user/login', '/user/create'].includes(authPath);
   const session = sensitive ? null : await authJwt(ctx);
   const principal = !sensitive && session?.code === 200 && session.userInfo?.id
     ? `user:${session.userInfo.id}` : `ip:${ip}`;
   const category = sensitive ? authPath : 'general';
-  const limit = openImCallback ? 6000 : sensitive ? (['/user/login', '/user/sms/login'].includes(authPath) ? 20 : 5) : 600;
+  const limit = sensitive ? (authPath === '/user/login' ? 20 : 5) : 600;
   const retryAfter = rateLimiter.consume(`${category}:${principal}`, limit);
   if (retryAfter) {
     ctx.set('Retry-After', String(retryAfter));
@@ -145,7 +142,7 @@ export const apiBeforeVerify = async (ctx: ParameterizedContext, next) => {
     consoleEnd();
   } else {
     // 前端的get接口都不需要判断token，白名单内的也不需要判断token（如注册登录这些接口是post的）
-    if (ctx.request.method === 'GET' || frontendWhiteList.indexOf(url) !== -1 || openImCallback) {
+    if (ctx.request.method === 'GET' || frontendWhiteList.indexOf(url) !== -1) {
       await next();
       consoleEnd();
       return;

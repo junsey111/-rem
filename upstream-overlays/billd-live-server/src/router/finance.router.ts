@@ -7,9 +7,20 @@ import successHandler from '@/app/handler/success-handle';
 import { CustomError } from '@/model/customError.model';
 import { INTERNAL_SERVICE_KEY, REVENUE_API_URL } from '@/config/secret';
 import rechargeOrder from '@/model/rechargeOrder.model';
+import User from '@/model/user.model';
 import Attempt from '@/model/providerAttempt.model';
 
 const router = new Router();
+router.get('/operations/levels/settings', async ctx => {
+  await requireOperations(ctx);
+  await forward(ctx, '/v1/internal/business/levels', true);
+});
+router.put('/operations/levels/settings', async ctx => {
+  const operator = await requireOperations(ctx);
+  await forward(ctx, '/v1/internal/business/levels', true, {
+    ...ctx.request.body, operator_id: Number(operator.id),
+  });
+});
 // Claim the same unique business key as automatic execution before forwarding.
 // An uncertain provider transfer must never race an external manual payment.
 async function reserveManualPayment(ctx, kind: string, operator) {
@@ -99,6 +110,61 @@ router.get('/operations/finance/settings', async (ctx) => {
 router.get('/operations/finance/audit', async (ctx) => {
   await requireOperations(ctx);
   await forward(ctx, '/v1/internal/finance/audit', true);
+});
+router.get('/operations/finance/manual-recharges', async (ctx) => {
+  await requireOperations(ctx);
+  await forward(ctx, '/v1/internal/finance/manual-recharges', true);
+});
+router.get('/operations/finance/recharges', async (ctx) => {
+  await requireOperations(ctx);
+  await forward(ctx, '/v1/internal/finance/recharges', true);
+});
+router.get('/operations/finance/balance-adjustments', async (ctx) => {
+  await requireOperations(ctx);
+  const userId = String(ctx.query.user_id || '');
+  if (!/^[1-9][0-9]{0,9}$/.test(userId)) throw new CustomError('用户编号无效', 400, 400);
+  await forward(ctx, '/v1/internal/finance/balance-adjustments', true);
+});
+router.post('/operations/finance/balance-adjustments', async (ctx) => {
+  const operator = await requireOperations(ctx);
+  const body = ctx.request.body || {};
+  const userId = Number(body.user_id);
+  const expected = Number(body.expected_balance);
+  const target = Number(body.target_balance);
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (typeof body.request_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.request_id)
+    || !Number.isSafeInteger(userId) || userId < 1 || !Number.isSafeInteger(expected) || expected < 0
+    || !Number.isSafeInteger(target) || target < 0 || target > 1000000000
+    || Array.from(reason).length < 1 || Array.from(reason).length > 200)
+    throw new CustomError('请填写有效的用户、余额、单号和调整原因', 400, 400);
+  const user: any = await User.findByPk(userId);
+  if (!user) throw new CustomError('用户不存在', 404, 404);
+  await forward(ctx, '/v1/internal/finance/balance-adjustments', true, {
+    request_id: body.request_id, user_id: userId, operator_id: Number(operator.id),
+    expected_balance: expected, target_balance: target, reason,
+  });
+});
+router.post('/operations/finance/manual-recharges', async (ctx) => {
+  const operator = await requireOperations(ctx);
+  const body = ctx.request.body || {};
+  const userId = Number(body.user_id);
+  const coins = Number(body.coins);
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (typeof body.request_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.request_id)
+    || !Number.isSafeInteger(userId) || userId < 1 || !Number.isInteger(coins) || coins < 1 || coins > 100000
+    || Array.from(reason).length < 1 || Array.from(reason).length > 40)
+    throw new CustomError('请填写有效的用户、金币、单号和入账原因', 400, 400);
+  const user: any = await User.findByPk(userId);
+  if (!user || user.status !== 1) throw new CustomError('用户不存在或不可用', 404, 404);
+  await forward(ctx, '/v1/internal/finance/manual-recharges', true, {
+    request_id: body.request_id, user_id: userId, coins, reason, operator_id: Number(operator.id),
+  });
+});
+router.get('/revenue/recharges', async (ctx) => {
+  const auth = await authJwt(ctx);
+  if (auth.code !== 200 || !auth.userInfo?.id)
+    throw new CustomError(auth.message || '请重新登录', auth.code, auth.code);
+  await forward(ctx, '/v1/users/me/recharges', false);
 });
 router.get('/operations/gifts', async (ctx) => {
   await requireOperations(ctx);

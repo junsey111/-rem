@@ -36,6 +36,9 @@ export interface DmCallGrant {
   url: string;
   token: string;
   expires_in: number;
+  price_coins: number;
+  payer_id: string;
+  price_owner_id: string;
   // OpenIM teammate hook. Delivery is not required to join with call_id.
   signal_transport: typeof DM_CALL_SIGNAL_TRANSPORT;
   signal_text: string;
@@ -52,9 +55,16 @@ interface DmCallRecord {
   mode: DmCallMode;
   callerId: string;
   peerId: string;
+  priceCoins: number;
+  priceOwnerId: string;
+  payerId: string;
+  payerAccepted: boolean;
   createdAt: number;
   expiresAt: number;
   ended: boolean;
+  connectedAt?: number;
+  endedAt?: number;
+  endReason?: string;
 }
 
 interface TokenConfig {
@@ -79,7 +89,7 @@ export function dmCallSignalText(callId: string, mode: DmCallMode, fromUserId: s
   return `dm-call:v1 call_id=${callId} mode=${mode} from=${fromUserId}`;
 }
 
-function exclusive<T>(fn: () => T): Promise<T> {
+function exclusive<T>(fn: () => T | Promise<T>): Promise<T> {
   const run = chain.then(fn, fn);
   chain = run.then(
     () => undefined,
@@ -102,6 +112,9 @@ function nowOf(input?: number): number {
 
 function purge(now: number): void {
   for (const [id, call] of calls) {
+    if (!call.ended && !call.connectedAt && now - call.createdAt >= 60_000) {
+      call.ended = true; call.endedAt = call.createdAt + 60_000; call.endReason = 'no_answer';
+    }
     if (call.expiresAt > now) continue;
     calls.delete(id);
     const key = pairKey(call.callerId, call.peerId);
@@ -166,6 +179,9 @@ function grant(record: DmCallRecord, userId: string, config: TokenConfig, now: n
     url: config.url,
     token: signToken(record, userId, config, now),
     expires_in: Math.max(1, Math.ceil((record.expiresAt - now) / 1000)),
+    price_coins: record.priceCoins,
+    payer_id: record.payerId,
+    price_owner_id: record.priceOwnerId,
     signal_transport: DM_CALL_SIGNAL_TRANSPORT,
     signal_text: dmCallSignalText(record.id, record.mode, record.callerId),
   };
@@ -181,6 +197,9 @@ function openDmCallSync(input: {
   callerId: string;
   peer: DmCallPeer | null;
   mode: string;
+  priceCoins?: number;
+  priceOwnerId?: string;
+  acceptedPriceCoins?: number;
 } & TokenConfig): DmCallGrant {
   const now = nowOf(input.now);
   purge(now);
@@ -195,10 +214,23 @@ function openDmCallSync(input: {
   if (input.peer.id === input.callerId) throw new DmCallError('不能给自己打电话', 400);
   if (input.peer.disabled) throw new DmCallError('对方账号不可用', 403);
   const mode = input.mode as DmCallMode;
+  const priceCoins = mode === 'video' ? input.priceCoins ?? 0 : 0;
+  if (!Number.isInteger(priceCoins) || priceCoins < 0 || priceCoins > 1_000_000) throw new DmCallError('通话价格无效', 400);
+  if (priceCoins !== (input.acceptedPriceCoins ?? 0)) throw new DmCallError('视频通话价格已变化，请重新确认', 409);
+  const priceOwnerId = input.priceOwnerId || input.peer.id;
+  if (priceOwnerId !== input.peer.id && priceOwnerId !== input.callerId) throw new DmCallError('收费方无效', 400);
+  const payerId = priceOwnerId === input.callerId ? input.peer.id : input.callerId;
   const existing = activeCallFor(input.callerId, now) || activeCallFor(input.peer.id, now);
   if (existing) {
     const samePair = pairKey(existing.callerId, existing.peerId) === pairKey(input.callerId, input.peer.id);
     if (!samePair || existing.mode !== mode) throw new DmCallError('已有进行中的通话，请先挂断', 409);
+    if (existing.priceCoins !== priceCoins || (priceCoins > 0 && existing.priceOwnerId !== priceOwnerId))
+      throw new DmCallError('已有通话的价格不能更改，请先挂断', 409);
+    if (existing.payerId === input.callerId && !existing.payerAccepted) {
+      if (input.acceptedPriceCoins !== existing.priceCoins)
+        throw new DmCallError('请先同意本次付费视频价格', 409);
+      existing.payerAccepted = true;
+    }
     return grant(existing, input.callerId, input, now);
   }
   const id = crypto.randomBytes(16).toString('hex');
@@ -212,6 +244,10 @@ function openDmCallSync(input: {
     mode,
     callerId: input.callerId,
     peerId: input.peer.id,
+    priceCoins,
+    priceOwnerId,
+    payerId,
+    payerAccepted: priceCoins === 0 || payerId === input.callerId,
     createdAt: now,
     expiresAt: now + DM_CALL_TTL_MS,
     ended: false,
@@ -225,12 +261,15 @@ export function openDmCall(input: {
   callerId: string;
   peer: DmCallPeer | null;
   mode: string;
+  priceCoins?: number;
+  priceOwnerId?: string;
+  acceptedPriceCoins?: number;
 } & TokenConfig): Promise<DmCallGrant> {
   return exclusive(() => openDmCallSync(input));
 }
 
-export function joinDmCall(input: { userId: string; callId: string } & TokenConfig): Promise<DmCallGrant> {
-  return exclusive(() => {
+export function joinDmCall(input: { userId: string; callId: string; acceptedPriceCoins?: number } & TokenConfig): Promise<DmCallGrant> {
+  return exclusive(async () => {
     const now = nowOf(input.now);
     requireLiveKit(input.url, input.apiKey, input.apiSecret);
     requireLogin(input.loginToken);
@@ -241,19 +280,37 @@ export function joinDmCall(input: { userId: string; callId: string } & TokenConf
     if (input.userId !== record.callerId && input.userId !== record.peerId) {
       throw new DmCallError('你不在这通通话中', 403);
     }
+    if (record.priceCoins > 0 && record.payerId === input.userId && !record.payerAccepted) {
+      if (input.acceptedPriceCoins !== record.priceCoins) throw new DmCallError('请先同意本次付费视频价格', 409);
+      record.payerAccepted = true;
+    }
     return grant(record, input.userId, input, now);
   });
 }
 
-/** Return the other participant while the short lived call record is still valid. */
-export function dmCallPeer(callId: string, userId: string): string | null {
-  const record = lookup(callId, Date.now());
-  if (!record || record.ended) return null;
-  if (record.callerId !== userId && record.peerId !== userId) throw new DmCallError('你不在这通通话中', 403);
-  return record.callerId === userId ? record.peerId : record.callerId;
+export function confirmDmCall(input: {
+  userId: string;
+  callId: string;
+  participants: (room: string) => Promise<string[]>;
+  settle: (callId: string, payerId: string, ownerId: string, priceCoins: number) => Promise<void>;
+  now?: number;
+}): Promise<{ call_id: string; charged_coins: number }> {
+  return exclusive(async () => {
+    const record = lookup(input.callId, nowOf(input.now));
+    if (!record || record.ended) throw new DmCallError('通话不存在或已结束', 404);
+    if (input.userId !== record.callerId && input.userId !== record.peerId) throw new DmCallError('你不在这通通话中', 403);
+    const present = await input.participants(record.room);
+    if (!present.includes(record.callerId) || !present.includes(record.peerId)) throw new DmCallError('双方尚未接通', 409);
+    if (record.mode === 'video' && record.priceCoins > 0 && !record.connectedAt) {
+      if (!record.payerAccepted) throw new DmCallError('付款方尚未同意本次价格', 409);
+      await input.settle(record.id, record.payerId, record.priceOwnerId, record.priceCoins);
+    }
+    record.connectedAt ||= nowOf(input.now);
+    return { call_id: record.id, charged_coins: record.priceCoins };
+  });
 }
 
-export function endDmCall(input: { userId: string; callId: string; now?: number }): Promise<DmCallEnd> {
+export function endDmCall(input: { userId: string; callId: string; reason?: string; now?: number }): Promise<DmCallEnd> {
   return exclusive(() => {
     const now = nowOf(input.now);
     if (!accountId(input.userId)) throw new DmCallError('账号无效', 400);
@@ -268,9 +325,34 @@ export function endDmCall(input: { userId: string; callId: string; now?: number 
     if (input.userId !== record.callerId && input.userId !== record.peerId) {
       throw new DmCallError('你不在这通通话中', 403);
     }
-    record.ended = true;
+    if (!record.ended) {
+      record.ended = true;
+      record.endedAt = now;
+      record.endReason = record.connectedAt ? 'ended' : input.reason === 'rejected' && input.userId === record.peerId ? 'rejected' : 'cancelled';
+    }
     const key = pairKey(record.callerId, record.peerId);
     if (pairs.get(key) === record.id) pairs.delete(key);
     return { call_id: record.id, status: 'ended' };
   });
+}
+
+function callView(record: DmCallRecord, now: number) {
+  return { call_id: record.id, caller_id: record.callerId, peer_id: record.peerId, mode: record.mode,
+    price_coins: record.priceCoins, payer_id: record.payerId, price_owner_id: record.priceOwnerId,
+    status: record.ended ? record.endReason || 'ended' : record.connectedAt ? 'connected' : 'ringing',
+    connected: Boolean(record.connectedAt), created_at: record.createdAt,
+    duration_seconds: record.connectedAt ? Math.max(0, Math.floor(((record.endedAt || now) - record.connectedAt) / 1000)) : 0 };
+}
+
+export function readDmCall(input: { userId: string; callId: string; now?: number }) {
+  const now = nowOf(input.now), record = lookup(input.callId, now);
+  if (!record) throw new DmCallError('通话不存在或已过期', 404);
+  if (input.userId !== record.callerId && input.userId !== record.peerId) throw new DmCallError('你不在这通通话中', 403);
+  return callView(record, now);
+}
+
+export function incomingDmCall(userId: string, now = Date.now()) {
+  purge(now);
+  const record = [...calls.values()].find(row => row.peerId === userId && !row.ended && !row.connectedAt);
+  return record ? callView(record, now) : null;
 }

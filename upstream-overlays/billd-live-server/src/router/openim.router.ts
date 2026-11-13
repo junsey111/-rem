@@ -94,7 +94,7 @@ openimRouter.post('/dm-videos', async ctx => {
   }
   const bytes = await readVideoBytes(ctx);
   const meta = parseVideoHeader(ctx.get('x-dm-video'));
-  await respond(ctx, () => storeDmVideo(Number(userInfo.id), meta, bytes));
+  await respond(ctx, () => storeDmVideo(Number(userInfo.id), meta, bytes, bearer(ctx)));
 });
 openimRouter.get('/dm-videos/:videoId', async ctx => {
   const userInfo = await requireUser(ctx);

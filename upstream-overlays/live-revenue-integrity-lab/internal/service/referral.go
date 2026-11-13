@@ -26,13 +26,18 @@ const (
 // ReferralPolicy is the process config for invite rewards.
 // Coins outside 0..100000 disable the feature so a bad deploy cannot mint them.
 type ReferralPolicy struct {
-	Enabled      bool  `json:"enabled"`
-	InviterCoins int64 `json:"inviter_coins"`
-	InviteeCoins int64 `json:"invitee_coins"`
+	Enabled       bool  `json:"enabled"`
+	InviterCoins  int64 `json:"inviter_coins"`
+	InviteeCoins  int64 `json:"invitee_coins"`
+	RechargeBPS   int64 `json:"recharge_bps"`
+	WithdrawalBPS int64 `json:"withdrawal_bps"`
 }
 
 func (p ReferralPolicy) usable() bool {
-	return p.Enabled && p.InviterCoins >= 0 && p.InviteeCoins >= 0 && p.InviterCoins <= maxReferralRewardCoins && p.InviteeCoins <= maxReferralRewardCoins
+	return p.Enabled && p.InviterCoins >= 0 && p.InviteeCoins >= 0 &&
+		p.InviterCoins <= maxReferralRewardCoins && p.InviteeCoins <= maxReferralRewardCoins &&
+		p.RechargeBPS >= 0 && p.RechargeBPS <= 10000 &&
+		p.WithdrawalBPS >= 0 && p.WithdrawalBPS <= 10000
 }
 
 // LoadReferralPolicy reads REFERRALS_ENABLED, REFERRAL_INVITER_COINS, and
@@ -41,8 +46,10 @@ func (p ReferralPolicy) usable() bool {
 func LoadReferralPolicy() ReferralPolicy {
 	inviter := referralCoinConfig(os.Getenv("REFERRAL_INVITER_COINS"), 100)
 	invitee := referralCoinConfig(os.Getenv("REFERRAL_INVITEE_COINS"), 50)
+	recharge := referralCoinConfig(os.Getenv("REFERRAL_RECHARGE_BPS"), 500)
+	withdrawal := referralCoinConfig(os.Getenv("REFERRAL_WITHDRAWAL_BPS"), 800)
 	enabled := referralFlagEnabled(os.Getenv("REFERRALS_ENABLED"))
-	if inviter < 0 || invitee < 0 {
+	if inviter < 0 || invitee < 0 || recharge < 0 || recharge > 10000 || withdrawal < 0 || withdrawal > 10000 {
 		enabled = false
 	}
 	if inviter < 0 {
@@ -51,7 +58,8 @@ func LoadReferralPolicy() ReferralPolicy {
 	if invitee < 0 {
 		invitee = 0
 	}
-	return ReferralPolicy{Enabled: enabled, InviterCoins: inviter, InviteeCoins: invitee}
+	return ReferralPolicy{Enabled: enabled, InviterCoins: inviter, InviteeCoins: invitee,
+		RechargeBPS: recharge, WithdrawalBPS: withdrawal}
 }
 
 func referralFlagEnabled(value string) bool {
@@ -78,10 +86,24 @@ func referralCoinConfig(value string, fallback int64) int64 {
 // ReferralProfile is GET /v1/referrals/me.
 // Code and counters are omitted while invites are disabled.
 type ReferralProfile struct {
-	Enabled       bool   `json:"enabled"`
-	Code          string `json:"code,omitempty"`
-	InvitedCount  *int64 `json:"invited_count,omitempty"`
-	RewardedCoins *int64 `json:"rewarded_coins,omitempty"`
+	Enabled                    bool             `json:"enabled"`
+	Code                       string           `json:"code,omitempty"`
+	InvitedCount               *int64           `json:"invited_count,omitempty"`
+	RewardedCoins              *int64           `json:"rewarded_coins,omitempty"`
+	RechargeBPS                int64            `json:"recharge_bps,omitempty"`
+	WithdrawalBPS              int64            `json:"withdrawal_bps,omitempty"`
+	TodayInvitedCount          int64            `json:"today_invited_count,omitempty"`
+	TodayRechargeRewardCoins   int64            `json:"today_recharge_reward_coins,omitempty"`
+	TodayWithdrawalRewardCoins int64            `json:"today_withdrawal_reward_coins,omitempty"`
+	TotalRechargeRewardCoins   int64            `json:"total_recharge_reward_coins,omitempty"`
+	TotalWithdrawalRewardCoins int64            `json:"total_withdrawal_reward_coins,omitempty"`
+	InviterID                  *uint64          `json:"inviter_id,omitempty"`
+	TodayInvitees              []ReferralInvite `json:"today_invitees,omitempty"`
+}
+
+type ReferralInvite struct {
+	UserID    uint64 `json:"user_id"`
+	CreatedAt string `json:"created_at"`
 }
 
 // ReferralRedeemRequest is the only payload that participates in idempotency.
@@ -142,7 +164,45 @@ func (s *Service) ReferralProfile(ctx context.Context, userID uint64, policy Ref
 	`, userID).Scan(&invited, &rewarded); err != nil {
 		return ReferralProfile{}, err
 	}
-	return ReferralProfile{Enabled: true, Code: code, InvitedCount: &invited, RewardedCoins: &rewarded}, nil
+	profile := ReferralProfile{Enabled: true, Code: code, InvitedCount: &invited,
+		RechargeBPS: policy.RechargeBPS, WithdrawalBPS: policy.WithdrawalBPS,
+		TodayInvitees: []ReferralInvite{}}
+	var inviterID uint64
+	if err := s.db.QueryRowContext(ctx, `SELECT inviter_id FROM referral_redemptions WHERE invitee_id=?`, userID).Scan(&inviterID); err == nil {
+		profile.InviterID = &inviterID
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return ReferralProfile{}, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM referral_redemptions WHERE inviter_id=? AND DATE(created_at)=UTC_DATE()`,
+		userID).Scan(&profile.TodayInvitedCount); err != nil {
+		return ReferralProfile{}, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT
+		COALESCE(SUM(CASE WHEN source_kind='RECHARGE' AND DATE(created_at)=UTC_DATE() THEN reward_coins ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN source_kind='WITHDRAWAL' AND DATE(created_at)=UTC_DATE() THEN reward_coins ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN source_kind='RECHARGE' THEN reward_coins ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN source_kind='WITHDRAWAL' THEN reward_coins ELSE 0 END),0)
+		FROM referral_reward_events WHERE inviter_id=?`, userID).Scan(
+		&profile.TodayRechargeRewardCoins, &profile.TodayWithdrawalRewardCoins,
+		&profile.TotalRechargeRewardCoins, &profile.TotalWithdrawalRewardCoins); err != nil {
+		return ReferralProfile{}, err
+	}
+	rewarded += profile.TotalRechargeRewardCoins + profile.TotalWithdrawalRewardCoins
+	profile.RewardedCoins = &rewarded
+	rows, err := s.db.QueryContext(ctx, `SELECT invitee_id,CAST(created_at AS CHAR) FROM referral_redemptions
+		WHERE inviter_id=? AND DATE(created_at)=UTC_DATE() ORDER BY redemption_id DESC LIMIT 20`, userID)
+	if err != nil {
+		return ReferralProfile{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var invite ReferralInvite
+		if err := rows.Scan(&invite.UserID, &invite.CreatedAt); err != nil {
+			return ReferralProfile{}, err
+		}
+		profile.TodayInvitees = append(profile.TodayInvitees, invite)
+	}
+	return profile, rows.Err()
 }
 
 func (s *Service) ensureReferralCode(ctx context.Context, userID uint64) (string, error) {
@@ -245,7 +305,9 @@ func (s *Service) redeemReferralOnce(ctx context.Context, inviteeID uint64, requ
 	// policy change with committed rewards. Replays above keep their old receipt.
 	var configured bool
 	var storedPolicy ReferralPolicy
-	if err = tx.QueryRowContext(ctx, `SELECT configured,enabled,inviter_coins,invitee_coins FROM referral_settings WHERE singleton=1 FOR SHARE`).Scan(&configured, &storedPolicy.Enabled, &storedPolicy.InviterCoins, &storedPolicy.InviteeCoins); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT configured,enabled,inviter_coins,invitee_coins,recharge_bps,withdrawal_bps FROM referral_settings WHERE singleton=1 LOCK IN SHARE MODE`).Scan(
+		&configured, &storedPolicy.Enabled, &storedPolicy.InviterCoins, &storedPolicy.InviteeCoins,
+		&storedPolicy.RechargeBPS, &storedPolicy.WithdrawalBPS); err != nil {
 		return ReferralRedeemResponse{}, nil, err
 	}
 	if configured {
@@ -460,7 +522,9 @@ type ReferralSettings struct {
 
 func (s *Service) ReadReferralSettings(ctx context.Context, fallback ReferralPolicy) (ReferralSettings, error) {
 	var settings ReferralSettings
-	err := s.db.QueryRowContext(ctx, `SELECT version,configured,enabled,inviter_coins,invitee_coins FROM referral_settings WHERE singleton=1`).Scan(&settings.Version, &settings.Configured, &settings.Enabled, &settings.InviterCoins, &settings.InviteeCoins)
+	err := s.db.QueryRowContext(ctx, `SELECT version,configured,enabled,inviter_coins,invitee_coins,recharge_bps,withdrawal_bps FROM referral_settings WHERE singleton=1`).Scan(
+		&settings.Version, &settings.Configured, &settings.Enabled, &settings.InviterCoins, &settings.InviteeCoins,
+		&settings.RechargeBPS, &settings.WithdrawalBPS)
 	if !settings.Configured {
 		settings.ReferralPolicy = fallback
 	}

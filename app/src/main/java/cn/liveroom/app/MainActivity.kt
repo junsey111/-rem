@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.os.SystemClock
+import org.json.JSONObject
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
@@ -16,7 +17,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -30,8 +37,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -41,13 +50,16 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.AddCircleOutline
 import androidx.compose.material.icons.rounded.CameraAlt
-import androidx.compose.material.icons.rounded.ChatBubble
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -55,20 +67,32 @@ import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.PlayCircleOutline
 import androidx.compose.material.icons.rounded.PersonOutline
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.AccountBalanceWallet
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.EmojiEvents
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Mood
+import androidx.compose.material.icons.rounded.PhoneInTalk
+import androidx.compose.material.icons.rounded.Photo
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -99,19 +123,25 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -131,15 +161,34 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
-private val NightInk = Color(0xFFF7F8FA)
-private val NightSurface = Color.White
-private val NightSurfaceRaised = Color(0xFFF0F2F5)
-private val NightLine = Color(0xFFE2E5EA)
-private val Fog = Color(0xFF667085)
-private val Coral = Color(0xFFCF343D)
-private val Mint = Color(0xFF08785E)
-private val Amber = Color(0xFF995600)
-private val Ink = Color(0xFF17191C)
+private val NightInk = LiveStyle.canvas
+private val NightSurface = LiveStyle.surface
+private val NightSurfaceRaised = LiveStyle.raised
+private val NightLine = LiveStyle.line
+private val Fog = LiveStyle.muted
+private val Coral = LiveStyle.live
+private val Mint = LiveStyle.teal
+private val Amber = LiveStyle.gold
+private val Ink = LiveStyle.ink
+private val LivePlaceholderCovers = listOf(
+    R.drawable.live_placeholder_1,
+    R.drawable.live_placeholder_2,
+    R.drawable.live_placeholder_3,
+    R.drawable.live_placeholder_4,
+)
+private val SampleRoomTitles = listOf("晚间聊天", "心动点歌", "一起听歌", "舞台时刻")
+private val DemoLivePosters = listOf(
+    R.drawable.qumi_demo_live_51287,
+    R.drawable.qumi_demo_live_48036,
+    R.drawable.qumi_demo_live_47971,
+    R.drawable.qumi_demo_live_41181,
+)
+private val VideoPlaceholderCovers = listOf(
+    R.drawable.video_placeholder_1,
+    R.drawable.video_placeholder_2,
+    R.drawable.video_placeholder_3,
+    R.drawable.video_placeholder_4,
+)
 
 private data class LiveRoom(
     val host: String,
@@ -147,7 +196,14 @@ private data class LiveRoom(
     val creatorId: Long,
     val stream: String,
     val coverPath: String? = null,
+    val roomType: String = "SINGLE",
+    val welcomeText: String = "",
+    val backgroundId: Int = 0,
+    val announcementText: String = "",
 )
+
+private data class FinishedLiveRoom(val room: LiveRoom, val startedAtMillis: Long,
+    val localDurationSeconds: Long, val session: CreatorLiveSession? = null, val loading: Boolean = true)
 
 private data class WatchGateUi(
     val phase: WatchPhase,
@@ -157,44 +213,28 @@ private data class WatchGateUi(
     val busy: Boolean,
 )
 
-private data class OpenImConversation(val userId: String, val name: String, val latestMessage: String)
-private data class PendingDmCall(val peerId: String, val peerName: String?, val requestedMode: String, val callId: String?)
-private data class PushDestination(val kind: String, val id: String?, val notificationId: String?, val actorId: String?)
+private data class OpenImConversation(val userId: String, val name: String, val latestMessage: String, val avatar: String = "")
+private data class PendingDmCall(val peerId: String, val peerName: String?, val requestedMode: String, val callId: String?, val offeredPrice: Int? = null)
 
 class MainActivity : ComponentActivity() {
-    private var pendingPush by mutableStateOf<PushDestination?>(null)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        capturePush(intent)
-        setContent { LiveRoomApp(pendingPush) { pendingPush = null } }
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        capturePush(intent)
-    }
-
-    private fun capturePush(intent: Intent?) {
-        val kind = intent?.getStringExtra(PUSH_KIND_EXTRA) ?: return
-        pendingPush = PushDestination(
-            kind = kind,
-            id = intent.getStringExtra(PUSH_ID_EXTRA),
-            notificationId = intent.getStringExtra(PUSH_NOTIFICATION_ID_EXTRA),
-            actorId = intent.getStringExtra(PUSH_ACTOR_ID_EXTRA),
-        )
+        setContent { LiveRoomApp() }
     }
 }
 
 @Composable
-private fun LiveRoomApp(pushTarget: PushDestination?, onPushHandled: () -> Unit) {
+private fun LiveRoomApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val requestNotificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     var session by remember { mutableStateOf(if (BuildConfig.PREVIEW_QUMI_LOGIN) null else readSession(context)) }
     var loggingOut by remember { mutableStateOf(false) }
     var logoutError by remember { mutableStateOf<String?>(null) }
+    var appUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+    var updateError by remember { mutableStateOf<String?>(null) }
+    var updating by remember { mutableStateOf(false) }
+    var dismissedVersion by remember { mutableIntStateOf(0) }
     val view = LocalView.current
     SideEffect {
         val window = (view.context as? android.app.Activity)?.window
@@ -202,8 +242,17 @@ private fun LiveRoomApp(pushTarget: PushDestination?, onPushHandled: () -> Unit)
             val bars = WindowCompat.getInsetsController(window, view)
             bars.isAppearanceLightStatusBars = session != null
             bars.isAppearanceLightNavigationBars = session != null
-            window.statusBarColor = if (session == null) android.graphics.Color.rgb(23, 18, 52) else android.graphics.Color.WHITE
-            window.navigationBarColor = if (session == null) android.graphics.Color.rgb(23, 18, 52) else android.graphics.Color.WHITE
+            window.statusBarColor = if (session == null) android.graphics.Color.rgb(20, 25, 29) else android.graphics.Color.WHITE
+            window.navigationBarColor = if (session == null) android.graphics.Color.rgb(20, 25, 29) else android.graphics.Color.WHITE
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            try {
+                availableAppUpdate(context)?.let { if (it.versionCode != dismissedVersion) appUpdate = it }
+            } catch (error: CancellationException) { throw error
+            } catch (_: Exception) { /* Local update service may be offline. */ }
+            kotlinx.coroutines.delay(3_600_000)
         }
     }
     LaunchedEffect(Unit) {
@@ -236,26 +285,7 @@ private fun LiveRoomApp(pushTarget: PushDestination?, onPushHandled: () -> Unit)
             kotlinx.coroutines.delay(30_000)
         }
     }
-    LaunchedEffect(session?.token) {
-        val token = session?.token ?: return@LaunchedEffect
-        PushRegistration.register(context, token, LivePlatformApi())
-    }
-    MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Coral,
-            onPrimary = Color.White,
-            secondary = Mint,
-            onSecondary = Color.White,
-            tertiary = Amber,
-            background = NightInk,
-            onBackground = Ink,
-            surface = NightSurface,
-            onSurface = Ink,
-            surfaceVariant = NightSurfaceRaised,
-            onSurfaceVariant = Fog,
-            outline = NightLine,
-        ),
-    ) {
+    LiveAppTheme {
         if (session == null) {
             AuthScreen(onAuthenticated = {
                 saveSession(context, it)
@@ -264,19 +294,12 @@ private fun LiveRoomApp(pushTarget: PushDestination?, onPushHandled: () -> Unit)
         } else {
             AuthenticatedApp(
                 session = session!!,
-                pushTarget = pushTarget,
-                onPushHandled = onPushHandled,
-                onAvatarChanged = { avatar ->
-                    session = session?.copy(avatar = avatar)
-                    session?.let { saveSession(context, it) }
-                },
                 onLogout = {
                     val token = session?.token
                     if (!loggingOut && token != null) {
                         loggingOut = true
                         scope.launch {
                             try {
-                                runCatching { PushRegistration.unregister(context, token, LivePlatformApi()) }
                                 queueLogout(context, token)
                                 if (session?.token == token) session = null
                                 try { flushLogout(context, LivePlatformApi()) }
@@ -298,7 +321,33 @@ private fun LiveRoomApp(pushTarget: PushDestination?, onPushHandled: () -> Unit)
             )
         }
         logoutError?.let { message ->
-            QumiInfoSheet(title = "退出未完成", message = message, onDismiss = { logoutError = null })
+            AlertDialog(onDismissRequest = { logoutError = null }, title = { Text("退出未完成") },
+                text = { Text(message) }, confirmButton = { TextButton(onClick = { logoutError = null }) { Text("知道了") } })
+        }
+        appUpdate?.let { update ->
+            AlertDialog(onDismissRequest = {
+                if (!updating) { dismissedVersion = update.versionCode; appUpdate = null }
+            }, title = { Text("发现新版本 ${update.versionName}") },
+                text = { Text(updateError ?: "新版已自动同步，可直接下载安装。") },
+                confirmButton = { TextButton(onClick = {
+                    if (updating) return@TextButton
+                    updating = true
+                    updateError = null
+                    scope.launch {
+                        try {
+                            val apk = downloadAppUpdate(context, update)
+                            if (installAppUpdate(context, apk)) appUpdate = null
+                            else updateError = "请在系统页面允许安装，然后返回重试。"
+                        } catch (error: CancellationException) { throw error
+                        } catch (error: Exception) {
+                            updateError = error.message ?: "下载更新失败，请重试"
+                        } finally { updating = false }
+                    }
+                }, enabled = !updating) { Text(if (updating) "下载中…" else "安装更新") } },
+                dismissButton = { TextButton(onClick = {
+                    dismissedVersion = update.versionCode
+                    appUpdate = null
+                }, enabled = !updating) { Text("稍后") } })
         }
     }
 }
@@ -308,147 +357,154 @@ private fun AuthScreen(onAuthenticated: (UserSession) -> Unit) {
     val context = LocalContext.current
     val api = remember { LivePlatformApi() }
     val scope = rememberCoroutineScope()
-    var smsMode by remember { mutableStateOf(false) }
-    var authModeSelected by remember { mutableStateOf(false) }
     var registering by remember { mutableStateOf(false) }
+    var account by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
-    var smsCode by remember { mutableStateOf("") }
-    var accountId by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var emailCode by remember { mutableStateOf("") }
+    var codeLogin by remember { mutableStateOf(false) }
+    var codeBusy by remember { mutableStateOf(false) }
+    var codeCooldown by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    var codeSending by remember { mutableStateOf(false) }
-    var codeCooldown by remember { mutableStateOf(0) }
-    val codeDeadlines = remember { androidx.compose.runtime.mutableStateMapOf<String, Long>() }
-    val currentAuthModeSelected by rememberUpdatedState(authModeSelected)
-
-    LaunchedEffect(phone, codeDeadlines[phone]) {
-        while (true) {
-            val remaining = ((codeDeadlines[phone] ?: 0L) - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
-            codeCooldown = ((remaining + 999L) / 1_000L).toInt()
-            if (remaining == 0L) break
-            kotlinx.coroutines.delay(250)
+    LaunchedEffect(codeCooldown) {
+        if (codeCooldown > 0) {
+            kotlinx.coroutines.delay(1_000)
+            codeCooldown--
         }
     }
 
-    LaunchedEffect(Unit) {
-        runCatching { api.authMethods() }
-            .onSuccess { methods ->
-                if (!currentAuthModeSelected && methods.optBoolean("sms", false)) smsMode = true
-            }
-    }
-
     QumiLoginFrame(
-        smsMode = smsMode,
         registering = registering,
+        codeLogin = codeLogin,
+        account = account,
         username = username,
-        phone = phone,
-        code = smsCode,
-        accountId = accountId,
         password = password,
+        email = email,
+        emailCode = emailCode,
+        codeBusy = codeBusy,
+        codeCooldown = codeCooldown,
         error = error,
         busy = busy,
-        codeSending = codeSending,
-        codeCooldown = codeCooldown,
-        onPhone = {
-            val nextPhone = it.filter(Char::isDigit).take(11)
-            if (nextPhone != phone) smsCode = ""
-            phone = nextPhone
-            error = null
-        },
-        onCode = { smsCode = it.filter(Char::isDigit).take(6); error = null },
+        onAccount = { account = it; error = null },
         onUsername = { username = it; error = null },
-        onAccountId = { accountId = it.filter(Char::isDigit); error = null },
         onPassword = { password = it; error = null },
+        onEmail = { email = it; emailCode = ""; codeCooldown = 0; error = null },
+        onEmailCode = { emailCode = it.filter(Char::isDigit).take(6); error = null },
+        onToggleLoginMode = { codeLogin = !codeLogin; error = null },
         onSendCode = {
-            val requestedPhone = phone
             scope.launch {
-                if (codeSending || codeCooldown > 0 || requestedPhone.length != 11) return@launch
-                codeSending = true
+                codeBusy = true
                 error = null
                 try {
-                    api.requestSmsLoginCode(requestedPhone)
-                    codeDeadlines[requestedPhone] = SystemClock.elapsedRealtime() + 60_000L
-                    if (phone == requestedPhone) codeCooldown = 60
+                    api.sendEmailCode(email, if (registering) "register" else "login")
+                    codeCooldown = 60
                 } catch (cause: CancellationException) { throw cause
-                } catch (cause: Exception) {
-                    error = cause.message ?: "验证码发送失败，请稍后重试"
-                } finally {
-                    codeSending = false
-                }
+                } catch (cause: Exception) { error = cause.message ?: "验证码发送失败" }
+                finally { codeBusy = false }
             }
         },
         onSubmit = {
-            if (busy || codeSending) return@QumiLoginFrame
-            val submitSmsMode = smsMode
-            val submitRegistering = registering
-            val submitPhone = phone
-            val submitCode = smsCode
-            val submitUsername = username
-            val submitAccountId = accountId
-            val submitPassword = password
-            scope.launch {
-                busy = true
-                error = null
-                try {
-                    try { flushLogout(context, api) }
-                    catch (cause: CancellationException) { throw cause }
-                    catch (_: Exception) { throw IllegalStateException("上次退出尚未同步，请联网后重试") }
-                    if (submitSmsMode) {
-                        onAuthenticated(api.loginWithSms(submitPhone, submitCode))
-                    } else if (submitRegistering) {
-                        val created = api.register(submitUsername, submitPassword)
-                        accountId = created.id.toString()
-                        registering = false
-                        onAuthenticated(api.login(created.id, submitPassword))
-                    } else {
-                        val id = submitAccountId.toLongOrNull() ?: error("账号 ID 格式无效")
-                        onAuthenticated(api.login(id, submitPassword))
+                scope.launch {
+                    busy = true
+                    error = null
+                    try {
+                        try { flushLogout(context, api) }
+                        catch (cause: CancellationException) { throw cause }
+                        catch (_: Exception) { error("上次退出尚未同步，请联网后重试") }
+                        if (registering) {
+                            val created = api.register(username, password, email, emailCode)
+                            val loggedIn = api.login(created.username, password)
+                            onAuthenticated(loggedIn)
+                        } else if (codeLogin) {
+                            onAuthenticated(api.loginWithEmailCode(email, emailCode))
+                        } else {
+                            onAuthenticated(api.login(account, password))
+                        }
+                    } catch (cause: CancellationException) { throw cause
+                    } catch (cause: Exception) {
+                        error = if (cause is java.net.ConnectException) {
+                            "无法连接直播服务，请确认服务已启动后重试"
+                        } else {
+                            cause.message ?: "请求失败，请检查服务地址"
+                        }
+                    } finally {
+                        busy = false
                     }
-                } catch (cause: CancellationException) { throw cause
-                } catch (cause: Exception) {
-                    error = cause.message ?: "请求失败，请检查服务地址"
-                } finally {
-                    busy = false
                 }
-            }
         },
-        onToggleMode = { authModeSelected = true; smsMode = !smsMode; registering = false; error = null },
-        onToggleRegister = { registering = !registering; error = null },
+        onToggleRegister = { registering = !registering; emailCode = ""; codeCooldown = 0; error = null },
     )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AuthenticatedApp(
-    session: UserSession,
-    pushTarget: PushDestination?,
-    onPushHandled: () -> Unit,
-    onAvatarChanged: (String) -> Unit,
-    onLogout: () -> Unit,
-    onRequestNotifications: () -> Unit,
-) {
+private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onRequestNotifications: () -> Unit) {
     val context = LocalContext.current
     val api = remember { LivePlatformApi() }
+    val demoChatState = remember(session.id) { DemoChatState(context, session.id) }
+    var demoPeerId by remember { mutableStateOf<String?>(null) }
+    var demoPeer by remember { mutableStateOf<DemoProfile?>(null) }
+    val demoConversations = remember(session.id) { DemoConversations(context, session.id) }
+    val peerDemoChatState = remember(session.id, demoPeer, demoPeerId) { DemoChatState(context, session.id, demoPeer) { preview ->
+        demoPeerId?.let { demoConversations.update(it, preview) }
+    } }
     val giftOutbox = remember(session.id) { GiftOutbox(context, session.id) }
     val effectSession = remember(session.id) { GiftEffectSession(context) }
     DisposableEffect(effectSession) { onDispose { effectSession.close() } }
     val openImGateway = remember(context) { OpenImGateway(context) }
     val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableIntStateOf(0) }
+    var momentComposerVisible by remember { mutableStateOf(false) }
     var accountPage by remember { mutableStateOf(QumiAccountPage.MINE) }
     var searchReturnTab by remember { mutableIntStateOf(0) }
     var searchReturnPage by remember { mutableStateOf(QumiAccountPage.MINE) }
     var profileReturnTab by remember { mutableIntStateOf(0) }
     var profileReturnPage by remember { mutableStateOf(QumiAccountPage.MINE) }
-    var profileEditReturnPage by remember { mutableStateOf(QumiAccountPage.PROFILE) }
     var publicProfileId by remember { mutableStateOf<Long?>(null) }
     var publicProfileFallbackName by remember { mutableStateOf("") }
     var openImMessagePage by remember { mutableStateOf(false) }
+    val interactionPrefs = remember(session.id) {
+        context.getSharedPreferences("moment_interactions", android.content.Context.MODE_PRIVATE)
+    }
+    val interactionReadKey = "seen_${session.id}"
+    var seenInteractionIds by remember(session.id) {
+        mutableStateOf(interactionPrefs.getStringSet(interactionReadKey, emptySet())?.toSet() ?: emptySet())
+    }
+    var latestInteractionIds by remember(session.id) { mutableStateOf(emptyList<String>()) }
+    fun markInteractionsViewed(ids: List<String>) {
+        val updated = (ids + seenInteractionIds).distinct().take(500).toSet()
+        seenInteractionIds = updated
+        interactionPrefs.edit().putStringSet(interactionReadKey, updated).apply()
+    }
+    LaunchedEffect(session.id, selectedTab, accountPage, openImMessagePage) {
+        if (selectedTab == 3 && accountPage == QumiAccountPage.MINE && !openImMessagePage) {
+            while (true) {
+                try {
+                    latestInteractionIds = api.momentInteractions(session.token, limit = 100).first.map { it.id }
+                } catch (error: CancellationException) { throw error
+                } catch (_: Exception) { }
+                kotlinx.coroutines.delay(30_000)
+            }
+        }
+    }
     var billsCategory by remember { mutableIntStateOf(0) }
+    var billsReturnPage by remember { mutableStateOf(QumiAccountPage.WALLET) }
     var contactTab by remember { mutableIntStateOf(0) }
-    var selectedAnnouncement by remember { mutableStateOf<PlatformAnnouncementItem?>(null) }
+    var announcementIndex by remember { mutableIntStateOf(0) }
+    var announcementTitle by remember { mutableStateOf("绿色直播文明公约") }
+    var announcementReturnTab by remember { mutableIntStateOf(3) }
+    fun openAnnouncements() {
+        announcementReturnTab = selectedTab
+        openImMessagePage = false
+        selectedTab = 3
+        accountPage = QumiAccountPage.EVENTS
+    }
+    fun closeAnnouncements() {
+        selectedTab = announcementReturnTab
+        accountPage = QumiAccountPage.MINE
+    }
     fun openPublicProfile(id: String, name: String) {
         val targetId = id.toLongOrNull()?.takeIf { it > 0 } ?: return
         profileReturnTab = selectedTab
@@ -462,13 +518,17 @@ private fun AuthenticatedApp(
         accountPage = when {
             selectedTab == 3 && openImMessagePage -> { openImMessagePage = false; QumiAccountPage.MINE }
             selectedTab == 3 && accountPage == QumiAccountPage.ANNOUNCEMENT_DETAIL -> QumiAccountPage.EVENTS
+            selectedTab == 3 && accountPage == QumiAccountPage.EVENTS -> {
+                closeAnnouncements()
+                QumiAccountPage.MINE
+            }
             selectedTab == 3 && accountPage == QumiAccountPage.SECRETARY_PROFILE -> QumiAccountPage.SECRETARY_SETTINGS
             selectedTab == 3 && accountPage == QumiAccountPage.SECRETARY_SETTINGS -> QumiAccountPage.SECRETARY_CHAT
             selectedTab == 3 && accountPage == QumiAccountPage.SECRETARY_CHAT -> QumiAccountPage.MINE
             selectedTab == 3 -> QumiAccountPage.MINE
             else -> when (accountPage) {
-                QumiAccountPage.BILLS -> QumiAccountPage.WALLET
-                QumiAccountPage.PROFILE_EDIT -> profileEditReturnPage
+                QumiAccountPage.BILLS -> billsReturnPage
+                QumiAccountPage.PROFILE_EDIT -> QumiAccountPage.PROFILE
                 QumiAccountPage.YOUTH, QumiAccountPage.ABOUT, QumiAccountPage.BLACKLIST, QumiAccountPage.QUALIFICATION -> QumiAccountPage.SETTINGS
                 QumiAccountPage.SEARCH -> { selectedTab = searchReturnTab; searchReturnPage }
                 QumiAccountPage.PUBLIC_PROFILE -> { selectedTab = profileReturnTab; profileReturnPage }
@@ -481,17 +541,22 @@ private fun AuthenticatedApp(
         }
     }
     var discoverySection by remember { mutableIntStateOf(0) }
-    var discoveryFilter by remember { mutableIntStateOf(0) }
+    var discoveryComposerVisible by remember { mutableStateOf(false) }
+    var approvedVideoPublisher by remember(session.token) { mutableStateOf(false) }
+    var sampleRoomIndex by remember { mutableStateOf<Int?>(null) }
+    var sampleLivePreview by remember { mutableStateOf(false) }
+    var openVideoFromLiveSignal by remember { mutableIntStateOf(0) }
+    var handledVideoOpenSignal by remember { mutableIntStateOf(0) }
+    var closeVideoForLiveSignal by remember { mutableIntStateOf(0) }
+    var switchToVideoAfterRoom by remember { mutableStateOf(false) }
     var canManageOperations by remember { mutableStateOf(false) }
     var operationsSummary by remember { mutableStateOf<OperationsSummary?>(null) }
     var operationsUsers by remember { mutableStateOf<OperationsUsers?>(null) }
     var showModeration by remember { mutableStateOf(false) }
     var showPasswordChange by remember { mutableStateOf(false) }
     var showCoverUpload by remember { mutableStateOf(false) }
-    var showAvatarUpload by remember { mutableStateOf(false) }
     var showRoomChat by remember { mutableStateOf(false) }
     var showBusiness by remember { mutableStateOf<String?>(null) }
-    var businessReportTarget by remember { mutableStateOf<Long?>(null) }
     var hostProfile by remember { mutableStateOf<LiveRoom?>(null) }
     var showReferral by remember { mutableStateOf(false) }
     var referralRequestId by remember(session.id) { mutableStateOf<String?>(null) }
@@ -509,11 +574,28 @@ private fun AuthenticatedApp(
     var roomsLoading by remember { mutableStateOf(true) }
     var roomsError by remember { mutableStateOf<String?>(null) }
     var gifts by remember { mutableStateOf(emptyList<Gift>()) }
+    var giftCelebration by remember { mutableStateOf<Pair<String, GiftSendPresentation>?>(null) }
+    var giftCelebrationNonce by remember { mutableIntStateOf(0) }
+    var dmCelebration by remember { mutableStateOf<Gift?>(null) }
+    var dmCelebrationNonce by remember { mutableIntStateOf(0) }
+    val celebratedGiftRequests = remember { LinkedHashSet<String>() }
     var wallet by remember { mutableStateOf<Wallet?>(null) }
     var level by remember { mutableStateOf<UserLevel?>(null) }
     var dailyEarnings by remember { mutableStateOf<Earnings?>(null) }
     var monthlyEarnings by remember { mutableStateOf<Earnings?>(null) }
     var activeRoom by remember { mutableStateOf<LiveRoom?>(null) }
+    var previewRoom by remember { mutableStateOf<LiveRoom?>(null) }
+    var switchToLiveAfterViewer by remember { mutableStateOf(false) }
+    LaunchedEffect(activeRoom?.stream, previewRoom?.stream, sampleRoomIndex, switchToLiveAfterViewer) {
+        if (switchToLiveAfterViewer && (activeRoom != null || previewRoom != null || sampleRoomIndex != null)) {
+            withFrameNanos { }
+            discoverySection = 1
+            withFrameNanos { }
+            closeVideoForLiveSignal++
+            switchToLiveAfterViewer = false
+        }
+    }
+    var switchingRoom by remember { mutableStateOf(false) }
     var activeRoomStatus by remember { mutableStateOf("正在连接媒体服务") }
     var roomGateway by remember { mutableStateOf<LiveKitRoomGateway?>(null) }
     var srsIngest by remember { mutableStateOf<SrsIngestPublisher?>(null) }
@@ -521,19 +603,22 @@ private fun AuthenticatedApp(
     val cameraHandoff = remember { Mutex() }
     var hostCohostLiveKit by remember { mutableStateOf(false) }
     var roomRegistration by remember { mutableStateOf<BilldRoomRegistration?>(null) }
+    var liveStartedAtMillis by remember { mutableStateOf(0L) }
+    var finishedLiveRoom by remember { mutableStateOf<FinishedLiveRoom?>(null) }
     var activeMatchId by remember { mutableStateOf<Long?>(null) }
     var matchScores by remember { mutableStateOf(emptyList<MatchScore>()) }
+    var matchRemainingSeconds by remember { mutableStateOf<Int?>(null) }
     var matchLoading by remember { mutableStateOf(false) }
     var matchInvitations by remember { mutableStateOf(emptyList<MatchInvitation>()) }
     var startingLive by remember { mutableStateOf(false) }
+    var showCreateRoom by remember(session.id) { mutableStateOf(false) }
+    var showCreateRoomBeauty by remember(session.id) { mutableStateOf(false) }
+    var pendingRoomConfig by remember(session.id) { mutableStateOf<RoomCreateConfig?>(null) }
     var giftLoading by remember { mutableStateOf(false) }
     var showGiftHistory by remember { mutableStateOf(false) }
     var giftHistory by remember { mutableStateOf<GiftHistory?>(null) }
     var giftHistoryLoading by remember { mutableStateOf(false) }
     var giftHistoryError by remember { mutableStateOf<String?>(null) }
-    var roseBills by remember { mutableStateOf<RoseBills?>(null) }
-    var roseBillsLoading by remember { mutableStateOf(false) }
-    var roseBillsError by remember { mutableStateOf<String?>(null) }
 
     var pendingGift by remember(session.id) { mutableStateOf(giftOutbox.load()) }
     var rankTypeContributors by remember { mutableStateOf(false) }
@@ -550,6 +635,22 @@ private fun AuthenticatedApp(
     var openImBusy by remember { mutableStateOf(false) }
     var openImReady by remember { mutableStateOf(false) }
     var activeCall by remember { mutableStateOf<PendingDmCall?>(null) }
+    val demoCallSession = remember(session.id) { DemoCallSession() }
+    var showDmCallPrice by remember { mutableStateOf(false) }
+    var incomingCall by remember { mutableStateOf<JSONObject?>(null) }
+    var incomingCallBusy by remember { mutableStateOf(false) }
+    var showGiftRecharge by remember { mutableStateOf(false) }
+    var showGiftRechargeQr by remember { mutableStateOf(false) }
+    val callAppForeground = rememberChatForeground()
+    LaunchedEffect(session.token, callAppForeground, activeCall != null) {
+        if (!callAppForeground || activeCall != null) { incomingCall = null; return@LaunchedEffect }
+        while (true) {
+            try { incomingCall = api.incomingDmCall(session.token)
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) { incomingCall = null }
+            kotlinx.coroutines.delay(3_000)
+        }
+    }
     val messageVersion by openImGateway.messageVersion.collectAsState()
     val messageConnection by openImGateway.connection.collectAsState()
     var history by remember { mutableStateOf<OpenImHistory?>(null) }
@@ -560,55 +661,23 @@ private fun AuthenticatedApp(
     var historyRefresh by remember { mutableIntStateOf(0) }
     var chatVisible by remember { mutableStateOf(false) }
     var chatOpenSignal by remember { mutableIntStateOf(0) }
-    fun openMessages() {
-        selectedTab = 3
-        accountPage = QumiAccountPage.MINE
-        openImMessagePage = false
-    }
-    fun openDirectMessage(id: String, name: String) {
-        openImRecipient = id
-        openImRecipientName = name
-        openMessages()
-        openImMessagePage = true
-        chatOpenSignal++
-    }
-    fun openNotificationMessage(actorId: String?) {
-        val id = actorId?.takeIf { it.matches(Regex("[1-9][0-9]{0,19}")) }
-        if (id == null) {
-            openMessages()
+    val onlineChatUsers = rememberChatOnlineUsers(openImGateway,
+        openImConversations.map { it.userId } + openImRecipient,
+        enabled = selectedTab == 3 && openImReady && messageConnection == MessageConnection.CONNECTED)
+    fun openDirectMessage(id: String, name: String, greeting: Boolean = false) {
+        demoProfileForUser(context, id)?.let { peer ->
+            demoPeerId = id; demoPeer = peer
+            demoConversations.touch(id, peer)
+            selectedTab = 3; accountPage = QumiAccountPage.DEMO_CHAT; openImMessagePage = false
             return
         }
-        val name = openImConversations.firstOrNull { it.userId == id }?.name ?: "用户 $id"
-        openDirectMessage(id, name)
-    }
-    LaunchedEffect(pushTarget) {
-        val target = pushTarget ?: return@LaunchedEffect
-        val notificationId = when {
-            target.kind == "ANNOUNCEMENT" && target.id?.matches(Regex("[1-9][0-9]{0,19}")) == true -> "announcement:${target.id}"
-            target.notificationId?.matches(Regex("[1-9][0-9]{0,19}")) == true -> target.notificationId
-            else -> null
-        }
-        if (notificationId != null) scope.launch { runCatching { api.markNotificationRead(session.token, notificationId) } }
-        when (target.kind) {
-            "VISITOR" -> { selectedTab = 3; accountPage = QumiAccountPage.VISITORS }
-            "ANNOUNCEMENT" -> {
-                selectedTab = 3
-                accountPage = QumiAccountPage.EVENTS
-                val announcementId = target.id?.takeIf { it.matches(Regex("[1-9][0-9]{0,19}")) }
-                if (announcementId != null) {
-                    val announcement = runCatching {
-                        api.announcements(session.token).firstOrNull { it.id == announcementId }
-                    }.getOrNull()
-                    if (announcement != null) {
-                        selectedAnnouncement = announcement
-                        accountPage = QumiAccountPage.ANNOUNCEMENT_DETAIL
-                    }
-                }
-            }
-            "MESSAGE" -> openNotificationMessage(target.actorId)
-            else -> { selectedTab = 3; accountPage = QumiAccountPage.NOTIFICATIONS }
-        }
-        onPushHandled()
+        openImRecipient = id
+        openImRecipientName = name
+        openImMessage = if (greeting) "你好，看到你的动态啦，想和你聊聊～" else ""
+        selectedTab = 3
+        accountPage = QumiAccountPage.MINE
+        openImMessagePage = true
+        chatOpenSignal++
     }
     val dmGiftOutbox = remember(session.id) { DmGiftOutbox(context, session.id) }
     val dmVideoOutbox = remember(session.id) { DmVideoOutbox(context, session.id) }
@@ -620,15 +689,7 @@ private fun AuthenticatedApp(
     var playingVideo by remember { mutableStateOf<java.io.File?>(null) }
     var rechargeBusy by remember { mutableStateOf(false) }
     var profile by remember { mutableStateOf<UserProfile?>(null) }
-    var socialProfile by remember { mutableStateOf<SocialProfile?>(null) }
-    var socialProfileLoaded by remember { mutableStateOf(false) }
-    var socialProfileLoadError by remember { mutableStateOf<String?>(null) }
     var profileBusy by remember { mutableStateOf(false) }
-    var identityVerification by remember { mutableStateOf<IdentityVerificationStatus?>(null) }
-    var identityLoading by remember { mutableStateOf(false) }
-    var identityStarting by remember { mutableStateOf(false) }
-    var identityError by remember { mutableStateOf<String?>(null) }
-    var identityRefresh by remember { mutableIntStateOf(0) }
     var blockTarget by remember { mutableStateOf<PublicUser?>(null) }
     var blockBusy by remember { mutableStateOf(false) }
     var rechargeOrders by remember { mutableStateOf(emptyList<RechargeOrder>()) }
@@ -645,13 +706,23 @@ private fun AuthenticatedApp(
         if (activeRoom != null) roomFeedback = message
         else scope.launch { snackbar.showSnackbar(message, duration = SnackbarDuration.Short) }
     }
-    fun reportUser(userId: Long?) {
-        if (userId == null || userId <= 0) {
-            notify("该账号没有可举报的平台用户 ID")
-            return
+    fun openContactLive(user: PublicUser) {
+        scope.launch {
+            try {
+                val fresh = api.liveRooms()
+                val room = fresh.firstOrNull { it.creatorId == user.id }
+                if (room != null) activeRoom = LiveRoom(room.host, room.title, room.creatorId, room.roomId,
+                    room.coverPath, room.roomType, room.welcomeText, room.backgroundId, room.announcementText)
+                else {
+                    val demo = demoLiveIndex(user)
+                    if (demo != null) sampleRoomIndex = demo else notify("主播已下播")
+                }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) {
+                val demo = demoLiveIndex(user)
+                if (demo != null) sampleRoomIndex = demo else notify("直播状态暂时无法更新，请重试")
+            }
         }
-        businessReportTarget = userId
-        showBusiness = "reports"
     }
 
     val loadGiftHistory: (Boolean) -> Unit = { older ->
@@ -671,20 +742,25 @@ private fun AuthenticatedApp(
         }
     }
 
-    val loadRoseBills: (Boolean) -> Unit = { older ->
-        if (!roseBillsLoading) {
-            roseBillsLoading = true
-            roseBillsError = null
-            scope.launch {
-                try {
-                    val current = roseBills
-                    val cursor = if (older) current?.nextCursor.orEmpty() else ""
-                    val page = api.roseBills(session.token, cursor)
-                    roseBills = if (older && current != null) page.copy(bills = (current.bills + page.bills).distinctBy { it.id }) else page
-                } catch (error: CancellationException) { throw error
-                } catch (_: Exception) { roseBillsError = "玫瑰账单暂时无法加载，请重试" }
-                finally { roseBillsLoading = false }
-            }
+    fun showConfirmedGift(roomId: String, requestId: String, giftId: String, senderId: Long = session.id, quantity: Int = 1) {
+        if (activeRoom?.stream != roomId || requestId.isBlank()) return
+        val gift = gifts.firstOrNull { it.id == giftId } ?: return
+        if (!celebratedGiftRequests.add(requestId)) return
+        if (celebratedGiftRequests.size > 200) {
+            celebratedGiftRequests.remove(celebratedGiftRequests.first())
+        }
+        giftCelebration = roomId to GiftSendPresentation(gift,
+            if (senderId == session.id) session.username else "用户$senderId",
+            if (senderId == session.id) session.avatar else null, quantity)
+        giftCelebrationNonce++
+        val nonce = giftCelebrationNonce
+        if (senderId != session.id) scope.launch {
+            runCatching { api.searchUsers(session.token, senderId.toString()).firstOrNull { it.id == senderId } }
+                .onSuccess { sender ->
+                    if (sender != null && giftCelebrationNonce == nonce && activeRoom?.stream == roomId) {
+                        giftCelebration = roomId to GiftSendPresentation(gift, sender.username, sender.avatar, quantity)
+                    }
+                }
         }
     }
 
@@ -703,11 +779,17 @@ private fun AuthenticatedApp(
                     giftOutbox.clear()
                     pendingGift = null
                     effectSession.offerAccepted(intent, activeRoom?.stream)
+                    val giftPayload = JSONObject(intent.payload)
+                    activeRoom?.stream?.let { roomId ->
+                        showConfirmedGift(roomId, giftPayload.optString("request_id"),
+                            giftPayload.optString("gift_id"), quantity = giftPayload.optInt("quantity", 1))
+                    }
                     notify("礼物已由服务端确认")
                     // A replay returns the original post-debit balance; refresh the current wallet.
                     runCatching { api.wallet(session.token) }.onSuccess { wallet = it }
                 } catch (error: GiftRejectedException) {
                     runCatching { giftOutbox.clear() }.onSuccess { pendingGift = null }
+                    if (isInsufficientGiftBalance(error)) showGiftRecharge = true
                     notify(error.message ?: "服务端已拒绝，本次未扣币")
                 } catch (error: CancellationException) { throw error
                 } catch (error: Exception) {
@@ -813,12 +895,15 @@ private fun AuthenticatedApp(
     }
 
     val deliverCustom: suspend (String, String, String, String) -> Unit = { recipient, data, extension, description ->
-        api.peerAccess(session.token, recipient)
         openImGateway.sendCustom(recipient, data, extension, description)
         historyRefresh++
         runCatching { openImGateway.conversations() }.onSuccess { openImConversations = parseOpenImConversations(it) }
     }
     val sendDmGift: (String) -> Unit = fun(giftId) {
+        if (pendingDmGift == null && wallet?.balance?.let { balance -> gifts.firstOrNull { it.id == giftId }?.coinPrice?.let { it > balance } } == true) {
+            showGiftRecharge = true
+            return
+        }
         val recipient = openImRecipient.trim()
         val pending = pendingDmGift
         if (recipient.isBlank() || openImBusy) return
@@ -846,14 +931,21 @@ private fun AuthenticatedApp(
                 dmGiftOutbox.clear()
                 pendingDmGift = null
                 openImStatus = "礼物消息已发送"
+                dmCelebration = gifts.firstOrNull { it.id == giftId }
+                dmCelebrationNonce++
             } catch (error: SettlementUnavailableException) {
                 runCatching { dmGiftOutbox.clear() }.onSuccess { pendingDmGift = null }
                 openImStatus = error.message ?: "私信送礼结算尚未接通，本次未扣币，也未发送礼物消息"
             } catch (error: GiftRejectedException) {
                 runCatching { dmGiftOutbox.clear() }.onSuccess { pendingDmGift = null }
+                if (isInsufficientGiftBalance(error)) showGiftRecharge = true
                 openImStatus = error.message ?: "本次未扣币"
             } catch (error: CancellationException) { throw error
             } catch (error: Exception) {
+                if (isInsufficientGiftBalance(error)) {
+                    showGiftRecharge = true
+                    runCatching { dmGiftOutbox.clear() }.onSuccess { pendingDmGift = null }
+                }
                 openImStatus = error.message ?: "礼物结果未确认，请重试同一笔，不要重新赠送"
             } finally { openImBusy = false }
         }
@@ -888,6 +980,21 @@ private fun AuthenticatedApp(
             } catch (error: CancellationException) { throw error
             } catch (error: Exception) {
                 openImStatus = error.message ?: "视频消息未完成，请用同一单号重试"
+            } finally { openImBusy = false }
+        }
+    }
+    val sendDmImage: (Uri) -> Unit = { uri ->
+        val recipient = openImRecipient.trim()
+        if (recipient.isNotBlank() && !openImBusy) scope.launch {
+            openImBusy = true
+            try {
+                openImGateway.sendImage(recipient, uri)
+                openImStatus = "图片已发送"
+                historyRefresh++
+                runCatching { openImGateway.conversations() }
+                    .onSuccess { openImConversations = parseOpenImConversations(it) }
+            } catch (error: CancellationException) { throw error
+            } catch (error: Exception) { openImStatus = error.message ?: "图片发送失败，请重试"
             } finally { openImBusy = false }
         }
     }
@@ -954,9 +1061,6 @@ private fun AuthenticatedApp(
             historyLoading = true
             historyError = null
             try {
-                // Re-check the platform policy before reading an existing OpenIM conversation.
-                // This closes the gap where a block was added after the conversation was created.
-                api.peerAccess(session.token, recipient)
                 val updated = withTimeout(15_000) {
                     refreshHistoryWindow(history) { cursor -> openImGateway.history(recipient, cursor) }
                 }
@@ -979,7 +1083,12 @@ private fun AuthenticatedApp(
         effectSession.enterRoom(roomId)
         val channel = RoomGiftChannel()
         try {
-            channel.listen(session.token, roomId) { effectSession.offerBroadcast(it) }
+            channel.listen(session.token, roomId) { broadcast ->
+                effectSession.offerBroadcast(broadcast)
+                scope.launch {
+                    showConfirmedGift(broadcast.roomId, broadcast.requestId, broadcast.giftId, broadcast.viewerId, broadcast.quantity)
+                }
+            }
             awaitCancellation()
         } finally {
             channel.close()
@@ -993,7 +1102,8 @@ private fun AuthenticatedApp(
         launch {
             try {
                 val result = api.liveRooms()
-                rooms = result.map { item -> LiveRoom(item.host, item.title, item.creatorId, item.roomId,item.coverPath) }
+                rooms = result.map { item -> LiveRoom(item.host, item.title, item.creatorId, item.roomId,
+                    item.coverPath, item.roomType, item.welcomeText, item.backgroundId, item.announcementText) }
             } catch (error: CancellationException) { throw error
             } catch (_: Exception) {
                 roomsError = if (rooms.isEmpty()) "暂时无法加载直播，请检查网络后重试" else "更新失败，以下是上次加载的直播，可能已结束"
@@ -1001,36 +1111,31 @@ private fun AuthenticatedApp(
         }
         launch { runCatching { api.giftCatalog() }.onSuccess { gifts = it } }
         launch { runCatching { api.profile(session.token) }.onSuccess { profile = it } }
-        launch {
-            socialProfileLoadError = null
-            try {
-                socialProfile = api.socialProfile(session.token)
-                socialProfileLoaded = true
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                socialProfileLoadError = error.message ?: "详细资料读取失败"
-            }
-        }
         launch { runCatching { api.wallet(session.token) }.onSuccess { wallet = it }.onFailure { wallet = null } }
         launch { runCatching { api.level(session.token) }.onSuccess { level = it }.onFailure { level = null } }
         launch { runCatching { api.earnings(session.token, "daily") }.onSuccess { dailyEarnings = it }.onFailure { dailyEarnings = null } }
         launch { runCatching { api.earnings(session.token, "monthly") }.onSuccess { monthlyEarnings = it }.onFailure { monthlyEarnings = null } }
     }
 
-    LaunchedEffect(selectedTab, accountPage, session.token, identityRefresh) {
-        if (selectedTab != 4 || accountPage != QumiAccountPage.IDENTITY) return@LaunchedEffect
-        identityLoading = true
-        identityError = null
+    LaunchedEffect(session.token, selectedTab, discoverySection) {
+        if (selectedTab != 0 || discoverySection != 0) return@LaunchedEffect
+        approvedVideoPublisher = false
         try {
-            identityVerification = api.identityVerificationStatus(session.token)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            identityError = if (error is PlatformHttpException && error.statusCode == 503) "实名认证服务尚未启用"
-                else "认证状态暂不可用，请检查网络后重试"
-        } finally {
-            identityLoading = false
+            approvedVideoPublisher = api.creatorApplications(session.token).any { it.status == "APPROVED" }
+        } catch (cancelled: CancellationException) { throw cancelled
+        } catch (_: Exception) { approvedVideoPublisher = false }
+    }
+
+    LaunchedEffect(session.token, selectedTab, discoveryComposerVisible) {
+        if (selectedTab != 0 || discoveryComposerVisible) return@LaunchedEffect
+        while (true) {
+            try {
+                rooms = api.liveRooms().map { item -> LiveRoom(item.host, item.title, item.creatorId, item.roomId,
+                    item.coverPath, item.roomType, item.welcomeText, item.backgroundId, item.announcementText) }
+                roomsError = null
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) { roomsError = "直播状态暂时无法更新" }
+            kotlinx.coroutines.delay(10_000)
         }
     }
 
@@ -1071,6 +1176,7 @@ private fun AuthenticatedApp(
         viewerCohostKnown = cohostKnown,
         viewerCohostMode = cohostMode,
         hostCohostSeat = hostCohostLiveKit,
+        roomType = activeRoom?.roomType ?: "SINGLE",
     )
     LaunchedEffect(activeRoom?.stream, session.token) {
         playbackStream = null
@@ -1299,15 +1405,19 @@ private fun AuthenticatedApp(
         val isHost = room.creatorId == session.id
         // Ordinary host video is the SRS RTMP publish. LiveKit camera starts only after that publish stops.
         val ordinarySrs = mediaRoute == LiveMediaRoute.HOST_RTMP
-        val gateway = LiveKitRoomGateway(context)
+        val gateway = LiveKitRoomGateway(context, cameraBeauty)
         roomGateway = gateway
         if (!ordinarySrs) activeRoomStatus = "正在连接直播"
         try {
             withTimeout(20_000) {
                 val credentials = api.liveKitToken(session.token, liveSessionId, activeMatchId)
                 gateway.join(credentials.url, credentials.token)
-                if (isHost && !ordinarySrs) cameraHandoff.withLock { gateway.publishCameraAndMicrophone() }
-                else if (!isHost && activeMatchId == null && cohostMode != null) gateway.publishCohost(cohostMode == "VIDEO")
+                if (isHost && !ordinarySrs) cameraHandoff.withLock {
+                    if (room.roomType == "VOICE") gateway.publishCohost(false)
+                    else gateway.publishCameraAndMicrophone()
+                }
+                else if (!isHost && activeMatchId == null && cohostMode != null)
+                    gateway.publishCohost(room.roomType != "VOICE" && cohostMode == "VIDEO")
             }
             if (!ordinarySrs) activeRoomStatus = if (isHost) "正在直播" else "已加入直播间"
             awaitCancellation()
@@ -1325,7 +1435,7 @@ private fun AuthenticatedApp(
 
     LaunchedEffect(activeRoom?.stream, session.id, session.token, activeMatchId, hostCohostLiveKit) {
         val room = activeRoom ?: return@LaunchedEffect
-        if (!hostPublishesOrdinarySrs(room.creatorId == session.id, activeMatchId, hostCohostLiveKit)) return@LaunchedEffect
+        if (room.roomType in setOf("VOICE", "MULTI") || !hostPublishesOrdinarySrs(room.creatorId == session.id, activeMatchId, hostCohostLiveKit)) return@LaunchedEffect
         val url = srsIngestUrl(BuildConfig.SRS_RTMP_URL, room.stream)
         if (url == null) {
             activeRoomStatus = "推流地址不可用，观众将看不到画面"
@@ -1358,7 +1468,7 @@ private fun AuthenticatedApp(
     }
 
     val ordinaryHostIngest by rememberUpdatedState(
-        activeRoom?.let { hostPublishesOrdinarySrs(it.creatorId == session.id, activeMatchId, hostCohostLiveKit) } == true,
+        activeRoom?.let { it.roomType !in setOf("VOICE", "MULTI") && hostPublishesOrdinarySrs(it.creatorId == session.id, activeMatchId, hostCohostLiveKit) } == true,
     )
     LaunchedEffect(roomGateway, playbackStream) {
         val gateway = roomGateway ?: return@LaunchedEffect
@@ -1377,7 +1487,7 @@ private fun AuthenticatedApp(
     LaunchedEffect(activeRoom?.stream, session.token, session.id, activeMatchId) {
         hostCohostLiveKit = false
         val room = activeRoom ?: return@LaunchedEffect
-        if (room.creatorId != session.id || activeMatchId != null) return@LaunchedEffect
+        if (activeMatchId != null) return@LaunchedEffect
         val liveId = room.stream.toLongOrNull() ?: return@LaunchedEffect
         while (true) {
             try {
@@ -1410,6 +1520,7 @@ private fun AuthenticatedApp(
                 if (current != activeMatchId) {
                     activeMatchId = current
                     matchScores = emptyList()
+                    matchRemainingSeconds = null
                 }
             } catch (error: CancellationException) { throw error
             } catch (_: Exception) { /* Keep the last confirmed state during a temporary outage. */ }
@@ -1420,8 +1531,17 @@ private fun AuthenticatedApp(
     LaunchedEffect(activeMatchId, session.token) {
         val matchId = activeMatchId ?: return@LaunchedEffect
         while (true) {
-            runCatching { api.matchScore(session.token, matchId) }.onSuccess { matchScores = it }
+            runCatching { api.matchScore(session.token, matchId) }.onSuccess {
+                matchScores = it.scores
+                matchRemainingSeconds = it.remainingSeconds
+            }
             kotlinx.coroutines.delay(3_000)
+        }
+    }
+    LaunchedEffect(activeMatchId) {
+        while (activeMatchId != null) {
+            kotlinx.coroutines.delay(1_000)
+            matchRemainingSeconds = matchRemainingSeconds?.let { (it - 1).coerceAtLeast(0) }
         }
     }
 
@@ -1437,18 +1557,24 @@ private fun AuthenticatedApp(
 
     val requestMediaPermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         if (grants.values.all { it }) {
+            val draft = pendingRoomConfig ?: return@rememberLauncherForActivityResult
             scope.launch {
                 startingLive = true
                 var sessionId: Long? = null
                 var registration: BilldRoomRegistration? = null
                 try {
                     sessionId = api.startLive(session.token)
+                    api.setWatchPrice(session.token, sessionId, draft.watchPriceCoins)
                     registration = BilldRoomRegistration()
                     withTimeout(15_000) {
-                        registration.register(session.token, session.id, session.username, sessionId.toString(), "${session.username} 的直播间")
+                        registration.register(session.token, session.id, session.username, sessionId.toString(), draft)
                     }
                     roomRegistration = registration
-                    activeRoom = LiveRoom(session.username, "${session.username} 的直播间", session.id, sessionId.toString())
+                    activeRoom = LiveRoom(session.username, draft.title, session.id, sessionId.toString(),
+                        draft.coverPath, draft.roomType, draft.welcomeText, draft.backgroundId, draft.announcementText)
+                    liveStartedAtMillis = System.currentTimeMillis()
+                    showCreateRoom = false
+                    pendingRoomConfig = null
                     refreshKey++
                 } catch (error: Exception) {
                     registration?.close()
@@ -1459,15 +1585,15 @@ private fun AuthenticatedApp(
                 }
             }
         } else {
-            notify("开播需要相机和麦克风权限")
+            notify(if (pendingRoomConfig?.roomType == "VOICE") "语音房需要麦克风权限" else "开播需要相机和麦克风权限")
         }
     }
 
     fun leaveRoom() {
+        giftCelebration = null
         showRoomChat=false
         showCohost=false
         showBusiness=null
-        businessReportTarget=null
         cohostMode=null
         val room = activeRoom ?: return
         scope.launch {
@@ -1487,10 +1613,67 @@ private fun AuthenticatedApp(
                 roomGateway = null
                 roomRegistration = null
                 activeRoomStatus = "已离开"
-                if (isHost) refreshKey++
+                if (isHost) {
+                    val startedAt = liveStartedAtMillis.takeIf { it > 0L } ?: System.currentTimeMillis()
+                    finishedLiveRoom = FinishedLiveRoom(room, startedAt,
+                        ((System.currentTimeMillis() - startedAt) / 1_000).coerceAtLeast(0))
+                    liveStartedAtMillis = 0L
+                    refreshKey++
+                    val recorded = runCatching { api.creatorSessions(session.token)
+                        .firstOrNull { it.id == room.stream } }.getOrNull()
+                    finishedLiveRoom = finishedLiveRoom?.takeIf { it.room.stream == room.stream }
+                        ?.copy(session = recorded, loading = false)
+                }
             } catch (error: Exception) {
                 notify("离开直播失败 · ${error.message ?: "请求失败"}")
             }
+        }
+    }
+
+    fun switchRoom(direction: Int) {
+        val current = activeRoom ?: return
+        if (current.creatorId == session.id || switchingRoom) return
+        switchingRoom = true
+        scope.launch {
+            try {
+                val fresh = api.liveRooms().map { LiveRoom(it.host, it.title, it.creatorId, it.roomId, it.coverPath) }
+                rooms = fresh
+                val currentIndex = fresh.indexOfFirst { it.stream == current.stream }
+                val next = when {
+                    fresh.size < 2 && currentIndex >= 0 -> null
+                    fresh.isEmpty() -> null
+                    currentIndex < 0 -> if (direction > 0) fresh.first() else fresh.last()
+                    else -> fresh[Math.floorMod(currentIndex + direction, fresh.size)]
+                }
+                if (next == null || next.stream == current.stream) {
+                    notify("暂无其他正在直播的房间")
+                    return@launch
+                }
+                val liveId = current.stream.toLongOrNull()
+                if (liveId != null) {
+                    val seats = try { api.cohosts(session.token, liveId) }
+                    catch (error: Exception) {
+                        if (cohostMode != null) throw error
+                        emptyList()
+                    }
+                    for (request in seats.filter { it.userId == session.id && it.status in listOf("PENDING", "ACCEPTED", "MUTED") }) {
+                        api.cohostAction(session.token, liveId, request.id, "LEAVE")
+                    }
+                }
+                if (activeRoom?.stream != current.stream) return@launch
+                showRoomChat = false
+                showCohost = false
+                cohostMode = null
+                cohostKnown = false
+                activeMatchId = null
+                matchScores = emptyList()
+                playbackStream = null
+                activeRoomStatus = "正在连接直播"
+                activeRoom = next
+            } catch (error: CancellationException) { throw error
+            } catch (error: Exception) {
+                notify(error.message ?: "切换直播失败，请重试")
+            } finally { switchingRoom = false }
         }
     }
 
@@ -1536,8 +1719,8 @@ private fun AuthenticatedApp(
         }
     }
 
-    fun beginCall(peerId: String, peerName: String?, requestedMode: String, callId: String?) {
-        if (activeCall != null) {
+    fun beginCall(peerId: String, peerName: String?, requestedMode: String, callId: String?, offeredPrice: Int? = null) {
+        if (activeCall != null || demoCallSession.active != null) {
             notify("请先挂断当前通话")
             return
         }
@@ -1555,7 +1738,104 @@ private fun AuthenticatedApp(
             notify("通话号无效")
             return
         }
-        activeCall = PendingDmCall(peerId, peerName, requestedMode, callId)
+        activeCall = PendingDmCall(peerId, peerName, requestedMode, callId, offeredPrice)
+    }
+
+    var checkingCreator by remember { mutableStateOf(false) }
+    var showCreatorGate by remember { mutableStateOf(false) }
+    var creatorGateStatus by remember { mutableStateOf<String?>(null) }
+    var creatorGateError by remember { mutableStateOf<String?>(null) }
+    val startLive: () -> Unit = {
+        if (!checkingCreator && !startingLive) {
+            checkingCreator = true
+            scope.launch {
+                try {
+                    val applications = api.creatorApplications(session.token)
+                    creatorGateStatus = (applications.firstOrNull { it.status == "APPROVED" } ?: applications.firstOrNull())?.status
+                    creatorGateError = null
+                    if (creatorGateStatus == "APPROVED") {
+                        val age = profile?.age
+                        val minimumAge = if (profile?.region == "KR") 19 else 18
+                        if (profile?.source != "SELF_REPORTED") {
+                            selectedTab = 4
+                            notify("请先在“我的”填写年龄和性别，再开播")
+                        } else if (age == null || age < minimumAge) {
+                            notify("当前年龄未达到开播要求")
+                        } else {
+                            showCreateRoom = true
+                        }
+                    } else showCreatorGate = true
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    creatorGateError = failure.message ?: "认证状态暂时无法读取"
+                    showCreatorGate = true
+                } finally {
+                    checkingCreator = false
+                }
+            }
+        }
+    }
+
+    if (showCreatorGate) Dialog(onDismissRequest = { showCreatorGate = false }) {
+        Surface(shape = RoundedCornerShape(22.dp), color = LiveStyle.dialogSurface) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                IconButton(onClick = { showCreatorGate = false }, modifier = Modifier.align(Alignment.End)) {
+                    Icon(Icons.Rounded.Close, contentDescription = "关闭", tint = LiveStyle.muted)
+                }
+                Box(Modifier.padding(top = 8.dp).size(108.dp).clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(LiveStyle.accentSoft, Color(0xFFE3D5FF)))), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.VerifiedUser, contentDescription = null, tint = LiveStyle.accent, modifier = Modifier.size(72.dp))
+                }
+                Text(when {
+                    creatorGateError != null -> "暂无法确认主播身份"
+                    creatorGateStatus == "PENDING" -> "主播认证审核中"
+                    creatorGateStatus == "REJECTED" -> "请重新认证为主播"
+                    else -> "完成主播认证"
+                }, Modifier.padding(top = 22.dp), color = LiveStyle.ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                Text(when {
+                    creatorGateError != null -> creatorGateError ?: "请稍后重试"
+                    creatorGateStatus == "PENDING" -> "审核通过后即可开播"
+                    else -> "认证审核通过后即可开播"
+                }, Modifier.padding(top = 8.dp), color = LiveStyle.muted, fontSize = 13.sp)
+                Button(onClick = {
+                    showCreatorGate = false
+                    if (creatorGateError != null) startLive() else { selectedTab = 4; accountPage = QumiAccountPage.IDENTITY }
+                }, modifier = Modifier.fillMaxWidth().padding(top = 36.dp, bottom = 4.dp).height(48.dp), shape = RoundedCornerShape(12.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = LiveStyle.accent)) {
+                    Text(if (creatorGateError != null) "重试" else if (creatorGateStatus == "PENDING") "查看审核进度" else "立即认证", fontSize = 17.sp)
+                }
+            }
+        }
+    }
+
+    if (showCreateRoom) Dialog(onDismissRequest = {
+        if (showCreateRoomBeauty) showCreateRoomBeauty = false else if (!startingLive) showCreateRoom = false
+    }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Box(Modifier.fillMaxSize()) {
+        QumiCreateRoomScreen(
+            token = session.token,
+            username = session.username,
+            api = api,
+            starting = startingLive,
+            onBack = { showCreateRoom = false },
+            onBeauty = { showCreateRoomBeauty = true },
+            onCreate = { draft ->
+                pendingRoomConfig = draft
+                requestMediaPermissions.launch(if (draft.roomType == "VOICE")
+                    arrayOf(Manifest.permission.RECORD_AUDIO)
+                else arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
+            },
+        )
+        if (showCreateRoomBeauty) QumiBeautyScreen(
+            settings = cameraBeauty,
+            onSettingsChange = { settings ->
+                cameraBeauty = settings
+                CameraBeautyPreferences.save(context, session.id, settings)
+            },
+            onBack = { showCreateRoomBeauty = false },
+        )
+        }
     }
 
     Scaffold(
@@ -1563,78 +1843,134 @@ private fun AuthenticatedApp(
         containerColor = NightInk,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if ((selectedTab != 3 && selectedTab != 4) || accountPage == QumiAccountPage.MINE) {
-                NavigationBar(containerColor = NightSurface) {
-                    val tabs = listOf("交友", "动态", "直播", "消息", "我的") + if (canManageOperations) listOf("运营") else emptyList()
-                    val idleIcons = listOf(Icons.Rounded.FavoriteBorder, Icons.Rounded.PhotoCamera, Icons.Rounded.PlayCircleOutline, Icons.Rounded.ChatBubbleOutline, Icons.Rounded.PersonOutline, Icons.Rounded.Shield)
-                    val activeIcons = listOf(Icons.Rounded.Favorite, Icons.Rounded.CameraAlt, Icons.Rounded.PlayCircle, Icons.Rounded.ChatBubble, Icons.Rounded.AccountCircle, Icons.Rounded.Shield)
-                    tabs.forEachIndexed { index, title ->
-                        NavigationBarItem(
-                            selected = selectedTab == index,
-                            onClick = { selectedTab = index; accountPage = QumiAccountPage.MINE; openImMessagePage = false },
-                            icon = {
-                                Icon(if (selectedTab == index) activeIcons[index] else idleIcons[index],
-                                    contentDescription = title, modifier = Modifier.size(27.dp))
-                            },
-                            label = { Text(title, fontWeight = if (selectedTab == index) FontWeight.SemiBold else FontWeight.Normal) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Color(0xFF7864E8),
-                                selectedTextColor = Color(0xFF7864E8),
-                                indicatorColor = Color(0xFFF0ECFF),
-                                unselectedIconColor = Color(0xFF858A98),
-                                unselectedTextColor = Color(0xFF858A98),
-                            ),
-                        )
+            if (!momentComposerVisible && !discoveryComposerVisible && ((selectedTab != 3 && selectedTab != 4) || accountPage == QumiAccountPage.MINE)) {
+                val titles = listOf("发现", "动态", "直播", "消息", "我的") + if (canManageOperations) listOf("运营") else emptyList()
+                val icons = listOf(Icons.Rounded.Explore, Icons.Rounded.RocketLaunch, Icons.Rounded.PlayArrow, Icons.Outlined.Forum, Icons.Rounded.AccountCircle, Icons.Rounded.Shield)
+                Row(Modifier.fillMaxWidth().background(Color.White).navigationBarsPadding().height(66.dp), verticalAlignment = Alignment.CenterVertically) {
+                    titles.forEachIndexed { index, title ->
+                        Column(Modifier.weight(1f).fillMaxHeight().clickable {
+                            selectedTab = index; accountPage = QumiAccountPage.MINE; openImMessagePage = false
+                        }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Box(Modifier.size(33.dp).then(if (index == 2) Modifier.shadow(5.dp, RoundedCornerShape(8.dp),
+                                ambientColor = Color(0xFF9A79F8), spotColor = Color(0xFF9A79F8)).clip(RoundedCornerShape(8.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xFF9A79F8), Color(0xFF6233E3)))) else Modifier),
+                                contentAlignment = Alignment.Center) {
+                                Icon(icons[index], contentDescription = title, modifier = Modifier.size(if (index == 2) 25.dp else 23.dp),
+                                    tint = if (index == 2) Color.White else if (selectedTab == index) Color(0xFF7044D8) else Color(0xFFBFC0CB))
+                            }
+                            Spacer(Modifier.height(3.dp))
+                            Text(title, color = if (index == 2 || selectedTab == index) Color(0xFF2F2C37) else Color(0xFF676975), fontSize = 10.sp)
+                        }
                     }
                 }
             }
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        if (selectedTab == 0 && discoveryComposerVisible) {
+            Box(Modifier.fillMaxSize().padding(padding)) {
+                QumiMomentComposer(session.token,
+                    onBack = { discoveryComposerVisible = false },
+                    onPublished = { discoveryComposerVisible = false },
+                    videoOnly = true)
+            }
+        } else {
+        val discoveryFadeHeight = with(LocalDensity.current) { 250.dp.toPx() }
+        val discoveryBackdrop = if (selectedTab == 0) Modifier
+            .background(Brush.horizontalGradient(listOf(Color(0xFFE3DDFF), Color(0xFFD7E9FF))))
+            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.White), endY = discoveryFadeHeight))
+        else Modifier
+        Column(Modifier.fillMaxSize().padding(padding).background(Color.White).then(discoveryBackdrop)) {
             if (selectedTab == 0) {
                 QumiDiscoveryHeader(
                     section = discoverySection,
-                    filter = discoveryFilter,
                     onSection = { discoverySection = it },
-                    onFilter = { discoveryFilter = it },
-                    onStart = { selectedTab = 2 },
-                    onSearch = { searchReturnTab = selectedTab; selectedTab = 4; accountPage = QumiAccountPage.SEARCH },
+                    showPublishVideo = approvedVideoPublisher,
+                    onPublishVideo = { discoveryComposerVisible = true },
                 )
-            } else if (selectedTab != 1 && selectedTab != 3 && selectedTab != 4) TopBar(title = when (selectedTab) { 2 -> "直播"; else -> "运营" }, onRefresh = { refreshKey++ })
+            } else if (selectedTab > 4) TopBar(title = "运营", onRefresh = { refreshKey++ })
             pendingGift?.let { pending ->
                 PendingGiftNotice(pending, giftLoading, onRetry = { submitGift(pending) })
             }
             when (selectedTab) {
-                0 -> QumiFriendsScreen(token = session.token, section = discoverySection, filter = discoveryFilter,
-                    onSearch = { searchReturnTab = selectedTab; selectedTab = 4; accountPage = QumiAccountPage.SEARCH },
+                0 -> Box(Modifier.fillMaxSize()) {
+                  if (discoverySection == 1) DiscoveryLiveScreen(
+                    rooms = rooms,
+                    loading = roomsLoading,
+                    error = roomsError,
+                    onJoin = { activeRoom = it },
+                    onHost = { hostProfile = it },
+                    onSample = { sampleLivePreview = false; sampleRoomIndex = it },
+                    onRefresh = { refreshKey++ },
+                  )
+                  QumiVideoFeed(
+                    token = session.token,
+                    currentUserId = session.id,
+                    liveCreatorIds = if (roomsError == null) rooms.map { it.creatorId }.toSet() else emptySet(),
                     onOpenUser = { id, name -> openPublicProfile(id, name) },
-                    onMessageUser = { id, name -> openDirectMessage(id, name) },
-                    onBlockUser = { id -> scope.launch { runCatching { api.searchUsers(session.token, id.toString()).firstOrNull() }.onSuccess { blockTarget = it }.onFailure { notify(it.message ?: "读取用户失败") } } })
+                    onGoMoments = { selectedTab = 1 },
+                    openFirstSignal = openVideoFromLiveSignal,
+                    consumedOpenSignal = handledVideoOpenSignal,
+                    onOpenFirstConsumed = { handledVideoOpenSignal = it },
+                    closeViewerSignal = closeVideoForLiveSignal,
+                    showGrid = discoverySection == 0,
+                    onViewerOpened = {
+                        sampleRoomIndex = null
+                        previewRoom = null
+                        if (switchToVideoAfterRoom) {
+                            switchToVideoAfterRoom = false
+                            leaveRoom()
+                        }
+                    },
+                    onViewerUnavailable = {
+                        sampleRoomIndex = null
+                        previewRoom = null
+                        if (switchToVideoAfterRoom) {
+                            switchToVideoAfterRoom = false
+                            leaveRoom()
+                        }
+                    },
+                    onOpenLive = {
+                        switchToLiveAfterViewer = true
+                        if (rooms.isNotEmpty()) previewRoom = rooms.first() else { sampleLivePreview = true; sampleRoomIndex = 0 }
+                    },
+                    onOpenCreatorLive = { creatorId ->
+                        scope.launch {
+                            try {
+                                val fresh = api.liveRooms().map { item -> LiveRoom(item.host, item.title, item.creatorId, item.roomId,
+                                    item.coverPath, item.roomType, item.welcomeText, item.backgroundId, item.announcementText) }
+                                rooms = fresh
+                                roomsError = null
+                                val creatorRoom = fresh.firstOrNull { it.creatorId == creatorId }
+                                if (creatorRoom == null) notify("主播已下播")
+                                else {
+                                    switchToLiveAfterViewer = true
+                                    previewRoom = creatorRoom
+                                }
+                            } catch (cancelled: CancellationException) { throw cancelled
+                            } catch (_: Exception) { notify("直播状态暂时无法更新，请重试") }
+                        }
+                    },
+                  )
+                }
                 1 -> QumiMomentsScreen(
                     token = session.token,
+                    currentUserId = session.id,
                     onMessages = { selectedTab = 3; accountPage = QumiAccountPage.MINE },
+                    onOpenAnnouncements = { openAnnouncements() },
                     onOpenUser = { id, name -> openPublicProfile(id, name) },
+                    onMessageUser = { id, name, greeting -> openDirectMessage(id, name, greeting) },
+                    onComposerVisible = { momentComposerVisible = it },
                 )
                 2 -> LiveScreen(
                     rooms = rooms,
                     loading = roomsLoading,
                     error = roomsError,
                     starting = startingLive,
-                    onStart = {
-                        val age = profile?.age
-                        val minimumAge = if (profile?.region == "KR") 19 else 18
-                        if (profile?.source != "SELF_REPORTED") {
-                            selectedTab = 4
-                            notify("请先在“我的”填写年龄和地区，再开播")
-                        } else if (age == null || age < minimumAge) {
-                            notify("当前年龄未达到开播要求")
-                        } else {
-                            requestMediaPermissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
-                        }
-                    },
+                    onStart = startLive,
                     onJoin = { activeRoom = it },
                     onHost = { hostProfile = it },
-                    onReferral = { showReferral = true },
+                    onSample = { sampleLivePreview = false; sampleRoomIndex = it },
+                    showStartButton = true,
                     onRefresh = { refreshKey++ },
                 )
                 3 -> when (accountPage) {
@@ -1645,89 +1981,85 @@ private fun AuthenticatedApp(
                         onMessageUser = { id, name -> openDirectMessage(id, name) },
                         onBlockUser = { id -> scope.launch { runCatching { api.searchUsers(session.token, id.toString()).firstOrNull() }.onSuccess { blockTarget = it }.onFailure { notify(it.message ?: "读取用户失败") } } },
                     )
-                    QumiAccountPage.CONTACTS -> QumiContactsScreen(token = session.token, initialTab = contactTab, onOpenUser = { id, name -> openPublicProfile(id, name) }, onMessageUser = { id, name -> openDirectMessage(id, name) }, onBack = { accountPage = QumiAccountPage.MINE }, onSearch = { tab ->
+                    QumiAccountPage.CONTACTS -> QumiContactsScreen(token = session.token, initialTab = contactTab, onOpenUser = { id, name -> openPublicProfile(id, name) }, onMessageUser = { id, name -> openDirectMessage(id, name) }, onOpenLive = ::openContactLive, onBack = { accountPage = QumiAccountPage.MINE }, onSearch = { tab ->
                         contactTab = tab
                         searchReturnTab = selectedTab; searchReturnPage = QumiAccountPage.CONTACTS; accountPage = QumiAccountPage.SEARCH
                     })
                     QumiAccountPage.SECRETARY_PROFILE -> QumiSecretaryProfileScreen(
-                        token = session.token,
-                        api = api,
-                        support = supportContact,
                         onBack = { accountPage = QumiAccountPage.SECRETARY_SETTINGS },
-                        onReport = { reportUser(supportContact?.userId?.toLongOrNull()) },
                     )
                     QumiAccountPage.SECRETARY_CHAT -> QumiSecretaryChatScreen(
+                        token = session.token,
                         onBack = { accountPage = QumiAccountPage.MINE },
                         onSettings = { accountPage = QumiAccountPage.SECRETARY_SETTINGS },
                     )
+                    QumiAccountPage.DEMO_CHAT -> DemoDirectChatScreen(if (demoPeer == null) demoChatState else peerDemoChatState,
+                        session.username, session.avatar, onBack = { accountPage = QumiAccountPage.MINE }, token = session.token, peerId = demoPeerId, ownId = session.id,
+                        onStartCall = { chat, mode, price -> if (activeCall == null) demoCallSession.start(chat, mode, price) else notify("请先挂断当前通话") })
                     QumiAccountPage.SECRETARY_SETTINGS -> QumiSecretarySettingsScreen(
-                        token = session.token,
-                        api = api,
-                        gateway = openImGateway,
-                        recipientId = supportContact?.userId,
-                        messageReady = openImReady,
                         onBack = { accountPage = QumiAccountPage.SECRETARY_CHAT },
                         onOpenProfile = { accountPage = QumiAccountPage.SECRETARY_PROFILE },
-                        onReport = { reportUser(supportContact?.userId?.toLongOrNull()) },
-                        onHistoryCleared = {
-                            if (openImRecipient == supportContact?.userId) {
-                                history = null
-                                historyRefresh++
-                            }
-                            scope.launch {
-                                runCatching { openImGateway.conversations() }
-                                    .onSuccess { openImConversations = parseOpenImConversations(it) }
-                            }
-                        },
                     )
                     QumiAccountPage.VISITORS -> QumiVisitorsScreen(
                         token = session.token,
                         onBack = { accountPage = QumiAccountPage.MINE },
                         onOpenUser = { id, name -> openPublicProfile(id, name) },
                     )
-                    QumiAccountPage.EVENTS -> QumiAnnouncementListScreen(
+                    QumiAccountPage.INTERACTIONS -> QumiInteractionsScreen(
                         token = session.token,
                         onBack = { accountPage = QumiAccountPage.MINE },
-                        onOpenDetail = { selectedAnnouncement = it; accountPage = QumiAccountPage.ANNOUNCEMENT_DETAIL },
+                        onOpenUser = { id, name -> openPublicProfile(id, name) },
+                        onViewed = { markInteractionsViewed(it) },
+                    )
+                    QumiAccountPage.EVENTS -> QumiAnnouncementListScreen(
+                        onBack = { closeAnnouncements() },
+                        onOpenDetail = { index, title -> announcementIndex = index; announcementTitle = title; accountPage = QumiAccountPage.ANNOUNCEMENT_DETAIL },
                     )
                     QumiAccountPage.ANNOUNCEMENT_DETAIL -> QumiAnnouncementDetailScreen(
-                        title = selectedAnnouncement?.title ?: "平台公告",
-                        content = selectedAnnouncement?.content,
+                        title = announcementTitle,
+                        index = announcementIndex,
                         onBack = { accountPage = QumiAccountPage.EVENTS },
                     )
                     QumiAccountPage.NOTIFICATIONS -> QumiNotificationSettingsScreen(
                         token = session.token,
                         onBack = { accountPage = QumiAccountPage.MINE },
-                        onOpenVisitors = { accountPage = QumiAccountPage.VISITORS },
-                        onOpenAnnouncements = { accountPage = QumiAccountPage.EVENTS },
-                        onOpenMessage = ::openNotificationMessage,
                     )
                     else -> if (!openImMessagePage) QumiMessagesHomeScreen(
+                        token = session.token,
                         ready = openImReady,
                         busy = openImBusy,
-                        conversations = openImConversations.map { Triple(it.userId, it.name, it.latestMessage) },
+                        conversations = demoConversations.rows.map { Triple(it.id, "${it.name}（演示）", it.preview) } + openImConversations.filterNot { real -> demoConversations.rows.any { it.id == real.userId } }.map { Triple(it.userId, it.name, it.latestMessage) },
+                        conversationAvatars = openImConversations.associate { it.userId to it.avatar } + demoConversations.rows.associate { it.id to it.avatar },
+                        onlineUserIds = onlineChatUsers,
+                        demoPreview = demoChatState.messages.lastOrNull()?.text.orEmpty(),
+                        onOpenDemo = { demoPeer = null; demoPeerId = null; accountPage = QumiAccountPage.DEMO_CHAT },
                         supportName = supportContact?.name,
                         supportPreview = supportContact?.let { contact -> openImConversations.firstOrNull { it.userId == contact.userId }?.latestMessage },
                         onNewMessage = { openImMessagePage = true },
                         onContacts = { accountPage = QumiAccountPage.CONTACTS },
                         onConnect = { messageConnectionAttempt++ },
-                        onOpenAnnouncements = { accountPage = QumiAccountPage.EVENTS },
+                        onOpenAnnouncements = { openAnnouncements() },
                         onOpenVisitors = { accountPage = QumiAccountPage.VISITORS },
+                        onOpenInteractions = {
+                            markInteractionsViewed(latestInteractionIds)
+                            accountPage = QumiAccountPage.INTERACTIONS
+                        },
+                        interactionUnread = latestInteractionIds.count { it !in seenInteractionIds },
                         onOpenSecretaryChat = { accountPage = QumiAccountPage.SECRETARY_CHAT },
                         onOpenConversation = { id, name ->
-                            openImRecipient = id
-                            openImRecipientName = name
-                            openImMessagePage = true
-                            chatOpenSignal++
+                            openDirectMessage(id, name)
                         },
                         onOpenSupport = { openSupportChat(); openImMessagePage = true },
                         onOpenNotifications = { accountPage = QumiAccountPage.NOTIFICATIONS },
                         onRequestNotifications = onRequestNotifications,
-                        onOpenMatch = { selectedTab = 0 },
                     ) else MessagesScreen(
                     onExit = { openImMessagePage = false },
                     status = openImStatus,
                     ownUserId = session.id.toString(),
+                    ownAvatar = session.avatar,
+                    ownName = session.username,
+                    celebrationGift = dmCelebration, celebrationNonce = dmCelebrationNonce,
+                    onCelebrationFinished = { dmCelebration = null },
                     onChatVisibility = { chatVisible = it },
                     history = history.takeIf { historyRecipient == openImRecipient },
                     historyLoading = historyLoading,
@@ -1743,7 +2075,6 @@ private fun AuthenticatedApp(
                                     historyError = null
                                     try {
                                         check(current.nextCursor.isNotBlank()) { "缺少消息分页位置" }
-                                        api.peerAccess(session.token, recipient)
                                         val older = withTimeout(15_000) { openImGateway.history(recipient, current.nextCursor) }
                                         if (openImRecipient == recipient && chatVisible) history = appendOlderHistory(current, older)
                                     } catch (error: kotlinx.coroutines.TimeoutCancellationException) { if (openImRecipient == recipient && chatVisible) historyError = "加载超时，请重试"
@@ -1757,6 +2088,7 @@ private fun AuthenticatedApp(
                     conversations = openImConversations,
                     recipientId = openImRecipient,
                     recipientName = openImRecipientName,
+                    onlineUserIds = onlineChatUsers,
                     message = openImMessage,
                     busy = openImBusy,
                     ready = openImReady,
@@ -1773,18 +2105,17 @@ private fun AuthenticatedApp(
                     },
                     onConnect = { messageConnectionAttempt++ },
                     onVideoCall = { beginCall(openImRecipient, openImRecipientName, "video", null) },
+                    onPaidVideoCall = { price -> beginCall(openImRecipient, openImRecipientName, "video", null, price) },
                     onVoiceCall = { beginCall(openImRecipient, openImRecipientName, "voice", null) },
                     onJoinCall = { beginCall(openImRecipient, openImRecipientName, "", it) },
                     onAcceptCall = { invite -> beginCall(invite.fromUserId.toString(), openImRecipientName ?: "用户 ${invite.fromUserId}", invite.mode, invite.callId) },
+                    onCallPriceSettings = { showDmCallPrice = true },
                     onSend = {
                         val recipient = openImRecipient.trim()
                         val content = openImMessage.trim()
                         if (recipient.isNotBlank() && content.isNotBlank()) scope.launch {
                             openImBusy = true
-                            runCatching {
-                                api.peerAccess(session.token, recipient)
-                                openImGateway.sendText(recipient, content)
-                            }
+                            runCatching { openImGateway.sendText(recipient, content) }
                                 .onSuccess {
                                     openImMessage = ""; openImStatus = "消息已发送"; historyRefresh++
                                     runCatching { openImGateway.conversations() }.onSuccess { openImConversations = parseOpenImConversations(it) }
@@ -1803,11 +2134,14 @@ private fun AuthenticatedApp(
                     onOpenChat = { id, name -> openImRecipient = id; openImRecipientName = name },
                     onOpenSupport = { openSupportChat() },
                     onOpenVisitors = { accountPage = QumiAccountPage.VISITORS },
-                    onOpenAnnouncements = { accountPage = QumiAccountPage.EVENTS },
+                    onOpenAnnouncements = { openAnnouncements() },
                     onOpenNotifications = { openImMessagePage = false; accountPage = QumiAccountPage.NOTIFICATIONS },
                     onSendGift = { gift -> sendDmGift(gift.id) },
                     onRetryGift = { pendingDmGift?.let { sendDmGift(it.giftId) } },
                     onSendVideo = sendDmVideo,
+                    onSendImage = sendDmImage,
+                    token = session.token,
+                    onCreatorVerification = { openImMessagePage = false; selectedTab = 4; accountPage = QumiAccountPage.IDENTITY },
                     onUnlock = unlockDmVideo,
                     onPlay = playDmVideo,
                     onVerifyGift = verifyDmGift,
@@ -1818,10 +2152,10 @@ private fun AuthenticatedApp(
                         QumiPublicProfileScreen(
                             token = session.token,
                             userId = targetId,
+                            currentUserId = session.id,
                             fallbackName = publicProfileFallbackName,
                             onBack = { selectedTab = profileReturnTab; accountPage = profileReturnPage },
                             onMessage = { id, name -> openDirectMessage(id, name) },
-                            onReport = { reportUser(it) },
                             onBlock = { id -> scope.launch {
                                 runCatching { api.searchUsers(session.token, id.toString()).firstOrNull() }
                                     .onSuccess { blockTarget = it }
@@ -1839,88 +2173,63 @@ private fun AuthenticatedApp(
                         onBlockUser = { id -> scope.launch { runCatching { api.searchUsers(session.token, id.toString()).firstOrNull() }.onSuccess { blockTarget = it }.onFailure { notify(it.message ?: "读取用户失败") } } },
                     )
                     QumiAccountPage.MINE -> QumiMineScreen(
-                        session = session, wallet = wallet, level = level,
-                        onRefresh = { refreshKey++ },
+                        session = session, wallet = wallet, level = level, profile = profile,
                         onProfile = { accountPage = QumiAccountPage.PROFILE },
                         onWallet = { accountPage = QumiAccountPage.WALLET },
-                        onBills = { billsCategory = it; accountPage = QumiAccountPage.BILLS },
+                        onBalanceDetails = { accountPage = QumiAccountPage.BALANCE },
                         onSettings = { accountPage = QumiAccountPage.SETTINGS },
                         onBusiness = { accountPage = QumiAccountPage.HOST },
-                        onTasks = { accountPage = QumiAccountPage.TASKS },
                         onReferral = { accountPage = QumiAccountPage.REFERRAL },
                         onLevel = { accountPage = QumiAccountPage.LEVEL },
-                        onGuard = { accountPage = QumiAccountPage.GUARD },
-                        onCostume = { accountPage = QumiAccountPage.COSTUME },
+                        onMyPosts = { accountPage = QumiAccountPage.POSTS },
+                        onMyLikes = { accountPage = QumiAccountPage.LIKES },
+                        onMyFavorites = { accountPage = QumiAccountPage.FAVORITES },
                         onIdentity = { accountPage = QumiAccountPage.IDENTITY },
                         onContacts = {
                             accountPage = QumiAccountPage.CONTACTS
-                            contactTab = when (it) { 0 -> 2; 1 -> 0; else -> 1 }
+                            contactTab = it.coerceIn(0, 1)
                         },
-                        onCustomerService = { accountPage = QumiAccountPage.HELP },
-                        onGuild = { accountPage = QumiAccountPage.GUILD },
                         onNoble = { accountPage = QumiAccountPage.NOBLE },
-                        onFriends = { accountPage = QumiAccountPage.FRIENDS },
-                        onBeauty = { accountPage = QumiAccountPage.BEAUTY },
                     )
                     QumiAccountPage.PROFILE -> QumiPersonalHomeScreen(
-                        session = session, profile = profile, socialProfile = socialProfile, level = level,
+                        session = session, profile = profile, level = level, coverRevision = refreshKey,
                         onBack = { accountPage = QumiAccountPage.MINE },
-                        onEdit = { profileEditReturnPage = QumiAccountPage.PROFILE; accountPage = QumiAccountPage.PROFILE_EDIT },
+                        onEdit = { accountPage = QumiAccountPage.PROFILE_EDIT },
+                        onRefresh = { refreshKey++ },
                     )
                     QumiAccountPage.PROFILE_EDIT -> QumiProfileEditScreen(
-                        session = session, profile = profile, socialProfile = socialProfile,
-                        profileLoaded = socialProfileLoaded, profileLoadError = socialProfileLoadError,
-                        busy = profileBusy,
-                        onBack = { accountPage = profileEditReturnPage },
-                        onAvatarUpload = { showAvatarUpload = true },
+                        session = session, profile = profile, busy = profileBusy,
+                        onBack = { accountPage = QumiAccountPage.PROFILE },
                         onCoverUpload = { showCoverUpload = true },
-                        onRetry = { refreshKey++ },
-                        onSave = { age, region, gender, birthDate, details ->
+                        onSave = { age, gender ->
                             if (!profileBusy) scope.launch {
                                 profileBusy = true
-                                var basicSaved = false
-                                try {
-                                    profile = api.saveProfile(session.token, age, region, gender, birthDate)
-                                    basicSaved = true
-                                    socialProfile = api.saveSocialProfile(session.token, details)
-                                    notify("资料已保存")
+                                try { profile = api.saveProfile(session.token, age, gender); notify("资料已保存，来源为本人填写")
                                 } catch (error: CancellationException) { throw error
-                                } catch (error: Exception) {
-                                    notify(if (basicSaved) "年龄、地区和性别已保存，其他资料保存失败：${error.message ?: "请重试"}" else "资料未能保存：${error.message ?: "请检查填写内容后重试"}")
+                                } catch (_: Exception) { notify("资料未能保存，请检查填写内容后重试")
                                 } finally { profileBusy = false }
                             }
                         },
                     )
-                    QumiAccountPage.WALLET -> QumiWalletScreen(
-                        wallet = wallet, daily = dailyEarnings, monthly = monthlyEarnings,
-                        rechargeBusy = rechargeBusy, rechargeOrders = rechargeOrders, rechargeOrdersError = rechargeOrdersError,
+                    QumiAccountPage.BALANCE -> QumiBalanceScreen(
+                        wallet = wallet, rechargeOrders = rechargeOrders, rechargeOrdersError = rechargeOrdersError,
                         onBack = { accountPage = QumiAccountPage.MINE }, onRefresh = { refreshKey++ },
-                        onTopUp = { amount ->
-                            if (!rechargeBusy) scope.launch {
-                                rechargeBusy = true
-                                try {
-                                    val url = api.rechargeUrl(session.token, amount)
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                    refreshKey++
-                                } catch (error: CancellationException) { throw error
-                                } catch (_: Exception) { notify("暂时无法发起支付，请刷新充值记录后重试")
-                                } finally { rechargeBusy = false }
-                            }
-                        },
-                        onBills = { billsCategory = it; accountPage = QumiAccountPage.BILLS },
+                    )
+                    QumiAccountPage.WALLET -> QumiCreatorWalletGatewayScreen(
+                        session = session, daily = dailyEarnings, monthly = monthlyEarnings,
+                        onBack = { accountPage = QumiAccountPage.MINE }, onApply = { accountPage = QumiAccountPage.IDENTITY },
+                        onRefresh = { refreshKey++ },
+                        onBills = { billsCategory = it; billsReturnPage = QumiAccountPage.WALLET; accountPage = QumiAccountPage.BILLS },
                         onWithdraw = { showBusiness = "withdrawals" },
-                        onGiftHistory = { showGiftHistory = true; loadGiftHistory(false) },
                     )
                     QumiAccountPage.BILLS -> QumiBillsScreen(
                         session = session, api = api, initialCategory = billsCategory,
                         rechargeOrders = rechargeOrders, rechargeOrdersError = rechargeOrdersError,
                         giftHistory = giftHistory, giftHistoryLoading = giftHistoryLoading, giftHistoryError = giftHistoryError,
-                        roseBills = roseBills, roseBillsLoading = roseBillsLoading, roseBillsError = roseBillsError,
-                        onBack = { accountPage = QumiAccountPage.WALLET }, onRefresh = { refreshKey++ },
+                        onBack = { accountPage = billsReturnPage }, onRefresh = { refreshKey++ },
                         onLoadGiftHistory = { loadGiftHistory(false) },
-                        onLoadRoseBills = loadRoseBills,
                     )
-                    QumiAccountPage.GUILD -> QumiGuildScreen(session, onBack = { accountPage = QumiAccountPage.MINE })
+                    QumiAccountPage.GUILD -> QumiGuildScreen(onBack = { accountPage = QumiAccountPage.MINE })
                     QumiAccountPage.NOBLE -> QumiNobleScreen(session, onBack = { accountPage = QumiAccountPage.MINE })
                     QumiAccountPage.FRIENDS -> QumiCloseFriendsScreen(
                         session,
@@ -1937,32 +2246,27 @@ private fun AuthenticatedApp(
                             cameraBeauty = settings
                             CameraBeautyPreferences.save(context, session.id, settings)
                             srsIngest?.updateBeauty(settings)
+                            roomGateway?.updateBeauty(settings)
                         },
                         onBack = { accountPage = QumiAccountPage.MINE },
                     )
                     QumiAccountPage.BLACKLIST -> QumiBlacklistScreen(token = session.token, onBack = { accountPage = QumiAccountPage.SETTINGS })
-                    QumiAccountPage.QUALIFICATION -> QumiQualificationScreen(session = session, onBack = { accountPage = QumiAccountPage.SETTINGS })
+                    QumiAccountPage.QUALIFICATION -> QumiQualificationScreen(onBack = { accountPage = QumiAccountPage.SETTINGS })
                     QumiAccountPage.HELP -> QumiHelpScreen(
                         onBack = { accountPage = QumiAccountPage.MINE },
                         onSupport = { if (supportContact != null) openSupportChat() else notify("客服暂不可用，请稍后重试") },
                     )
                     QumiAccountPage.ABOUT -> QumiAboutScreen(onBack = { accountPage = QumiAccountPage.SETTINGS })
                     QumiAccountPage.SETTINGS -> QumiSettingsScreen(
-                        session = session,
+                        token = session.token,
                         onBack = { accountPage = QumiAccountPage.MINE },
-                        onYouth = { accountPage = QumiAccountPage.YOUTH },
-                        onAbout = { accountPage = QumiAccountPage.ABOUT },
                         onBlacklist = { accountPage = QumiAccountPage.BLACKLIST },
-                        onQualification = { accountPage = QumiAccountPage.QUALIFICATION },
                         onChangePassword = { showPasswordChange = true },
                         onLogout = onLogout,
                     )
                     QumiAccountPage.NOTIFICATIONS -> QumiNotificationSettingsScreen(
                         token = session.token,
                         onBack = { accountPage = QumiAccountPage.MINE },
-                        onOpenVisitors = { accountPage = QumiAccountPage.VISITORS },
-                        onOpenAnnouncements = { accountPage = QumiAccountPage.EVENTS },
-                        onOpenMessage = ::openNotificationMessage,
                     )
                     QumiAccountPage.REFERRAL -> QumiReferralPage(
                         token = session.token,
@@ -1970,8 +2274,17 @@ private fun AuthenticatedApp(
                         onBack = { accountPage = QumiAccountPage.MINE },
                         onRedeem = { showReferral = true },
                     )
+                    QumiAccountPage.POSTS -> QumiMyPostsScreen(
+                        token = session.token,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                    )
+                    QumiAccountPage.LIKES, QumiAccountPage.FAVORITES -> QumiMySavedScreen(
+                        token = session.token,
+                        likes = accountPage == QumiAccountPage.LIKES,
+                        onBack = { accountPage = QumiAccountPage.MINE },
+                        onOpenUser = { id, name -> openPublicProfile(id, name) },
+                    )
                     QumiAccountPage.COSTUME -> QumiCostumeShopScreen(
-                        session = session,
                         onBack = { accountPage = QumiAccountPage.MINE },
                     )
                     QumiAccountPage.YOUTH -> QumiYouthModeScreen(
@@ -1979,63 +2292,34 @@ private fun AuthenticatedApp(
                         onBack = { accountPage = QumiAccountPage.SETTINGS },
                     )
                     QumiAccountPage.LEVEL -> QumiLevelScreen(
+                        token = session.token,
                         level = level,
                         onBack = { accountPage = QumiAccountPage.MINE },
                         onRefresh = { refreshKey++ },
                     )
                     QumiAccountPage.TASKS -> QumiTaskCenterScreen(
-                        session = session,
+                        token = session.token,
                         onBack = { accountPage = QumiAccountPage.MINE },
                         onOpenMoments = { accountPage = QumiAccountPage.MINE; selectedTab = 1 },
-                        onOpenDiscovery = { accountPage = QumiAccountPage.MINE; selectedTab = 0 },
-                        onOpenLive = { accountPage = QumiAccountPage.MINE; selectedTab = 2 },
-                        onEditProfile = { profileEditReturnPage = QumiAccountPage.TASKS; accountPage = QumiAccountPage.PROFILE_EDIT },
                     )
                     QumiAccountPage.GUARD -> QumiGuardScreen(
                         token = session.token,
                         onBack = { accountPage = QumiAccountPage.MINE },
                     )
-                    QumiAccountPage.HOST -> QumiHostScreen(
+                    QumiAccountPage.HOST -> QumiCreatorGatewayScreen(
                         session = session,
-                        daily = dailyEarnings,
-                        monthly = monthlyEarnings,
                         onBack = { accountPage = QumiAccountPage.MINE },
+                        onApply = { accountPage = QumiAccountPage.IDENTITY },
                     )
-                    QumiAccountPage.IDENTITY -> QumiIdentityScreen(
-                        verification = identityVerification,
-                        loading = identityLoading,
-                        starting = identityStarting,
-                        error = identityError,
+                    QumiAccountPage.IDENTITY -> QumiCreatorVerificationScreen(
+                        session = session,
                         onBack = { accountPage = QumiAccountPage.MINE },
-                        onRefresh = { identityRefresh++ },
-                        onStartRealName = {
-                            if (!identityStarting) scope.launch {
-                                identityStarting = true
-                                identityError = null
-                                try {
-                                    val requestId = identityVerification?.requestId?.takeIf { identityVerification?.status == "PENDING" }
-                                        ?: UUID.randomUUID().toString()
-                                    val verificationUrl = api.startIdentityVerification(session.token, requestId)
-                                    val uri = Uri.parse(verificationUrl)
-                                    require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) { "认证服务返回了无效链接" }
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, uri))
-                                    identityRefresh++
-                                } catch (error: CancellationException) {
-                                    throw error
-                                } catch (error: PlatformHttpException) {
-                                    identityError = if (error.statusCode == 503) "实名认证服务尚未启用"
-                                        else "暂时无法开始认证，请稍后重试"
-                                } catch (error: Exception) {
-                                    identityError = "暂时无法开始认证，请检查网络后重试"
-                                } finally {
-                                    identityStarting = false
-                                }
-                            }
-                        },
+                        onHostBackend = { accountPage = QumiAccountPage.HOST },
                     )
                     QumiAccountPage.CONTACTS -> QumiContactsScreen(
                         token = session.token,
                         initialTab = contactTab,
+                        onOpenLive = ::openContactLive,
                         onOpenUser = { id, name -> openPublicProfile(id, name) },
                         onMessageUser = { id, name -> openDirectMessage(id, name) },
                         onBack = { accountPage = QumiAccountPage.MINE },
@@ -2050,26 +2334,29 @@ private fun AuthenticatedApp(
                         onOpenUser = { id, name -> openPublicProfile(id, name) },
                     )
                     QumiAccountPage.EVENTS -> QumiAnnouncementListScreen(
-                        token = session.token,
                         onBack = { accountPage = QumiAccountPage.MINE },
-                        onOpenDetail = { selectedAnnouncement = it; accountPage = QumiAccountPage.ANNOUNCEMENT_DETAIL },
+                        onOpenDetail = { index, title -> announcementIndex = index; announcementTitle = title; accountPage = QumiAccountPage.ANNOUNCEMENT_DETAIL },
                     )
                     QumiAccountPage.ANNOUNCEMENT_DETAIL -> QumiAnnouncementDetailScreen(
-                        title = selectedAnnouncement?.title ?: "平台公告",
-                        content = selectedAnnouncement?.content,
+                        title = announcementTitle,
+                        index = announcementIndex,
                         onBack = { accountPage = QumiAccountPage.EVENTS },
                     )
-                    QumiAccountPage.SECRETARY_CHAT, QumiAccountPage.SECRETARY_SETTINGS, QumiAccountPage.SECRETARY_PROFILE -> QumiMineScreen(
-                        session = session, wallet = wallet, level = level,
-                        onRefresh = { refreshKey++ }, onProfile = { accountPage = QumiAccountPage.PROFILE },
-                        onWallet = { accountPage = QumiAccountPage.WALLET }, onBills = { billsCategory = it; accountPage = QumiAccountPage.BILLS },
+                    QumiAccountPage.INTERACTIONS, QumiAccountPage.SECRETARY_CHAT,
+                    QumiAccountPage.SECRETARY_SETTINGS, QumiAccountPage.SECRETARY_PROFILE, QumiAccountPage.DEMO_CHAT -> QumiMineScreen(
+                        session = session, wallet = wallet, level = level, profile = profile,
+                        onProfile = { accountPage = QumiAccountPage.PROFILE },
+                        onWallet = { accountPage = QumiAccountPage.WALLET },
+                        onBalanceDetails = { accountPage = QumiAccountPage.BALANCE },
                         onSettings = { accountPage = QumiAccountPage.SETTINGS }, onBusiness = { accountPage = QumiAccountPage.HOST },
-                        onTasks = { accountPage = QumiAccountPage.TASKS }, onReferral = { accountPage = QumiAccountPage.REFERRAL },
-                        onLevel = { accountPage = QumiAccountPage.LEVEL }, onGuard = { accountPage = QumiAccountPage.GUARD },
-                        onCostume = { accountPage = QumiAccountPage.COSTUME }, onIdentity = { accountPage = QumiAccountPage.IDENTITY },
-                        onContacts = { accountPage = QumiAccountPage.CONTACTS }, onCustomerService = { accountPage = QumiAccountPage.HELP },
-                        onGuild = { accountPage = QumiAccountPage.GUILD }, onNoble = { accountPage = QumiAccountPage.NOBLE },
-                        onFriends = { accountPage = QumiAccountPage.FRIENDS }, onBeauty = { accountPage = QumiAccountPage.BEAUTY },
+                        onReferral = { accountPage = QumiAccountPage.REFERRAL },
+                        onLevel = { accountPage = QumiAccountPage.LEVEL },
+                        onMyPosts = { accountPage = QumiAccountPage.POSTS },
+                        onMyLikes = { accountPage = QumiAccountPage.LIKES },
+                        onMyFavorites = { accountPage = QumiAccountPage.FAVORITES },
+                        onIdentity = { accountPage = QumiAccountPage.IDENTITY },
+                        onContacts = { accountPage = QumiAccountPage.CONTACTS },
+                        onNoble = { accountPage = QumiAccountPage.NOBLE },
                     )
                 }
                 else -> if (canManageOperations) OperationsScreen(
@@ -2079,6 +2366,7 @@ private fun AuthenticatedApp(
                     onModeration = { showModeration = true },
                 )
             }
+        }
         }
     }
 
@@ -2090,6 +2378,14 @@ private fun AuthenticatedApp(
             peerName = call.peerName,
             requestedMode = call.requestedMode,
             callId = call.callId,
+            offeredPrice = call.offeredPrice,
+            gifts = gifts, balance = wallet?.balance, giftBusy = openImBusy,
+            celebrationGift = dmCelebration, celebrationNonce = dmCelebrationNonce,
+            onCelebrationFinished = { dmCelebration = null },
+            onGift = { peerId, peerName, gift ->
+                openDirectMessage(peerId, peerName ?: "用户")
+                sendDmGift(gift.id)
+            },
             onSignal = { creds ->
                 // OpenIM hook: one C2C text on the existing conversation. Swap this send for a custom
                 // call message later; the media path still works if the callee joins with call_id.
@@ -2099,24 +2395,46 @@ private fun AuthenticatedApp(
                     val peer = if (creds.callerId == session.id.toString()) creds.peerId else creds.callerId
                     val text = creds.signalText.takeIf { parseDmCallInvite(it) != null }
                         ?: dmCallInviteText(creds.callId, creds.mode, session.id)
-                    runCatching {
-                        api.peerAccess(session.token, peer)
-                        openImGateway.sendText(peer, text)
-                    }.isSuccess
+                    runCatching { openImGateway.sendText(peer, text) }.isSuccess
                 }
             },
             onDismiss = { activeCall = null },
         )
     }
+    DemoCallOverlay(demoCallSession, session.username, session.avatar)
+    if (showDmCallPrice) DmCallPriceSheet(session, api, onDismiss = { showDmCallPrice = false })
+    incomingCall?.takeIf { activeCall == null }?.let { invite ->
+        DmIncomingCallPrompt(invite.optString("caller_name", "用户"), invite.optString("caller_avatar"), invite.optString("mode"), incomingCallBusy,
+            onAccept = {
+                val caller = invite.optString("caller_id")
+                incomingCall = null
+                beginCall(caller, invite.optString("caller_name"), invite.optString("mode"), invite.optString("call_id"))
+            }, onReject = {
+                if (!incomingCallBusy) scope.launch {
+                    incomingCallBusy = true
+                    try {
+                        val rejectedId = invite.optString("call_id")
+                        api.endDmCall(session.token, rejectedId, "rejected")
+                        incomingCall = null
+                        runCatching { cacheDmCallReceipt(context, session.id.toString(), rejectedId, invite.optString("mode"),
+                            api.dmCallStatus(session.token, rejectedId)) }
+                    } catch (cancelled: CancellationException) { throw cancelled
+                    } catch (_: Exception) { notify("拒接未成功，请重试")
+                    } finally { incomingCallBusy = false }
+                }
+            })
+    }
+    if (showGiftRecharge) GiftRechargeDialog(onDismiss = { showGiftRecharge = false }, onRecharge = {
+        showGiftRecharge = false; showGiftRechargeQr = true
+    })
+    if (showGiftRechargeQr) DisplayQrDialog(DisplayQrKind.SUPPORT, onDismiss = { showGiftRechargeQr = false })
     if (showPasswordChange) PasswordSheet(session.token, onDismiss = { showPasswordChange = false }, onChanged = onLogout)
     blockTarget?.let { target ->
-        QumiConfirmSheet(
-            title = "屏蔽 ${target.username}？",
-            message = "该用户会加入黑名单。你可以之后在设置中解除屏蔽。",
-            confirmLabel = if (blockBusy) "处理中" else "屏蔽",
-            busy = blockBusy,
-            onDismiss = { blockTarget = null },
-            onConfirm = {
+        AlertDialog(
+            onDismissRequest = { if (!blockBusy) blockTarget = null },
+            title = { Text("屏蔽 ${target.username}？") },
+            text = { Text("该用户会加入黑名单。你可以之后在设置中解除屏蔽。") },
+            confirmButton = { TextButton(enabled = !blockBusy, onClick = {
                 blockBusy = true
                 scope.launch {
                     runCatching { api.setBlocked(session.token, target.id, true) }
@@ -2131,17 +2449,12 @@ private fun AuthenticatedApp(
                         .onFailure { notify(it.message ?: "屏蔽失败，请重试") }
                     blockBusy = false
                 }
-            },
+            }) { Text(if (blockBusy) "处理中" else "屏蔽") } },
+            dismissButton = { TextButton(enabled = !blockBusy, onClick = { blockTarget = null }) { Text("取消") } },
         )
     }
-    if (showCoverUpload) CoverUploadSheet(session,api,onDismiss={showCoverUpload=false;refreshKey++})
-    if (showAvatarUpload) AvatarUploadSheet(
-        session = session,
-        api = api,
-        onUploaded = onAvatarChanged,
-        onDismiss = { showAvatarUpload = false; refreshKey++ },
-    )
-    if(activeRoom==null)showBusiness?.let { BusinessSheet(session,api,it,reportTarget=businessReportTarget,onDismiss={showBusiness=null;businessReportTarget=null}) }
+    if (showCoverUpload) ProfileCoverUploadSheet(session,api,onDismiss={showCoverUpload=false;refreshKey++})
+    if(activeRoom==null)showBusiness?.let { BusinessSheet(session,api,it,onDismiss={showBusiness=null}) }
     if (showModeration && canManageOperations) ModerationPanel(session, onDismiss = { showModeration = false; operationsRefresh++ })
 
     playingVideo?.let { file -> DmVideoPlayerDialog(file) { playingVideo = null } }
@@ -2155,8 +2468,10 @@ private fun AuthenticatedApp(
             onDismissRequest = { leaveRoom() },
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         ) {
-            MaterialTheme(colorScheme = darkColorScheme(primary = Coral, onPrimary = Color.White, primaryContainer = Color(0xFF51232A), onPrimaryContainer = Color.White, surface = Color(0xFF202126), background = Color.Black)) {
+            LiveAppTheme(colorScheme = darkColorScheme(primary = LiveStyle.accent, onPrimary = Color.White, primaryContainer = Color(0xFF3D2869), onPrimaryContainer = Color.White, surface = Color(0xFF202126), background = Color.Black)) {
             RoomSheet(
+                session = session,
+                api = api,
                 room = room,
                 gateway = roomGateway,
                 playbackUrl = if (mediaRoute == LiveMediaRoute.VIEWER_HLS) {
@@ -2178,7 +2493,9 @@ private fun AuthenticatedApp(
                 isHost = room.creatorId == session.id,
                 matchId = activeMatchId,
                 scores = matchScores,
+                remainingSeconds = matchRemainingSeconds,
                 onHostProfile = { hostProfile = room },
+                onMessageParticipant = { id, name -> leaveRoom(); openDirectMessage(id, name) },
                 onMessageHost = {
                     scope.launch {
                         try {
@@ -2199,13 +2516,23 @@ private fun AuthenticatedApp(
                 },
                 onCohost = { showCohost = true },
                 onRoomChat = { showRoomChat = true },
-                onReport = { reportUser(room.creatorId) },
+                onReport = { showBusiness = "reports" },
                 matchLoading = matchLoading,
                 opponents = rooms.filter { it.creatorId != session.id },
                 onClose = { leaveRoom() },
+                onOpenVideo = {
+                    switchToVideoAfterRoom = true
+                    selectedTab = 0
+                    discoverySection = 0
+                    openVideoFromLiveSignal++
+                },
+                onSwitchRoom = { direction -> switchRoom(direction) },
                 invitations = matchInvitations.filter { it.opponentLiveSessionId == room.stream.toLongOrNull() },
                 onRespondInvitation = respondInvitation,
                 effectSession = effectSession,
+                celebrationGift = giftCelebration?.takeIf { it.first == room.stream }?.second,
+                celebrationNonce = giftCelebrationNonce,
+                onCelebrationFinished = { giftCelebration = null },
                 onEndMatch = {
                     val matchId = activeMatchId
                     if (matchId != null && !matchLoading) scope.launch {
@@ -2214,6 +2541,7 @@ private fun AuthenticatedApp(
                             api.closeMatch(session.token, matchId)
                             activeMatchId = null
                             matchScores = emptyList()
+                            matchRemainingSeconds = null
                             notify("PK 已结束，继续单人直播")
                         } catch (error: CancellationException) { throw error
                         } catch (_: Exception) { notify("未能结束 PK，请重试")
@@ -2226,28 +2554,72 @@ private fun AuthenticatedApp(
                         notify("暂时无法向这位主播送礼，请退出后重试")
                     } else {
                         if (pendingGift != null) notify("请先重试核实上一笔送礼")
+                        else if (wallet?.balance?.let { it < gift.coinPrice } == true) showGiftRecharge = true
                         else submitGift(PendingGift.create(room.creatorId, id, gift, activeMatchId, room.host))
                     }
                 },
-                onInviteMatch = { opponentRoom ->
+                onInviteMatch = { opponentRoom, durationMinutes ->
                     scope.launch {
                         val own = room.stream.toLongOrNull()
                         val opponent = opponentRoom.stream.toLongOrNull()
                         if (own == null || opponent == null || opponent <= 0) { notify("该主播暂时无法接受邀请，请刷新后重试"); return@launch }
                         matchLoading = true
-                        runCatching { api.inviteMatch(session.token, own, opponent) }
+                        runCatching { api.inviteMatch(session.token, own, opponent, durationMinutes) }
                             .onSuccess { notify("PK 邀请已发送，等待对方接受") }
                             .onFailure { notify("PK 邀请失败 · ${it.message ?: "请求失败"}") }
                         matchLoading = false
                     }
                 },
             )
-            showBusiness?.let { BusinessSheet(session,api,it,businessReportTarget ?: room.creatorId,onDismiss={showBusiness=null;businessReportTarget=null}) }
+            showBusiness?.let { BusinessSheet(session,api,it,room.creatorId,onDismiss={showBusiness=null}) }
             if(showCohost)room.stream.toLongOrNull()?.let { liveId -> CohostSheet(session,liveId,room.creatorId==session.id,api,onDismiss={showCohost=false},onChanged={}) }
             if(showRoomChat)RoomChatSheet(session,api,room.stream,onDismiss={showRoomChat=false})
             }
         }
     }
+    previewRoom?.let { preview ->
+        Dialog(onDismissRequest = { previewRoom = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            val previewRooms = remember(rooms, preview.stream) {
+                if (rooms.any { it.stream == preview.stream }) rooms else listOf(preview) + rooms
+            }
+            val previewPager = rememberPagerState(
+                initialPage = previewRooms.indexOfFirst { it.stream == preview.stream }.coerceAtLeast(0),
+                pageCount = { previewRooms.size },
+            )
+            VerticalPager(previewPager, Modifier.fillMaxSize(), key = { previewRooms[it].stream }) { index ->
+                val room = previewRooms[index]
+                LiveRoomPreview(room, onBack = { previewRoom = null }, onVideo = {
+                    selectedTab = 0; discoverySection = 0; openVideoFromLiveSignal++
+                }, onEnter = { activeRoom = room; previewRoom = null })
+            }
+        }
+    }
+    sampleRoomIndex?.let { index ->
+        QumiSampleLiveViewer(index, session.id, session.token, initialPreview = sampleLivePreview,
+            senderName = session.username, senderAvatar = session.avatar,
+            onBack = { sampleRoomIndex = null },
+            onMessage = { id, name -> sampleRoomIndex = null; openDirectMessage(id, name) },
+            onOpenVideo = {
+                selectedTab = 0
+                discoverySection = 0
+                openVideoFromLiveSignal++
+            },
+        )
+    }
+    finishedLiveRoom?.let { finished -> Dialog(onDismissRequest = { finishedLiveRoom = null },
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        QumiLiveEndedScreen(
+            username = finished.room.host,
+            coverPath = finished.room.coverPath,
+            roomType = finished.room.roomType,
+            startedAtMillis = finished.startedAtMillis,
+            session = finished.session,
+            durationSeconds = finished.localDurationSeconds,
+            loading = finished.loading,
+            onClose = { finishedLiveRoom = null },
+            onMore = { finishedLiveRoom = null; selectedTab = 4; accountPage = QumiAccountPage.HOST },
+        )
+    } }
     if (showReferral) ReferralSheet(
         token = session.token,
         api = api,
@@ -2297,42 +2669,84 @@ private fun TopBar(title: String, onRefresh: () -> Unit) {
 @Composable
 private fun QumiDiscoveryHeader(
     section: Int,
-    filter: Int,
     onSection: (Int) -> Unit,
-    onFilter: (Int) -> Unit,
-    onStart: () -> Unit,
-    onSearch: () -> Unit,
+    showPublishVideo: Boolean,
+    onPublishVideo: () -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xFFE4E3FF), Color(0xFFF5F7FC))))) {
+    Column(Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 22.dp),
+            Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            listOf("找蜜友", "交蜜友", "专属").forEachIndexed { index, title ->
+            listOf("视频", "直播").forEachIndexed { index, title ->
                 Column(
-                    Modifier.clickable { onSection(index) }.padding(end = 26.dp),
+                    Modifier.clickable { onSection(index) }.padding(end = 28.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text(title, fontSize = if (section == index) 21.sp else 16.sp, fontWeight = if (section == index) FontWeight.Bold else FontWeight.Normal, color = Ink)
-                    if (section == index) Spacer(Modifier.width(58.dp).height(4.dp).clip(CircleShape).background(Color(0xFF9785F4)))
+                    Text(title, fontSize = if (section == index) 21.sp else 17.sp,
+                        fontWeight = if (section == index) FontWeight.Bold else FontWeight.Medium,
+                        color = if (section == index) Ink else Fog)
+                    Spacer(Modifier.height(7.dp))
+                    Spacer(Modifier.width(26.dp).height(3.dp).clip(CircleShape)
+                        .background(if (section == index) Color(0xFF7044D8) else Color.Transparent))
                 }
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = onSearch) { Icon(Icons.Rounded.Search, contentDescription = "搜索用户") }
-            Button(onClick = onStart, shape = CircleShape, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
-                Icon(Icons.Rounded.LiveTv, contentDescription = null, modifier = Modifier.size(19.dp))
-                Spacer(Modifier.width(5.dp)); Text("开播")
+            if (section == 0 && showPublishVideo) Button(
+                onClick = onPublishVideo,
+                modifier = Modifier.height(32.dp),
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = PaddingValues(horizontal = 11.dp),
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFF7044D8)),
+            ) {
+                Icon(Icons.Rounded.Videocam, contentDescription = null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("发布视频", fontSize = 12.sp)
             }
         }
-        Row(Modifier.padding(start = 25.dp, top = 6.dp, bottom = 17.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            listOf("热门", "同城").forEachIndexed { index, title ->
-                Surface(
-                    onClick = { onFilter(index) },
-                    shape = CircleShape,
-                    color = if (filter == index) Color(0xFFF0EDFF) else Color.White.copy(alpha = .8f),
-                ) { Text(title, Modifier.padding(horizontal = 27.dp, vertical = 12.dp), color = if (filter == index) QumiPurple else Fog, fontSize = 14.sp) }
-            }
+    }
+}
+
+@Composable
+private fun DiscoveryLiveScreen(
+    rooms: List<LiveRoom>,
+    loading: Boolean,
+    error: String?,
+    onJoin: (LiveRoom) -> Unit,
+    onHost: (LiveRoom) -> Unit,
+    onSample: (Int) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (loading) item(span = { GridItemSpan(maxLineSpan) }) {
+            LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color(0xFF7044D8))
         }
+        if (error != null) item(span = { GridItemSpan(maxLineSpan) }) {
+            TextButton(onClick = onRefresh) { Text("直播列表暂时无法更新，点击重试") }
+        }
+        if (!loading && rooms.isEmpty()) items(LivePlaceholderCovers.size) { index -> SampleRoomTile(index) { onSample(index) } }
+        items(rooms, key = { it.stream }) { room ->
+            RoomTile(room, onClick = { onJoin(room) }, onHost = { onHost(room) })
+        }
+    }
+}
+
+@Composable
+private fun LiveStartPill(onStart: () -> Unit, starting: Boolean) {
+    Row(Modifier.height(30.dp).clip(CircleShape)
+        .background(Brush.horizontalGradient(listOf(Color(0xFF9CEEFF), Color(0xFF9DF0C9))))
+        .clickable(enabled = !starting, onClick = onStart)
+        .padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (starting) CircularProgressIndicator(Modifier.size(17.dp), color = Color(0xFF157A86), strokeWidth = 2.dp)
+        else Icon(Icons.Rounded.Videocam, contentDescription = null, tint = Color(0xFF0DABD1), modifier = Modifier.size(19.dp))
+        Text(if (starting) "检查中" else "开播", color = Color(0xFF1A2A31), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -2345,53 +2759,52 @@ private fun LiveScreen(
     onStart: () -> Unit,
     onJoin: (LiveRoom) -> Unit,
     onHost: (LiveRoom) -> Unit,
-    onReferral: () -> Unit,
+    onSample: (Int) -> Unit,
+    showStartButton: Boolean,
     onRefresh: () -> Unit,
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 156.dp),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        columns = GridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(
+            0f to Color(0xFFDEDAFF),
+            0.22f to Color(0xFFEBE9FF),
+            0.42f to NightInk,
+            1f to NightInk,
+        )),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 28.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("发现直播", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text("点进直播间，和主播聊聊", style = MaterialTheme.typography.bodyMedium, color = Fog)
-                    TextButton(onClick = onReferral, contentPadding = PaddingValues(0.dp)) { Text("拉新送币") }
-                }
-                Button(onClick = onStart, enabled = !starting, shape = RoundedCornerShape(12.dp)) {
-                    if (starting) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                        Spacer(Modifier.width(8.dp))
-                    } else {
-                        Icon(Icons.Rounded.LiveTv, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text(if (starting) "开播中" else "开播")
-                }
+            Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("正在直播", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                IconButton(onClick = onRefresh, enabled = !loading) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新直播") }
+                if (showStartButton) LiveStartPill(onStart, starting)
             }
         }
         if (loading) item(span = { GridItemSpan(maxLineSpan) }) {
             LinearProgressIndicator(Modifier.fillMaxWidth(), color = Coral, trackColor = NightSurfaceRaised)
         }
         if (error != null) item(span = { GridItemSpan(maxLineSpan) }) {
-            Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (rooms.isEmpty()) "直播暂时没加载出来" else "直播列表未更新", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text(error, style = MaterialTheme.typography.bodyMedium, color = Fog)
-                OutlinedButton(onClick = onRefresh, enabled = !loading) { Text(if (loading) "正在重试…" else "重新加载") }
+            if (rooms.isEmpty()) {
+                Text("直播服务暂时无法连接，可点右上角刷新", Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall, color = Fog)
+            } else {
+                Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("直播列表未更新", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(error, style = MaterialTheme.typography.bodyMedium, color = Fog)
+                }
             }
         }
-        if (!loading && error == null && rooms.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-            Column(Modifier.fillMaxWidth().padding(vertical = 64.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Icon(Icons.Rounded.LiveTv, contentDescription = null, tint = Fog, modifier = Modifier.size(40.dp))
-                Text("现在还没有直播", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("稍后再来看看，也可以自己开播", style = MaterialTheme.typography.bodyMedium, color = Fog)
-                OutlinedButton(onClick = onRefresh) { Text("刷新看看") }
+        if (!loading && rooms.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("发现主播", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("暂无可进入的直播间", style = MaterialTheme.typography.bodySmall, color = Fog)
+                }
             }
+            items(LivePlaceholderCovers.size) { index -> SampleRoomTile(index) { onSample(index) } }
         }
         items(rooms, key = { it.stream }) { room -> RoomTile(room, onClick = { onJoin(room) }, onHost = { onHost(room) }) }
     }
@@ -2399,31 +2812,50 @@ private fun LiveScreen(
 
 @Composable
 private fun RoomTile(room: LiveRoom, onClick: () -> Unit, onHost: () -> Unit) {
-    Column {
-        Surface(onClick = onClick, shape = RoundedCornerShape(12.dp), color = NightSurface) {
-            Column {
-                Box(Modifier.fillMaxWidth().aspectRatio(0.85f).background(Color(0xFF252A32))) {
-                    room.coverPath?.let { LiveCoverImage(it) }
-                    Column(Modifier.align(Alignment.Center).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if(room.coverPath==null)Icon(Icons.Rounded.LiveTv, contentDescription = null, tint = Color(0xFFCCD2DC), modifier = Modifier.size(32.dp))
-                        if(room.coverPath==null)Text("暂无封面", style = MaterialTheme.typography.bodySmall, color = Color(0xFFCCD2DC))
-                    }
-                    Row(Modifier.align(Alignment.TopStart).padding(10.dp).clip(RoundedCornerShape(6.dp))
-                        .background(Color.Black.copy(alpha = 0.7f)).padding(horizontal = 8.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF77E2B9)))
-                        Text("直播", style = MaterialTheme.typography.labelSmall, color = Color.White)
-                    }
-                }
-                Text(room.title, Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+    Box(Modifier.fillMaxWidth().aspectRatio(0.78f).clip(RoundedCornerShape(6.dp))
+        .background(Color(0xFF424B59)).clickable(onClick = onClick)) {
+        Image(painterResource(LivePlaceholderCovers[Math.floorMod(room.stream.hashCode(), LivePlaceholderCovers.size)]),
+            contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        room.coverPath?.let { LiveCoverImage(it) }
+        Box(Modifier.fillMaxWidth().fillMaxHeight(0.42f).align(Alignment.BottomCenter)
+            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f)))))
+        Row(Modifier.align(Alignment.TopStart).padding(10.dp).clip(RoundedCornerShape(5.dp))
+            .background(Coral).padding(horizontal = 7.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Box(Modifier.size(5.dp).clip(CircleShape).background(Color.White))
+            Text("直播中", style = MaterialTheme.typography.labelSmall, color = Color.White)
+        }
+        IconButton(onClick = onHost, modifier = Modifier.align(Alignment.TopEnd).padding(5.dp).size(42.dp)
+            .clip(CircleShape).background(Color.White)) {
+            Box(Modifier.fillMaxSize().padding(2.dp).clip(CircleShape), contentAlignment = Alignment.Center) {
+                Image(painterResource(LivePlaceholderCovers[Math.floorMod(room.stream.hashCode(), LivePlaceholderCovers.size)]),
+                    contentDescription = "查看${room.host}的介绍", contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize())
+                room.coverPath?.let { LiveCoverImage(it) }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(room.host, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = Fog, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            TextButton(onClick = onHost, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("介绍") }
+        Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(room.host, color = Color.White, fontSize = 12.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(room.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
         }
+}
+
+@Composable
+private fun SampleRoomTile(index: Int, onClick: () -> Unit) {
+    Box(Modifier.fillMaxWidth().aspectRatio(0.78f).clip(RoundedCornerShape(6.dp)).clickable(onClick = onClick)) {
+        Image(painterResource(DemoLivePosters[index]), contentDescription = null,
+            contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        Box(Modifier.fillMaxWidth().fillMaxHeight(0.42f).align(Alignment.BottomCenter)
+            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f)))))
+        Text("示例", Modifier.align(Alignment.TopStart).padding(10.dp).clip(RoundedCornerShape(5.dp))
+            .background(Color.Black.copy(alpha = 0.6f)).padding(horizontal = 8.dp, vertical = 4.dp),
+            color = Color.White, style = MaterialTheme.typography.labelSmall)
+        Text(SampleRoomTitles[index], Modifier.align(Alignment.BottomStart).padding(12.dp),
+            color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -2503,6 +2935,8 @@ private fun WatchBlockedOverlay(gate: WatchGateUi, wallet: Wallet?, onUnlock: ()
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RoomSheet(
+    session: UserSession,
+    api: LivePlatformApi,
     room: LiveRoom,
     gateway: LiveKitRoomGateway?,
     playbackUrl: String?,
@@ -2520,9 +2954,11 @@ private fun RoomSheet(
     pendingGift: PendingGift?,
     onRetryGift: () -> Unit,
     onHostProfile: () -> Unit,
+    onMessageParticipant: (String, String) -> Unit,
     isHost: Boolean,
     matchId: Long?,
     scores: List<MatchScore>,
+    remainingSeconds: Int?,
     onMessageHost: () -> Unit,
     onCohost: () -> Unit,
     onRoomChat: () -> Unit,
@@ -2530,46 +2966,97 @@ private fun RoomSheet(
     matchLoading: Boolean,
     opponents: List<LiveRoom>,
     onClose: () -> Unit,
+    onOpenVideo: () -> Unit,
+    onSwitchRoom: (Int) -> Unit,
     invitations: List<MatchInvitation>,
     onRespondInvitation: (MatchInvitation, Boolean) -> Unit,
     onEndMatch: () -> Unit,
     effectSession: GiftEffectSession,
+    celebrationGift: GiftSendPresentation?,
+    celebrationNonce: Int,
+    onCelebrationFinished: () -> Unit,
     onGift: (Gift) -> Unit,
-    onInviteMatch: (LiveRoom) -> Unit,
+    onInviteMatch: (LiveRoom, Int) -> Unit,
 ) {
+    val roomScope = rememberCoroutineScope()
+    var participantProfile by remember(room.stream) { mutableStateOf<Long?>(null) }
+    val participantNames = remember(room.stream) { mutableStateMapOf<Long, String>() }
+    var hostUser by remember(room.stream) { mutableStateOf<PublicUser?>(null) }
+    var followBusy by remember(room.stream) { mutableStateOf(false) }
+    var followNotice by remember(room.stream) { mutableStateOf<String?>(null) }
+    var showLiveRank by remember(room.stream) { mutableStateOf(false) }
+    var showLiveViewers by remember(room.stream) { mutableStateOf(false) }
+    var showAnnouncement by remember(room.stream) { mutableStateOf(false) }
+    val roomLeaders by rememberRoomLeaders(session.token, room.stream)
+    LaunchedEffect(room.stream, participantProfile) {
+        runCatching { api.searchUsers(session.token, room.creatorId.toString()).firstOrNull { it.id == room.creatorId } }
+            .onSuccess { hostUser = it }
+    }
     var panel by remember(room.stream) { mutableStateOf<String?>(null) }
     var selectedGiftId by remember(room.stream) { mutableStateOf<String?>(null) }
     var confirmClose by remember { mutableStateOf(false) }
     var confirmEndMatch by remember { mutableStateOf(false) }
+    var selectedMatchMinutes by remember(room.stream) { mutableIntStateOf(5) }
     val selectedGift = gifts.firstOrNull { it.id == selectedGiftId }
     val effectFailure by effectSession.failure.collectAsState()
+    val activity by rememberLiveRoomActivity(session, api, room.stream, isHost)
     val requestClose = { if (isHost) confirmClose = true else onClose() }
     val gate = watchGate
     val watchBlocked = gate != null && !gate.phase.allowsPlayback()
     androidx.activity.compose.BackHandler { requestClose() }
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().background(roomBackgroundBrush(room.backgroundId))
+        .then(if (isHost || panel != null) Modifier else Modifier.pointerInput(room.stream) {
+            var dragDistance = 0f
+            val threshold = 80.dp.toPx()
+            detectVerticalDragGestures(
+                onDragStart = { dragDistance = 0f },
+                onDragCancel = { dragDistance = 0f },
+                onDragEnd = {
+                    if (kotlin.math.abs(dragDistance) >= threshold) onSwitchRoom(if (dragDistance < 0) 1 else -1)
+                    dragDistance = 0f
+                },
+                onVerticalDrag = { change, amount -> change.consume(); dragDistance += amount },
+            )
+        })) {
         if (playbackUrl != null && !watchBlocked) {
             SrsPlaybackView(playbackUrl, playbackToken, onPlaybackStatus, Modifier.fillMaxSize())
         } else if (ingest != null && isHost && matchId == null) {
             SrsHostStage(ingest, gateway, room)
-        } else if (gateway != null && !watchBlocked) {
+        } else if (gateway != null && !watchBlocked && room.roomType != "VOICE") {
             val videoIds by gateway.videoIdentities.collectAsState()
             val opponentId = scores.firstOrNull { it.creatorId != room.creatorId }?.creatorId
-            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                val visibleIds = if (matchId != null) listOf(room.creatorId, opponentId) else (listOf(room.creatorId) + videoIds.mapNotNull { it.toLongOrNull() }).distinct().take(4)
-                visibleIds.forEach { participantId ->
-                    androidx.compose.runtime.key(gateway, participantId, matchId) {
-                        if (participantId == null) Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
-                            Text("正在等待对方画面", color = Color.White)
-                        } else AndroidView(
-                            factory = { context -> gateway.createVideoRenderer(context, participantId.toString()) },
-                            update = { gateway.attachVideoRenderer(it) },
-                            onRelease = { gateway.releaseVideoRenderer(it); it.release() },
-                            modifier = Modifier.weight(1f).then(if (matchId != null) Modifier.fillMaxHeight(0.6f) else Modifier.fillMaxHeight()),
-                        )
-                    }
+            val visibleIds = if (matchId != null) listOfNotNull(room.creatorId, opponentId)
+                else (listOf(room.creatorId) + videoIds.mapNotNull { it.toLongOrNull() }).distinct()
+            LiveMosaic(visibleIds, identity = { it }, onProfile = { participantProfile = it },
+                modifier = if (visibleIds.size > 1) Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 155.dp).fillMaxWidth().fillMaxHeight(.48f)
+                    else Modifier.fillMaxSize()) { participantId ->
+                androidx.compose.runtime.key(gateway, participantId, matchId) {
+                    AndroidView(factory = { context -> gateway.createVideoRenderer(context, participantId.toString()) },
+                        update = { gateway.attachVideoRenderer(it) },
+                        onRelease = { gateway.releaseVideoRenderer(it); it.release() }, modifier = Modifier.fillMaxSize())
                 }
+                Text(participantNames[participantId] ?: if (participantId == room.creatorId) room.host else "连麦主播",
+                    Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = .3f)).padding(7.dp, 4.dp), color = Color.White, fontSize = 12.sp)
             }
+            LaunchedEffect(videoIds) {
+                visibleIds.forEach { id -> if (!participantNames.containsKey(id)) {
+                    runCatching { api.searchUsers(session.token, id.toString()).firstOrNull { it.id == id } }
+                        .getOrNull()?.let { participantNames[id] = it.username }
+                } }
+            }
+        }
+        if (room.roomType == "VOICE" && !watchBlocked) Column(
+            Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(Modifier.size(98.dp).clip(CircleShape).background(Color.White.copy(alpha = .16f)),
+                contentAlignment = Alignment.Center) {
+                Image(painterResource(LivePlaceholderCovers[Math.floorMod(room.stream.hashCode(), LivePlaceholderCovers.size)]),
+                    contentDescription = null, contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().padding(4.dp).clip(CircleShape))
+                room.coverPath?.let { LiveCoverImage(it) }
+            }
+            Text("语音房 · ${room.host}", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
         }
         GiftEffectOverlay(effectSession, Modifier.fillMaxSize())
         if (gate != null && watchBlocked) WatchBlockedOverlay(gate, wallet, onUnlock, onRetryWatch)
@@ -2578,24 +3065,25 @@ private fun RoomSheet(
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)))
                 .windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(
-                    onClick = onHostProfile,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                ) {
-                    Column(Modifier.fillMaxWidth()) {
-                        Text(room.host, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(room.title, color = Color(0xFFDDDEE2), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("主播介绍", color = Color(0xFFDDDEE2), style = MaterialTheme.typography.labelSmall)
+            LiveRoomHeader(
+                host = LiveHeaderPerson(room.host, hostUser?.avatar), subtitle = room.title,
+                followed = hostUser?.isFollowing == true, followBusy = followBusy || hostUser == null,
+                showFollow = !isHost, viewers = activity.viewers?.toString() ?: "…", leaders = roomLeaders,
+                onProfile = { participantProfile = room.creatorId }, onFollow = {
+                    val user = hostUser
+                    if (user != null && !followBusy) roomScope.launch {
+                        followBusy = true
+                        try { api.setFollowing(session.token, room.creatorId, !user.isFollowing)
+                            hostUser = user.copy(isFollowing = !user.isFollowing)
+                            followNotice = if (user.isFollowing) "已取消关注" else "已关注"
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { followNotice = "关注失败，请重试" }
+                        finally { followBusy = false }
                     }
-                }
-                if (!isHost) TextButton(onClick = onMessageHost) { Text("私信") }
-                if (!isHost) TextButton(onClick = onReport) { Text("举报") }
-                IconButton(onClick = requestClose) {
-                    Icon(Icons.Rounded.Close, contentDescription = if (isHost) "结束直播" else "离开直播间", tint = Color.White)
-                }
-            }
+                }, onRank = { showLiveRank = true }, onViewers = { showLiveViewers = true }, onClose = requestClose,
+                onAnnouncement = { showAnnouncement = true })
+            if (isHost) Text("本场礼物 " + (activity.giftCoins?.toString() ?: "…") + " 金币", Modifier.padding(top = 6.dp),
+                color = Color(0xFFFFDEA2), fontSize = 12.sp)
             if (watchGate?.phase == WatchPhase.PREVIEW) {
                 Text(
                     "免费试看还剩 ${watchGate.shownRemaining} 秒",
@@ -2606,9 +3094,28 @@ private fun RoomSheet(
                 watchGate.error?.let { Text(it, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 8.dp, top = 4.dp)) }
             }
             if (matchId != null) {
-                Text("PK 进行中", color = Color.White, modifier = Modifier.padding(8.dp))
-                scores.forEach { score ->
-                    Text("${if (score.creatorId == room.creatorId) room.host else "对方主播"}  ${score.points} 分", color = Color.White, modifier = Modifier.padding(horizontal = 8.dp))
+                val ownPoints = scores.firstOrNull { it.creatorId == room.creatorId }?.points ?: 0L
+                val rivalPoints = scores.firstOrNull { it.creatorId != room.creatorId }?.points ?: 0L
+                val totalPoints = ownPoints + rivalPoints
+                val targetShare = if (totalPoints == 0L) .5f else
+                    (ownPoints.toFloat() / totalPoints.toFloat()).coerceIn(.08f, .92f)
+                val redShare by animateFloatAsState(targetShare, tween(650), label = "pkScoreShare")
+                Column(Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("PK  ${remainingSeconds?.let { "%02d:%02d".format(it / 60, it % 60) } ?: "--:--"}",
+                        Modifier.align(Alignment.CenterHorizontally), color = Color.White,
+                        fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Box(Modifier.fillMaxWidth().height(24.dp).clip(CircleShape)
+                        .background(Color(0xFF258BEF))) {
+                        Box(Modifier.fillMaxWidth(redShare).fillMaxHeight()
+                            .background(Brush.horizontalGradient(listOf(Color(0xFFE92C6C), Color(0xFFFF4C8B)))))
+                        Row(Modifier.fillMaxSize().padding(horizontal = 9.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Text("$ownPoints", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("$rivalPoints", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
@@ -2620,68 +3127,74 @@ private fun RoomSheet(
         ) {
             feedback?.let { Text(it, color = Color.White, style = MaterialTheme.typography.bodyMedium) }
             effectFailure?.let { Text(it, color = Color(0xFFFFB4AB), style = MaterialTheme.typography.bodyMedium) }
+            LiveRoomComments(activity, room.welcomeText, room.announcementText, room.stream)
             Text(status, color = Color(0xFFDDDEE2), style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick=onCohost,enabled=matchId==null){Text(if(isHost) "连麦管理" else "申请连麦")}
-            TextButton(onClick=onRoomChat){Text("直播公屏")}
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(if (isHost) "把此刻分享给观众" else "正在观看 ${room.host}", color = Color.White, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Button(onClick = { panel = if (isHost) "pk" else "gifts" }, enabled = !giftLoading && !matchLoading) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f).clip(CircleShape).background(Color.White.copy(alpha = .15f))
+                    .clickable(onClick = onRoomChat).padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    Text("说点什么…", color = Color.White.copy(alpha = .85f), fontSize = 13.sp)
+                }
+                TextButton(onClick = onCohost, enabled = matchId == null, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                    Text(if (isHost) "连麦管理" else "连麦", color = Color(0xFFE5D4FF), fontSize = 13.sp)
+                }
+                Button(onClick = { panel = if (isHost) "pk" else "gifts" }, enabled = !giftLoading && !matchLoading,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7951ED)), contentPadding = PaddingValues(horizontal = 14.dp)) {
                     Text(if (isHost && matchId != null) "PK 管理" else if (isHost && invitations.isNotEmpty()) "PK 邀请（${invitations.size}）" else if (isHost) "邀请 PK" else "送礼物")
                 }
             }
         }
+        celebrationGift?.let { event ->
+            QumiGiftCelebration(event.gift, celebrationNonce, demo = false,
+                senderName = event.senderName, senderAvatar = event.senderAvatar, quantity = event.quantity,
+                onFinished = onCelebrationFinished)
+        }
     }
-    if (confirmEndMatch) QumiConfirmSheet(
-        title = "结束本场 PK？",
-        message = "双方将返回各自直播间，已收到的礼物和比分会保留。",
-        confirmLabel = "结束 PK",
-        busy = matchLoading,
-        onDismiss = { confirmEndMatch = false },
-        onConfirm = { confirmEndMatch = false; onEndMatch() },
+    participantProfile?.let { id -> DirectChatProfile(session.token, id, session.id,
+        participantNames[id] ?: if (id == room.creatorId) room.host else "主播", onBack = { participantProfile = null },
+        onMessage = onMessageParticipant) }
+    if (showAnnouncement) LiveRoomAnnouncementDialog(room.host,
+        room.announcementText.ifBlank { room.welcomeText }, onDismiss = { showAnnouncement = false })
+    if (showLiveRank) LiveRoomRankDialog(session.token, room.stream, onDismiss = { showLiveRank = false })
+    if (showLiveViewers) LiveRoomViewersDialog(session.token, room.stream, session.id, onDismiss = { showLiveViewers = false })
+    QumiActionNotice(followNotice) { followNotice = null }
+    if (confirmEndMatch) AlertDialog(
+        onDismissRequest = { confirmEndMatch = false },
+        title = { Text("结束本场 PK？") },
+        text = { Text("双方将返回各自直播间，已收到的礼物和比分会保留。") },
+        confirmButton = { TextButton(onClick = { confirmEndMatch = false; onEndMatch() }, enabled = !matchLoading) { Text("结束 PK") } },
+        dismissButton = { TextButton(onClick = { confirmEndMatch = false }) { Text("继续 PK") } },
     )
-    if (confirmClose) QumiConfirmSheet(
-        title = "结束本场直播？",
-        message = "结束后，观众将无法继续观看。",
-        confirmLabel = "结束直播",
-        onDismiss = { confirmClose = false },
-        onConfirm = { confirmClose = false; onClose() },
+    if (confirmClose) AlertDialog(
+        onDismissRequest = { confirmClose = false },
+        title = { Text("结束本场直播？") },
+        text = { Text("结束后，观众将无法继续观看。") },
+        confirmButton = { TextButton(onClick = { confirmClose = false; onClose() }) { Text("结束直播") } },
+        dismissButton = { TextButton(onClick = { confirmClose = false }) { Text("继续直播") } },
     )
-    if (panel != null) ModalBottomSheet(onDismissRequest = { if (!giftLoading) panel = null }) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (panel == "gifts") {
-                pendingGift?.let { PendingGiftNotice(it, giftLoading, onRetryGift) }
-                Text("送给 ${room.host}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                feedback?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                Text(wallet?.balance?.let { "余额 $it 金币" } ?: "余额暂不可用，请稍后重试")
-                LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (gifts.isEmpty()) item { Text("暂时没有可赠送的礼物") }
-                    items(gifts, key = { it.id }) { gift ->
-                        Surface(
-                            onClick = { if (!giftLoading) selectedGiftId = gift.id },
-                            color = if (selectedGiftId == gift.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(12.dp),
-                        ) {
-                            Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(gift.name, fontWeight = FontWeight.SemiBold)
-                                Text("${gift.coinPrice} 金币")
-                            }
-                        }
+    if (panel != null) ModalBottomSheet(onDismissRequest = { if (!giftLoading) panel = null },
+        containerColor = if (panel == "gifts") Color(0xFF171820) else LiveStyle.sheetSurface) {
+        if (panel == "gifts") {
+            pendingGift?.let { PendingGiftNotice(it, giftLoading, onRetryGift) }
+            QumiGiftPicker(gifts, selectedGiftId, wallet?.balance, giftLoading || pendingGift != null,
+                demo = false, onSelect = { selectedGiftId = it },
+                onSend = { selectedGift?.let { panel = null; onGift(it) } },
+                onDismiss = { panel = null })
+        } else Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 20.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("邀请主播 PK", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(if (matchId == null) "选择时长和正在直播的主播" else "当前已有 PK，请先完成本场比赛。")
+                if (matchId == null) Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    listOf(2, 3, 5, 10).forEach { minutes ->
+                        FilterChip(selected = selectedMatchMinutes == minutes,
+                            onClick = { selectedMatchMinutes = minutes },
+                            label = { Text("${minutes}分钟") })
                     }
                 }
-                val enoughBalance = selectedGift != null && wallet != null && wallet.balance >= selectedGift.coinPrice
-                Text(selectedGift?.let { "${it.name} × 1 · 合计 ${it.coinPrice} 金币" } ?: "选择一份礼物", style = MaterialTheme.typography.bodyMedium)
-                if (selectedGift != null && wallet != null && !enoughBalance) Text("余额不足，请到「我的」充值后再送礼。")
-                Button(onClick = { selectedGift?.let(onGift) }, enabled = enoughBalance && !giftLoading && pendingGift == null, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (giftLoading) "正在赠送…" else "确认赠送")
-                }
-            } else {
-                Text("邀请主播 PK", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text(if (matchId == null) "选择一位正在直播的主播" else "当前已有 PK，请先完成本场比赛。")
                 if (matchId != null) Button(onClick = { panel = null; confirmEndMatch = true }, enabled = !matchLoading, modifier = Modifier.fillMaxWidth()) { Text("结束 PK，继续直播") }
                 LazyColumn(Modifier.weight(1f, fill = false)) {
                     items(invitations, key = { "invite-${it.invitationId}" }) { invitation ->
                         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                            Text("${opponents.firstOrNull { it.creatorId == invitation.creatorId }?.host ?: "一位主播"} 邀请你 PK", fontWeight = FontWeight.SemiBold)
+                            Text("${opponents.firstOrNull { it.creatorId == invitation.creatorId }?.host ?: "一位主播"} 邀请你 PK · ${invitation.durationMinutes}分钟", fontWeight = FontWeight.SemiBold)
                             Row {
                                 TextButton(onClick = { onRespondInvitation(invitation, false) }, enabled = !matchLoading) { Text("婉拒") }
                                 TextButton(onClick = { onRespondInvitation(invitation, true); panel = null }, enabled = !matchLoading && matchId == null) { Text("接受 PK") }
@@ -2695,11 +3208,10 @@ private fun RoomSheet(
                                 Text(opponent.host, fontWeight = FontWeight.SemiBold)
                                 Text(opponent.title, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            TextButton(onClick = { onInviteMatch(opponent); panel = null }, enabled = matchId == null && !matchLoading) { Text("邀请") }
+                            TextButton(onClick = { onInviteMatch(opponent, selectedMatchMinutes); panel = null }, enabled = matchId == null && !matchLoading) { Text("邀请") }
                         }
                     }
                 }
-            }
         }
     }
 }
@@ -2724,6 +3236,7 @@ private fun RankingsScreen(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                 FilterChip(period == "daily", { onPeriod("daily") }, label = { Text("日榜") })
+                FilterChip(period == "weekly", { onPeriod("weekly") }, label = { Text("周榜") })
                 FilterChip(period == "monthly", { onPeriod("monthly") }, label = { Text("月榜") })
             }
         }
@@ -2732,12 +3245,16 @@ private fun RankingsScreen(
         if (!loading && error == null && entries.isEmpty()) item { Text("当前周期暂无榜单数据", color = Fog) }
         items(entries.indices.toList()) { index ->
             val entry = entries[index]
+            val periodName = when (period) { "daily" -> "今日"; "weekly" -> "本周"; else -> "本月" }
+            val rankTitle = when (index) { 0 -> "${periodName}榜首"; 1 -> "${periodName}榜眼"; 2 -> "${periodName}探花"; else -> null }
             Row(Modifier.fillMaxWidth().height(66.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("${index + 1}", Modifier.width(32.dp), color = if (index < 3) Amber else Fog, fontWeight = FontWeight.Bold)
                 Avatar("${entry.userId}", index)
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     Text("用户 #${entry.userId}", fontWeight = FontWeight.SemiBold)
-                    Text("${entry.gifts} 件礼物", style = MaterialTheme.typography.bodySmall, color = Fog)
+                    Text(listOfNotNull(rankTitle?.let { "专属头衔：$it" }, "${entry.gifts} 件礼物").joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall, color = if (rankTitle == null) Fog else Amber,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Text("${entry.value} ${if (contributors) "金币" else "钻石"}", color = Mint, style = MaterialTheme.typography.bodyMedium)
             }
@@ -2761,6 +3278,7 @@ private fun MessagesScreen(
     conversations: List<OpenImConversation>,
     recipientId: String,
     recipientName: String?,
+    onlineUserIds: Set<String>,
     message: String,
     busy: Boolean,
     ready: Boolean,
@@ -2769,9 +3287,11 @@ private fun MessagesScreen(
     onRefresh: () -> Unit,
     onConnect: () -> Unit,
     onVideoCall: () -> Unit,
+    onPaidVideoCall: (Int) -> Unit,
     onVoiceCall: () -> Unit,
     onJoinCall: (String) -> Unit,
     onAcceptCall: (DmCallInvite) -> Unit,
+    onCallPriceSettings: () -> Unit,
     onSend: () -> Unit,
     support: ChatRecipient?,
     gifts: List<Gift>,
@@ -2788,15 +3308,42 @@ private fun MessagesScreen(
     onSendGift: (Gift) -> Unit,
     onRetryGift: () -> Unit,
     onSendVideo: (String, Int, ByteArray, Int) -> Unit,
+    onSendImage: (Uri) -> Unit,
+    token: String,
+    onCreatorVerification: () -> Unit,
     onUnlock: (String) -> Unit,
     onPlay: (String) -> Unit,
     onVerifyGift: (ChatBody.Gift) -> Unit,
+    ownAvatar: String? = null,
+    ownName: String,
+    celebrationGift: Gift?, celebrationNonce: Int, onCelebrationFinished: () -> Unit,
 ) {
     var composeOpen by remember { mutableStateOf(false) }
     var enteringAccount by remember { mutableStateOf(false) }
     var giftSheet by remember { mutableStateOf(false) }
     var videoSheet by remember { mutableStateOf(false) }
+    var videoPaid by remember { mutableStateOf(false) }
+    var mediaTray by remember { mutableStateOf<String?>(null) }
+    var creatorNotice by remember { mutableStateOf<String?>(null) }
+    var creatorNeedsVerification by remember { mutableStateOf(false) }
+    var checkingCreator by remember { mutableStateOf(false) }
+    var manualAccountId by remember { mutableStateOf("") }
+    var accountLookupBusy by remember { mutableStateOf(false) }
+    var accountLookupError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let(onSendImage)
+    }
+    creatorNotice?.let { notice -> AlertDialog(
+        onDismissRequest = { creatorNotice = null }, title = { Text("视频发送") }, text = { Text(notice) },
+        confirmButton = { TextButton(onClick = {
+            creatorNotice = null
+            if (creatorNeedsVerification) onCreatorVerification()
+        }) { Text(if (creatorNeedsVerification) "去认证为主播" else "知道了") } },
+        dismissButton = if (creatorNeedsVerification) ({ TextButton(onClick = { creatorNotice = null }) { Text("稍后") } }) else null,
+    ) }
     LaunchedEffect(composeOpen) { onChatVisibility(composeOpen) }
+    LaunchedEffect(recipientId) { giftSheet = false; videoSheet = false; mediaTray = null }
     LaunchedEffect(chatOpenSignal) {
         if (chatOpenSignal > 0 && recipientId.isNotBlank()) {
             enteringAccount = false
@@ -2812,7 +3359,7 @@ private fun MessagesScreen(
                 IconButton(onClick = onExit) { Icon(Icons.Rounded.Close, contentDescription = "返回") }
                 Text("消息", fontSize = 25.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = { onRecipientId(""); enteringAccount = true; composeOpen = true }, enabled = ready && !busy) { Text("新消息") }
+                TextButton(onClick = { onRecipientId(""); manualAccountId = ""; accountLookupError = null; enteringAccount = true; composeOpen = true }, enabled = ready && !busy) { Text("新消息") }
             }
             Text(status, style = MaterialTheme.typography.bodySmall, color = Fog)
             if (!ready) TextButton(onClick = onConnect, enabled = !busy) { Text(if (busy) "正在连接…" else "重新连接") }
@@ -2821,7 +3368,7 @@ private fun MessagesScreen(
         if (recipientId.isBlank() && !composeOpen) {
             item {
                 Row(Modifier.fillMaxWidth().clickable(onClick = onOpenNotifications).padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Notifications, contentDescription = null, tint = Color(0xFF7868EC))
+                    Icon(Icons.Rounded.Notifications, contentDescription = null, tint = Coral)
                     Text("通知偏好设置", Modifier.weight(1f).padding(start = 10.dp), color = Color(0xFF333333), style = MaterialTheme.typography.bodyMedium)
                     Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = "打开通知设置", tint = Fog, modifier = Modifier.size(18.dp))
                 }
@@ -2829,17 +3376,17 @@ private fun MessagesScreen(
             }
             item {
                 Row(Modifier.fillMaxWidth().clickable(onClick = onOpenAnnouncements).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Campaign, contentDescription = null, tint = Color(0xFF7868EC), modifier = Modifier.size(34.dp))
+                    Icon(Icons.Rounded.Campaign, contentDescription = null, tint = Coral, modifier = Modifier.size(34.dp))
                     Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("平台公告", fontWeight = FontWeight.SemiBold)
-                        Text("查看最新平台公告", style = MaterialTheme.typography.bodyMedium, color = Fog)
+                        Text("2 条平台公告", style = MaterialTheme.typography.bodyMedium, color = Fog)
                     }
                 }
                 HorizontalDivider(color = NightLine)
             }
             item {
                 Row(Modifier.fillMaxWidth().clickable(onClick = onOpenVisitors).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Visibility, contentDescription = null, tint = Color(0xFF70BFD1), modifier = Modifier.size(34.dp))
+                    Icon(Icons.Rounded.Visibility, contentDescription = null, tint = Mint, modifier = Modifier.size(34.dp))
                     Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("最近访客", fontWeight = FontWeight.SemiBold)
                         Text("查看最近访问你主页的人", style = MaterialTheme.typography.bodyMedium, color = Fog)
@@ -2881,9 +3428,12 @@ private fun MessagesScreen(
                 }.padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Avatar(conversation.name, conversation.userId.hashCode())
+                ChatOnlineAvatar(conversation.name, conversation.avatar, conversation.userId in onlineUserIds)
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(conversation.name, fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text(conversation.name, modifier = Modifier.weight(1f, fill = false), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (conversation.userId in onlineUserIds) ChatOnlineLabel()
+                    }
                     Text(conversation.latestMessage, style = MaterialTheme.typography.bodyMedium, color = Fog, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = "发消息", tint = Fog, modifier = Modifier.size(18.dp))
@@ -2891,23 +3441,61 @@ private fun MessagesScreen(
             HorizontalDivider(color = NightLine)
         }
     }
-    if (composeOpen) ModalBottomSheet(onDismissRequest = { composeOpen = false }) {
+    if (composeOpen && recipientId.isNotBlank()) DirectConversationScreen(
+        token, ownUserId, recipientId, recipientName ?: recipient?.name ?: "用户", recipient?.avatar, recipientId in onlineUserIds,
+        history, historyLoading, historyError, ready, busy, message, gifts, balance, playable,
+        pendingGift != null, pendingVideoPhase,
+        onBack = { composeOpen = false; onExit() }, onDraft = onMessage, onSend = onSend,
+        onVoice = onVoiceCall, onVideo = onVideoCall, onPaidVideo = onPaidVideoCall, onPrices = onCallPriceSettings,
+        onImage = onSendImage, onSendVideo = onSendVideo, onGift = onSendGift, onRetryGift = onRetryGift,
+        onVerifyGift = onVerifyGift, onUnlock = onUnlock, onPlay = onPlay, onOlder = onOlderMessages,
+        onRetry = onHistoryRetry, onConnect = onConnect, onVerifyCreator = onCreatorVerification,
+        ownAvatar = ownAvatar,
+        ownName = ownName, celebrationGift = celebrationGift, celebrationNonce = celebrationNonce,
+        onCelebrationFinished = onCelebrationFinished,
+    )
+    if (composeOpen && recipientId.isBlank()) ModalBottomSheet(onDismissRequest = { composeOpen = false }) {
         Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text((recipientName ?: recipient?.name)?.let { "发给 $it" } ?: "新消息", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (recipientId.isNotBlank()) ChatOnlineAvatar(recipientName ?: recipient?.name ?: "用户", recipient?.avatar, recipientId in onlineUserIds)
+                Text((recipientName ?: recipient?.name)?.let { "发给 $it" } ?: "新消息", modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                if (recipientId in onlineUserIds) ChatOnlineLabel()
+            }
             if (recipientId != ownUserId) DmCallActions(
                 canStart = recipientId.isNotBlank() && recipientId.toLongOrNull() != null,
+                showLaunchButtons = false,
                 incoming = history?.let { latestIncomingDmCall(it.messages, ownUserId) },
                 onVideo = onVideoCall,
                 onVoice = onVoiceCall,
                 onJoin = onJoinCall,
                 onAccept = onAcceptCall,
+                onPriceSettings = onCallPriceSettings,
             )
-            if (enteringAccount) OutlinedTextField(
-                value = recipientId, onValueChange = onRecipientId, label = { Text("对方账号 ID") },
-                supportingText = { Text("可在对方的「我的」页面查看账号。") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
-            )
+            if (enteringAccount) {
+                OutlinedTextField(
+                    value = manualAccountId, onValueChange = { manualAccountId = it.filter(Char::isDigit).take(6); accountLookupError = null },
+                    label = { Text("对方六位现场号") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(onClick = {
+                    scope.launch {
+                        accountLookupBusy = true
+                        try {
+                            val target = LivePlatformApi().searchUsers(token, manualAccountId)
+                                .firstOrNull { it.publicId.toString() == manualAccountId }
+                                ?: error("没有找到这个现场号")
+                            onOpenChat(target.id.toString(), target.username)
+                            enteringAccount = false
+                        } catch (error: CancellationException) { throw error
+                        } catch (error: Exception) { accountLookupError = error.message ?: "查找失败，请重试"
+                        } finally { accountLookupBusy = false }
+                    }
+                }, enabled = manualAccountId.matches(Regex("[1-9][0-9]{5}")) && !accountLookupBusy) {
+                    Text(if (accountLookupBusy) "查找中…" else "查找用户")
+                }
+                accountLookupError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
             if (historyLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
             historyError?.let {
                 Text(it, color = Coral)
@@ -2943,15 +3531,62 @@ private fun MessagesScreen(
             if (giftSheet) DmGiftSheet(gifts, balance, busy, onDismiss = { giftSheet = false }) { gift ->
                 giftSheet = false
                 onSendGift(gift)
-            } else if (videoSheet) DmVideoSheet(busy, pendingVideoPhase == "upload", onDismiss = { videoSheet = false }) { title, price, bytes, duration ->
+            } else if (videoSheet) DmVideoSheet(busy, pendingVideoPhase == "upload", videoPaid, onDismiss = { videoSheet = false }) { title, price, bytes, duration ->
                 videoSheet = false
                 onSendVideo(title, price, bytes, duration)
             } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { giftSheet = true }, enabled = ready && !busy && recipientId.isNotBlank() && pendingGift == null) { Text("礼物") }
-                    if (pendingVideoPhase == "deliver") TextButton(onClick = { onSendVideo("", 0, ByteArray(0), 1) }, enabled = ready && !busy) { Text("重试发送视频") }
-                    else TextButton(onClick = { videoSheet = true }, enabled = ready && !busy && recipientId.isNotBlank()) { Text(if (pendingVideoPhase == "upload") "重试上传" else "视频") }
+                val canMessage = ready && !busy && recipientId.isNotBlank()
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onVoiceCall, enabled = canMessage) {
+                        Icon(Icons.Rounded.PhoneInTalk, contentDescription = "语音通话", tint = Color(0xFF6548E9), modifier = Modifier.size(30.dp))
+                    }
+                    IconButton(onClick = onVideoCall, enabled = canMessage) {
+                        Icon(Icons.Rounded.Videocam, contentDescription = "视频通话", tint = Color(0xFF3C6DE8), modifier = Modifier.size(31.dp))
+                    }
+                    IconButton(onClick = { giftSheet = true; mediaTray = null }, enabled = canMessage && pendingGift == null) {
+                        Image(painterResource(R.drawable.qumi_chat_gift), contentDescription = "赠送礼物", modifier = Modifier.size(38.dp))
+                    }
+                    IconButton(onClick = { mediaTray = if (mediaTray == "emoji") null else "emoji" }) {
+                        Icon(Icons.Rounded.Mood, contentDescription = "表情", tint = Color(0xFF6F628D), modifier = Modifier.size(29.dp))
+                    }
+                    IconButton(onClick = { mediaTray = if (mediaTray == "media") null else "media" }) {
+                        Icon(Icons.Rounded.AddCircleOutline, contentDescription = "更多", tint = Color(0xFF6F628D), modifier = Modifier.size(30.dp))
+                    }
                 }
+                when (mediaTray) {
+                    "emoji" -> QumiEmojiStrip { onMessage((message + it).take(500)) }
+                    "media" -> Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        QumiChatMediaTile(Icons.Rounded.Photo, "图片", Color(0xFF45C66B)) {
+                            if (canMessage) { mediaTray = null; imagePicker.launch("image/*") }
+                        }
+                        QumiChatMediaTile(Icons.Rounded.Videocam, "视频", Color(0xFF5D75E8)) {
+                            if (canMessage && !checkingCreator) scope.launch {
+                                checkingCreator = true
+                                try {
+                                    val applications = LivePlatformApi().creatorApplications(token)
+                                    if (applications.any { it.status == "APPROVED" }) mediaTray = "video"
+                                    else {
+                                        creatorNeedsVerification = true
+                                        creatorNotice = "只有主播认证审核通过后，才能发送免费视频或付费视频。"
+                                    }
+                                } catch (error: CancellationException) { throw error
+                                } catch (_: Exception) {
+                                    creatorNeedsVerification = false
+                                    creatorNotice = "暂时无法确认主播认证状态，请稍后重试。"
+                                } finally { checkingCreator = false }
+                            }
+                        }
+                    }
+                    "video" -> Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        QumiChatMediaTile(Icons.Rounded.Videocam, "免费视频", Color(0xFF5D75E8)) {
+                            videoPaid = false; videoSheet = true; mediaTray = null
+                        }
+                        QumiChatMediaTile(Icons.Rounded.Videocam, "付费视频", Color(0xFF6548E9)) {
+                            videoPaid = true; videoSheet = true; mediaTray = null
+                        }
+                    }
+                }
+                if (pendingVideoPhase == "deliver") TextButton(onClick = { onSendVideo("", 0, ByteArray(0), 1) }, enabled = canMessage) { Text("重试发送视频") }
                 OutlinedTextField(value = message, onValueChange = onMessage, label = { Text("说点什么…") }, enabled = ready && !busy, maxLines = 5, modifier = Modifier.fillMaxWidth())
                 Button(onClick = onSend, enabled = ready && !busy && recipientId.isNotBlank() && message.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                     Text(if (busy) "正在发送…" else "发送")
@@ -3005,7 +3640,7 @@ private fun ProfileScreen(
                 Avatar(session.username, 1, 56)
                 Column(Modifier.weight(1f).padding(start = 14.dp)) {
                     Text(session.username, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("账号 ID ${session.id}", style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 4.dp))
+                    Text("账号 ID ${session.publicId}", style = MaterialTheme.typography.bodySmall, color = Fog, modifier = Modifier.padding(top = 4.dp))
                 }
                 IconButton(onClick = onRefresh) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新账户信息") }
             }
@@ -3175,23 +3810,20 @@ private fun readSession(context: android.content.Context): UserSession? {
     val prefs = context.getSharedPreferences("live_session", android.content.Context.MODE_PRIVATE)
     val id = prefs.getLong("id", 0)
     val token = prefs.getString("token", null).orEmpty()
-    return if (id > 0 && token.isNotBlank()) UserSession(
-        id,
-        prefs.getString("username", "用户$id").orEmpty(),
-        token,
-        prefs.getString("avatar", null),
-    ) else null
+    return if (id > 0 && token.isNotBlank()) UserSession(id, prefs.getString("username", "用户$id").orEmpty(), token,
+        prefs.getLong("public_id", id), prefs.getString("avatar", null)) else null
 }
 
 private fun saveSession(context: android.content.Context, session: UserSession?) {
     context.getSharedPreferences("live_session", android.content.Context.MODE_PRIVATE).edit().apply {
         if (session == null) {
-            remove("id"); remove("username"); remove("token"); remove("avatar")
+            remove("id"); remove("public_id"); remove("username"); remove("token"); remove("avatar")
         } else {
             putLong("id", session.id)
+            putLong("public_id", session.publicId)
+            putString("avatar", session.avatar)
             putString("username", session.username)
             putString("token", session.token)
-            putString("avatar", session.avatar)
         }
     }.apply()
 }
@@ -3217,7 +3849,34 @@ private fun parseOpenImConversations(raw: String): List<OpenImConversation> = ru
                 userId = userId,
                 name = row.optString("showName").ifBlank { "用户 $userId" },
                 latestMessage = text,
+                avatar = row.optString("faceURL"),
             ))
         }
     }
 }.getOrDefault(emptyList())
+
+@Composable
+private fun LiveRoomPreview(room: LiveRoom, onBack: () -> Unit, onVideo: () -> Unit, onEnter: () -> Unit) {
+    BackHandler(onBack = onBack)
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Image(painterResource(LivePlaceholderCovers[Math.floorMod(room.stream.hashCode(), LivePlaceholderCovers.size)]), null,
+            Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        room.coverPath?.let { LiveCoverImage(it) }
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .4f), Color.Transparent, Color.Black.copy(alpha = .7f))))
+            .clickable(onClickLabel = "进入直播间", onClick = onEnter))
+        Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = Color.White) }
+            Spacer(Modifier.weight(1f))
+            Text("视频", Modifier.clickable(onClick = onVideo).padding(15.dp), color = Color.White.copy(alpha = .7f), fontSize = 16.sp)
+            Text("直播", Modifier.padding(15.dp), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(48.dp))
+        }
+        LiveEnterButton(onEnter, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 158.dp))
+        Column(Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("直播中", Modifier.clip(RoundedCornerShape(5.dp)).background(Color(0xFF8251E9)).padding(8.dp, 4.dp), color = Color.White, fontSize = 12.sp)
+            Text("@" + room.host, color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+            Text(room.title, color = Color.White, fontSize = 15.sp)
+        }
+    }
+}

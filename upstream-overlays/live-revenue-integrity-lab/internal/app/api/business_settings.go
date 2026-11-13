@@ -17,6 +17,10 @@ func (s *Server) handleBusinessSettings(w http.ResponseWriter, r *http.Request) 
 		s.listBusinessActions(w, r)
 		return
 	}
+	if path == "levels" {
+		s.handleLevelSettings(w, r)
+		return
+	}
 	var liveID uint64
 	var err error
 	kind := "REFERRALS"
@@ -62,6 +66,8 @@ func (s *Server) handleBusinessSettings(w http.ResponseWriter, r *http.Request) 
 		Enabled         *bool   `json:"enabled"`
 		InviterCoins    *int64  `json:"inviter_coins"`
 		InviteeCoins    *int64  `json:"invitee_coins"`
+		RechargeBPS     *int64  `json:"recharge_bps"`
+		WithdrawalBPS   *int64  `json:"withdrawal_bps"`
 		Price           *int    `json:"unlock_price_coins"`
 	}
 	if !financeBody(w, r, &c) {
@@ -71,7 +77,15 @@ func (s *Server) handleBusinessSettings(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, 400, "INVALID_OPERATION", "请填写操作单号、版本及原因")
 		return
 	}
-	if kind == "REFERRALS" && (c.Enabled == nil || c.InviterCoins == nil || c.InviteeCoins == nil || c.Price != nil || *c.InviterCoins < 0 || *c.InviterCoins > 100000 || *c.InviteeCoins < 0 || *c.InviteeCoins > 100000) || kind == "WATCH_PRICE" && (c.Price == nil || *c.Price < 0 || *c.Price > 1000000 || c.Enabled != nil || c.InviterCoins != nil || c.InviteeCoins != nil) {
+	if kind == "REFERRALS" {
+		if c.RechargeBPS == nil {
+			c.RechargeBPS = new(int64)
+		}
+		if c.WithdrawalBPS == nil {
+			c.WithdrawalBPS = new(int64)
+		}
+	}
+	if kind == "REFERRALS" && (c.Enabled == nil || c.InviterCoins == nil || c.InviteeCoins == nil || c.Price != nil || *c.InviterCoins < 0 || *c.InviterCoins > 100000 || *c.InviteeCoins < 0 || *c.InviteeCoins > 100000 || *c.RechargeBPS < 0 || *c.RechargeBPS > 10000 || *c.WithdrawalBPS < 0 || *c.WithdrawalBPS > 10000) || kind == "WATCH_PRICE" && (c.Price == nil || *c.Price < 0 || *c.Price > 1000000 || c.Enabled != nil || c.InviterCoins != nil || c.InviteeCoins != nil || c.RechargeBPS != nil || c.WithdrawalBPS != nil) {
 		httpx.WriteError(w, 400, "INVALID_OPERATION", "奖励或价格超出允许范围")
 		return
 	}
@@ -142,8 +156,10 @@ func (s *Server) handleBusinessSettings(w http.ResponseWriter, r *http.Request) 
 	version++
 	var data map[string]any
 	if kind == "REFERRALS" {
-		_, err = tx.ExecContext(r.Context(), `UPDATE referral_settings SET version=?,configured=TRUE,enabled=?,inviter_coins=?,invitee_coins=? WHERE singleton=1`, version, *c.Enabled, *c.InviterCoins, *c.InviteeCoins)
-		data = map[string]any{"version": version, "configured": true, "enabled": *c.Enabled, "inviter_coins": *c.InviterCoins, "invitee_coins": *c.InviteeCoins}
+		_, err = tx.ExecContext(r.Context(), `UPDATE referral_settings SET version=?,configured=TRUE,enabled=?,inviter_coins=?,invitee_coins=?,recharge_bps=?,withdrawal_bps=? WHERE singleton=1`,
+			version, *c.Enabled, *c.InviterCoins, *c.InviteeCoins, *c.RechargeBPS, *c.WithdrawalBPS)
+		data = map[string]any{"version": version, "configured": true, "enabled": *c.Enabled, "inviter_coins": *c.InviterCoins, "invitee_coins": *c.InviteeCoins,
+			"recharge_bps": *c.RechargeBPS, "withdrawal_bps": *c.WithdrawalBPS}
 	} else {
 		_, err = tx.ExecContext(r.Context(), `INSERT INTO live_watch_prices(live_session_id,unlock_price_coins,version) VALUES(?,?,?) ON DUPLICATE KEY UPDATE unlock_price_coins=VALUES(unlock_price_coins),version=VALUES(version)`, liveID, *c.Price, version)
 		data = map[string]any{"live_session_id": strconv.FormatUint(liveID, 10), "status": status, "unlock_price_coins": *c.Price, "version": version}

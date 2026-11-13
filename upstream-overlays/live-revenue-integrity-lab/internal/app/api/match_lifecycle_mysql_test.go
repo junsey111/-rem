@@ -168,12 +168,16 @@ func TestMatchLifecycleMySQL(t *testing.T) {
 	if _, err := db.Exec(`UPDATE users SET can_go_live=TRUE,live_gifts_enabled=TRUE,account_standing='GOOD' WHERE user_id=1`); err != nil {
 		t.Fatal(err)
 	}
-	invite := func(own, other int) uint64 {
+	invite := func(own, other int, minutes ...int) uint64 {
 		t.Helper()
-		data := check(call(1, "POST", "/v1/match-invitations", fmt.Sprintf(`{"live_session_id":%d,"opponent_live_session_id":%d}`, own, other)), 201)
+		duration := 5
+		if len(minutes) > 0 {
+			duration = minutes[0]
+		}
+		data := check(call(1, "POST", "/v1/match-invitations", fmt.Sprintf(`{"live_session_id":%d,"opponent_live_session_id":%d,"duration_minutes":%d}`, own, other, duration)), 201)
 		return uint64(data["invitation_id"].(float64))
 	}
-	a, b := invite(11, 22), invite(12, 33)
+	a, b := invite(11, 22, 3), invite(12, 33)
 	path := func(id uint64) string { return fmt.Sprintf("/v1/match-invitations/%d/respond", id) }
 	check(call(4, "POST", path(a), `{"accept":true}`), 403)
 	check(call(2, "POST", path(a), `{}`), 400)
@@ -216,6 +220,13 @@ func TestMatchLifecycleMySQL(t *testing.T) {
 	if len(data["scores"].([]any)) != 2 {
 		t.Fatal("score must include both real participants before gifts")
 	}
+	wantDuration := float64(3)
+	if winner == 1 {
+		wantDuration = 5
+	}
+	if data["duration_minutes"] != wantDuration || data["remaining_seconds"].(float64) <= 0 {
+		t.Fatalf("match duration was not preserved: %+v", data)
+	}
 	check(call(4, "GET", fmt.Sprintf("/v1/matches/%d", matchID), ""), 200)
 	closePath := fmt.Sprintf("/v1/matches/%d/close", matchID)
 	check(call(4, "POST", closePath, `{}`), 403)
@@ -244,6 +255,18 @@ func TestMatchLifecycleMySQL(t *testing.T) {
 	}
 	if check(call(4, "GET", fmt.Sprintf("/v1/lives/%d/match", ownLive), ""), 200)["match_id"].(float64) != 0 {
 		t.Fatal("closed match still discoverable as active")
+	}
+	expired := invite(11, 22, 2)
+	check(call(2, "POST", path(expired), `{"accept":true}`), 200)
+	if _, err := db.Exec(`UPDATE live_matches SET ends_at=DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 1 SECOND) WHERE match_id=?`, expired); err != nil {
+		t.Fatal(err)
+	}
+	if check(call(4, "GET", "/v1/lives/11/match", ""), 200)["match_id"].(float64) != 0 {
+		t.Fatal("expired match is still active")
+	}
+	_, appErr, err = svc.SendGift(context.Background(), service.GiftRequest{RequestID: "expired-gift", ViewerID: 4, CreatorID: 1, LiveSessionID: 11, MatchID: &expired, GiftID: "HEART", Quantity: 1})
+	if err != nil || appErr == nil || appErr.Code != "MATCH_CLOSED" {
+		t.Fatalf("expired match gift: %v %v", appErr, err)
 	}
 	// Either participant going offline must close the shared PK atomically.
 	next := invite(11, 22)

@@ -3,52 +3,59 @@ package cn.liveroom.app
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
 
 @Composable
-internal fun QumiUserAvatar(
-    token: String,
-    path: String?,
-    modifier: Modifier = Modifier,
-    contentDescription: String? = "用户头像",
-    fallback: @Composable () -> Unit,
-) {
-    var bitmap by remember(token, path) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(token, path) {
-        bitmap = withContext(Dispatchers.IO) {
+@Suppress("ProduceStateDoesNotAssignValue") // The bitmap producer explicitly assigns value.
+internal fun QumiUserAvatar(avatar: String?, name: String, modifier: Modifier = Modifier) {
+    val bitmap by produceState<Bitmap?>(null, avatar) {
+        value = withContext(Dispatchers.IO) {
             runCatching {
-                require(path?.matches(Regex("/user/avatars/[1-9][0-9]{0,9}/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.jpg", RegexOption.IGNORE_CASE)) == true)
-                val connection = URL(BuildConfig.BILLD_API_URL.trimEnd('/') + path).openConnection() as HttpURLConnection
+                val resolved = if (avatar?.startsWith("/") == true && !avatar.startsWith("//")) BuildConfig.BILLD_API_URL.trimEnd('/') + avatar else avatar
+                val address = resolved?.takeIf { it.length <= 500 && (it.startsWith("https://") || it.startsWith("http://")) }
+                    ?: return@runCatching null
+                val connection = URL(address).openConnection() as HttpURLConnection
                 try {
                     connection.connectTimeout = 5_000
-                    connection.readTimeout = 10_000
+                    connection.readTimeout = 5_000
                     connection.instanceFollowRedirects = false
-                    connection.setRequestProperty("Authorization", "Bearer $token")
-                    check(connection.responseCode == 200 && connection.contentType.orEmpty().startsWith("image/jpeg"))
-                    val bytes = connection.inputStream.use { it.readBytesLimited(2 * 1024 * 1024 + 1) }
-                    check(bytes.size in 1..(2 * 1024 * 1024))
+                    if (connection.responseCode != 200) return@runCatching null
+                    val bytes = connection.inputStream.use { stream ->
+                        val buffer = ByteArray(8192)
+                        val output = java.io.ByteArrayOutputStream()
+                        while (output.size() <= 2 * 1024 * 1024) {
+                            val count = stream.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                        }
+                        output.toByteArray().takeIf { it.size <= 2 * 1024 * 1024 }
+                    } ?: return@runCatching null
                     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 } finally { connection.disconnect() }
             }.getOrNull()
         }
     }
-    Box(modifier, contentAlignment = Alignment.Center) {
-        fallback()
-        bitmap?.let { Image(it.asImageBitmap(), contentDescription, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
+    Box(modifier.clip(CircleShape).background(Color(0xFFE9E2FF)), contentAlignment = Alignment.Center) {
+        if (bitmap != null) Image(bitmap!!.asImageBitmap(), contentDescription = "$name 的头像",
+            contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        else Image(painterResource(R.drawable.qumi_mine_avatar), contentDescription = "$name 的头像",
+            contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
     }
 }

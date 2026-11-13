@@ -1,39 +1,28 @@
 package service
 
-// LevelForPoints maps accumulated spend/earn points to a stable platform level.
-// Thresholds stay server-side so clients cannot choose a level.
+var DefaultLevelThresholds = []int64{100, 500, 2000, 10000, 50000}
+
 func LevelForPoints(points int64) int {
-	if points < 100 {
-		return 1
-	}
-	if points < 500 {
-		return 2
-	}
-	if points < 2000 {
-		return 3
-	}
-	if points < 10000 {
-		return 4
-	}
-	if points < 50000 {
-		return 5
-	}
-	return 6
+	return LevelForPointsWithThresholds(points, DefaultLevelThresholds)
 }
 
 func NextLevelPoints(points int64) int64 {
-	switch LevelForPoints(points) {
-	case 1:
-		return 100
-	case 2:
-		return 500
-	case 3:
-		return 2000
-	case 4:
-		return 10000
-	case 5:
-		return 50000
-	default:
+	return NextLevelPointsWithThresholds(points, DefaultLevelThresholds)
+}
+
+func LevelForPointsWithThresholds(points int64, thresholds []int64) int {
+	for index, threshold := range thresholds {
+		if points < threshold {
+			return index + 1
+		}
+	}
+	return len(thresholds) + 1
+}
+
+func NextLevelPointsWithThresholds(points int64, thresholds []int64) int64 {
+	level := LevelForPointsWithThresholds(points, thresholds)
+	if level > len(thresholds) {
 		return 0
 	}
+	return thresholds[level-1]
 }

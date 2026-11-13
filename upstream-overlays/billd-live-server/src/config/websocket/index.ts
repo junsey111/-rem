@@ -7,6 +7,7 @@ import { mediaSessionHash } from '@/service/media-authority';
 import { RequestRateLimiter } from '@/app/request-rate';
 import { giftEvents } from '@/service/gift-broadcast';
 import { persistChat, chatEvents } from '@/service/room-chat';
+import { roomPresence } from '@/service/room-presence';
 import axios from '@/utils/request';
 import { chalkINFO } from '@/utils/chalkTip';
 
@@ -90,6 +91,10 @@ export const connectWebSocket = (server) => {
         roomName: string;
         data: any;
         isAdmin?: boolean;
+        roomType?: string;
+        welcomeText?: string;
+        announcementText?: string;
+        backgroundId?: number;
       }) =>
         enqueue(async () => {
           try {
@@ -137,6 +142,15 @@ export const connectWebSocket = (server) => {
                   typeof data.roomName === 'string'
                     ? data.roomName.trim().slice(0, 80)
                     : '直播间',
+                roomType: ['SINGLE', 'MULTI', 'VOICE'].includes((data as any).roomType)
+                  ? (data as any).roomType : 'SINGLE',
+                welcomeText: typeof (data as any).welcomeText === 'string'
+                  ? (data as any).welcomeText.trim().slice(0, 120) : '',
+                announcementText: typeof data.announcementText === 'string'
+                  ? data.announcementText.trim().slice(0, 300) : '',
+                backgroundId: Number.isInteger((data as any).backgroundId) &&
+                  (data as any).backgroundId >= 0 && (data as any).backgroundId <= 3
+                  ? (data as any).backgroundId : 0,
                 isAdmin: true,
                 data: {
                   userId: Number(auth.userInfo.id),
@@ -169,6 +183,15 @@ export const connectWebSocket = (server) => {
               );
             }
             await socket.join(data.roomId);
+            const presenceToken = socketToken(socket);
+            const presenceAuth = await authJwt({ req: { headers: { authorization: presenceToken ? `Bearer ${presenceToken}` : undefined } } });
+            const presenceRoom = await DBController.searchLiveRoomByRoomId(data.roomId);
+            if (socket.connected && presenceAuth.code === 200 && presenceAuth.userInfo?.id && presenceRoom.rows.length) {
+              const raw = presenceRoom.rows[0].get('data');
+              const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
+              roomPresence.join(socket.id, { roomId: data.roomId, userId: Number(presenceAuth.userInfo.id),
+                username: presenceAuth.userInfo.username || '用户', hostId: Number(info?.data?.userId) });
+            }
             socket.emit(WsMsgTypeEnum.joined, canonical);
             socket
               .to(data.roomId)
@@ -199,6 +222,7 @@ export const connectWebSocket = (server) => {
       enqueue(async () => {
         try {
           await DBController.deleteLiveRoom(socket.id);
+          roomPresence.leave(socket.id);
           for (const room of socket.rooms)
             if (room !== socket.id) await socket.leave(room);
           socket.emit(WsMsgTypeEnum.leaved, { socketId: socket.id });
@@ -324,6 +348,7 @@ export const connectWebSocket = (server) => {
 
     socket.on(WsConnectStatusEnum.disconnect, () =>
       enqueue(async () => {
+        roomPresence.leave(socket.id);
         try {
           await DBController.deleteLiveRoom(socket.id);
           io.emit(WsMsgTypeEnum.liveUser, await getAllLiveUser(io));

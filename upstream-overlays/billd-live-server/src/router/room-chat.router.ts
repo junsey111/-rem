@@ -6,8 +6,16 @@ import { ChatMessage, ChatAction } from '@/model/roomChat.model';
 import { chatRoom, moderateChat, persistChat, chatEvents } from '@/service/room-chat';
 import { CustomError } from '@/model/customError.model';
 import successHandler from '@/app/handler/success-handle';
+import { roomPresence } from '@/service/room-presence';
 
 const router = new Router();
+router.get('/rooms/:id/activity', async ctx => {
+  const auth = await authJwt(ctx);
+  if (auth.code !== 200 || !auth.userInfo?.id) throw new CustomError('请重新登录', 401, 401);
+  const roomId = chatRoom(ctx.params.id);
+  const rows = await ChatMessage.findAll({ where: { room_id: roomId, hidden: false }, order: [['id', 'DESC']], limit: 30 });
+  successHandler({ ctx, data: { ...roomPresence.activity(roomId), messages: rows.map(row => ({ ...row.get(), id: String(row.get('id')) })) } });
+});
 router.post('/rooms/:id/messages',async ctx=>{
  const auth=await authJwt(ctx);if(auth.code!==200||!auth.userInfo?.id)throw new CustomError('请重新登录',401,401);
  const result=await persistChat(ctx.params.id,Number(auth.userInfo.id),ctx.headers.authorization!.slice(7),ctx.request.body||{});
