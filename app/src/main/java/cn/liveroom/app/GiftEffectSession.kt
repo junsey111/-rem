@@ -5,31 +5,41 @@ import android.util.Log
 import com.yy.yyeva.view.EvaAnimViewV3
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
 import java.io.File
 import kotlin.coroutines.coroutineContext
 
+private data class HeldAcceptedGift(
+    val intent: PendingGift,
+    val roomId: String,
+    val senderName: String,
+    val senderId: Long,
+)
+
 /**
- * Plays at most one fullscreen effect. GiftOutbox is not consulted here:
- * callers enqueue only after ACCEPTED or a server room broadcast.
+ * One fullscreen YYEVA lane and one gift banner lane.
+ * Callers enqueue only after the server accepts the debit, or from a room broadcast.
+ * The same request id plays once on this device even if both paths deliver it.
  */
 class GiftEffectSession(context: Context) {
     private val cache = GiftEffectCache(File(context.cacheDir, "gift-effects"))
     private val player = YyevaGiftEffectPlayer()
     private val queue = GiftEffectQueue()
+    private val banners = GiftBannerQueue()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val mutex = Mutex()
+    private val gate = Any()
     private val unresolved = ArrayDeque<RoomGiftBroadcast>()
+    private val unresolvedAccepted = ArrayDeque<HeldAcceptedGift>()
     private var catalog: List<Gift> = emptyList()
     private var joinedRoom: String? = null
     private var generation = 0
@@ -40,6 +50,9 @@ class GiftEffectSession(context: Context) {
     private val _failure = MutableStateFlow<String?>(null)
     val failure: StateFlow<String?> = _failure
 
+    private val _banner = MutableStateFlow<GiftBannerPlay?>(null)
+    val banner: StateFlow<GiftBannerPlay?> = _banner
+
     fun updateCatalog(gifts: List<Gift>) {
         catalog = gifts
         prefetchJob?.cancel()
@@ -48,18 +61,15 @@ class GiftEffectSession(context: Context) {
         val waiting = unresolved.toList()
         unresolved.clear()
         waiting.forEach { offerBroadcast(it) }
+        val accepted = unresolvedAccepted.toList()
+        unresolvedAccepted.clear()
+        accepted.forEach { offerAccepted(it.intent, it.roomId, it.senderName, it.senderId) }
     }
 
     fun enterRoom(roomId: String) {
         joinedRoom = roomId
         generation++
-        unresolved.clear()
-        waitingForSurface = false
-        scope.launch {
-            mutex.withLock { queue.clearActive() }
-            player.stop()
-            _failure.value = null
-        }
+        resetStage()
         prefetchJob?.cancel()
         val snapshot = catalog
         prefetchJob = scope.launch(Dispatchers.IO) { cache.prefetch(snapshot) }
@@ -68,47 +78,69 @@ class GiftEffectSession(context: Context) {
     fun leaveRoom() {
         joinedRoom = null
         generation++
-        unresolved.clear()
-        waitingForSurface = false
-        scope.launch {
-            mutex.withLock { queue.clearActive() }
-            player.stop()
-            _failure.value = null
-        }
+        resetStage()
     }
 
     fun close() {
         joinedRoom = null
         generation++
-        unresolved.clear()
-        waitingForSurface = false
-        queue.clearActive()
-        player.stop()
-        _failure.value = null
+        resetStage()
         scope.cancel()
     }
 
-    fun offerAccepted(intent: PendingGift, roomId: String?) {
+    fun offerAccepted(intent: PendingGift, roomId: String?, senderName: String, senderId: Long) {
         scope.launch {
-            if (roomId == null || roomId != joinedRoom) return@launch
+            if (roomId == null || roomId != joinedRoom || senderId <= 0L) return@launch
+            val payload = runCatching { JSONObject(intent.payload) }.getOrNull() ?: return@launch
+            val requestId = payload.optString("request_id").trim().lowercase()
+            val giftId = payload.optString("gift_id")
+            val quantity = payload.optInt("quantity", 1)
+            val gift = catalog.firstOrNull { it.id == giftId }
+            if (gift == null) {
+                holdAccepted(HeldAcceptedGift(intent, roomId, senderName, senderId), requestId)
+                return@launch
+            }
             when (val admit = playFromAcceptedIntent(intent, catalog)) {
                 is FullscreenAdmit.Ready -> enqueue(admit.play)
                 FullscreenAdmit.Broken -> _failure.value = FAILURE
-                FullscreenAdmit.Skip -> Unit
+                FullscreenAdmit.Skip, null -> Unit
             }
+            presentBanner(GiftBannerPlay(requestId, gift.id, senderId, giftSenderLabel(senderName, senderId), quantity))
         }
     }
 
     fun offerBroadcast(event: RoomGiftBroadcast) {
         scope.launch {
             if (event.roomId != joinedRoom) return@launch
-            when (val admit = playFromBroadcast(event, catalog)) {
-                null -> {
-                    if (unresolved.none { it.requestId == event.requestId } && unresolved.size < 20) unresolved.addLast(event)
+            val gift = catalog.firstOrNull { it.id == event.giftId }
+            if (gift == null) {
+                if (unresolved.none { it.requestId == event.requestId } && unresolved.size < MAX_GIFT_BANNER_PENDING) {
+                    unresolved.addLast(event)
                 }
+                return@launch
+            }
+            when (val admit = playFromBroadcast(event, catalog)) {
                 is FullscreenAdmit.Ready -> enqueue(admit.play)
                 FullscreenAdmit.Broken -> _failure.value = FAILURE
-                FullscreenAdmit.Skip -> Unit
+                FullscreenAdmit.Skip, null -> Unit
+            }
+            presentBanner(
+                GiftBannerPlay(
+                    event.requestId,
+                    gift.id,
+                    event.viewerId,
+                    giftSenderLabel(event.senderName, event.viewerId),
+                    event.quantity,
+                ),
+            )
+        }
+    }
+
+    fun finishBanner(requestId: String) {
+        scope.launch {
+            synchronized(gate) {
+                if (!banners.finish(requestId)) return@launch
+                _banner.value = banners.current
             }
         }
     }
@@ -128,8 +160,41 @@ class GiftEffectSession(context: Context) {
         player.detach(surface)
     }
 
+    private fun resetStage() {
+        unresolved.clear()
+        unresolvedAccepted.clear()
+        waitingForSurface = false
+        synchronized(gate) {
+            queue.clearActive()
+            queue.clearSeen()
+            banners.clearActive()
+            banners.clearSeen()
+        }
+        _banner.value = null
+        _failure.value = null
+        player.stop()
+    }
+
+    private fun holdAccepted(held: HeldAcceptedGift, requestId: String) {
+        if (requestId.isBlank()) return
+        if (unresolvedAccepted.any { requestIdOf(it.intent) == requestId }) return
+        if (unresolvedAccepted.size >= MAX_GIFT_BANNER_PENDING) return
+        unresolvedAccepted.addLast(held)
+    }
+
+    private fun requestIdOf(intent: PendingGift): String = runCatching {
+        JSONObject(intent.payload).optString("request_id").trim().lowercase()
+    }.getOrDefault("")
+
+    private fun presentBanner(play: GiftBannerPlay) {
+        val started = synchronized(gate) {
+            banners.offer(play) == GiftEffectOffer.STARTED
+        }
+        if (started) _banner.value = play
+    }
+
     private suspend fun enqueue(play: GiftEffectPlay) {
-        mutex.withLock { queue.offer(play) }
+        synchronized(gate) { queue.offer(play) }
         kick()
     }
 
@@ -142,6 +207,8 @@ class GiftEffectSession(context: Context) {
                 pump(gen)
             } finally {
                 pumping = false
+                val more = synchronized(gate) { queue.current } != null
+                if (!waitingForSurface && more) kick()
             }
         }
     }
@@ -149,7 +216,7 @@ class GiftEffectSession(context: Context) {
     private suspend fun pump(gen: Int) {
         while (gen == generation) {
             coroutineContext.ensureActive()
-            val play = mutex.withLock { queue.current } ?: return
+            val play = synchronized(gate) { queue.current } ?: return
             val file = withContext(Dispatchers.IO) {
                 runCatching { cache.prepare(YyevaSource(play.url, play.videoMode, play.md5)) }
                     .onFailure { Log.w(TAG, "gift effect not ready gift=${play.giftId}", it) }
@@ -158,7 +225,7 @@ class GiftEffectSession(context: Context) {
             if (gen != generation) return
             if (file == null) {
                 _failure.value = FAILURE
-                mutex.withLock { queue.finish(play.requestId) }
+                synchronized(gate) { queue.finish(play.requestId) }
                 continue
             }
             val finished = CompletableDeferred<Boolean>()
@@ -166,13 +233,19 @@ class GiftEffectSession(context: Context) {
                 finished.complete(success)
             }
             if (!started) {
-                waitingForSurface = true
+                if (gen == generation) waitingForSurface = true
                 return
             }
-            val success = finished.await()
+            if (gen != generation) {
+                player.stop()
+                return
+            }
+            val success = withTimeoutOrNull(FULLSCREEN_EFFECT_TIMEOUT_MS) { finished.await() }
             if (gen != generation) return
-            _failure.value = if (success) null else FAILURE
-            mutex.withLock { queue.finish(play.requestId) }
+            if (success == null) player.stop()
+            if (gen != generation) return
+            _failure.value = if (success == true) null else FAILURE
+            synchronized(gate) { queue.finish(play.requestId) }
         }
     }
 

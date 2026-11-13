@@ -39,7 +39,74 @@ data class RoomGiftBroadcast(
     val giftId: String,
     val viewerId: Long,
     val quantity: Int,
+    val senderName: String = "",
 )
+
+data class GiftBannerPlay(
+    val requestId: String,
+    val giftId: String,
+    val senderId: Long,
+    val senderName: String,
+    val quantity: Int,
+)
+
+/** One lane banner at a time. A later gift waits, so it cannot erase the one on screen. */
+class GiftBannerQueue {
+    private val pending = ArrayDeque<GiftBannerPlay>()
+    private val seen = LinkedHashSet<String>()
+    var current: GiftBannerPlay? = null
+        private set
+
+    fun offer(play: GiftBannerPlay): GiftEffectOffer {
+        if (play.requestId.isBlank() || play.giftId.isBlank()) return GiftEffectOffer.IGNORED
+        if (play.quantity !in 1..99) return GiftEffectOffer.IGNORED
+        if (!seen.add(play.requestId)) return GiftEffectOffer.IGNORED
+        trimSeen(play.requestId)
+        if (current != null && pending.size >= MAX_GIFT_BANNER_PENDING) {
+            seen.remove(play.requestId)
+            return GiftEffectOffer.IGNORED
+        }
+        if (current != null) {
+            pending.addLast(play)
+            return GiftEffectOffer.QUEUED
+        }
+        current = play
+        return GiftEffectOffer.STARTED
+    }
+
+    /** False when [requestId] is not the banner on screen. */
+    fun finish(requestId: String): Boolean {
+        if (current?.requestId != requestId) return false
+        current = pending.removeFirstOrNull()
+        return true
+    }
+
+    fun clearActive() {
+        pending.clear()
+        current = null
+    }
+
+    fun clearSeen() {
+        seen.clear()
+    }
+
+    private fun trimSeen(protect: String) {
+        while (seen.size > 300) {
+            val iterator = seen.iterator()
+            var removed = false
+            while (iterator.hasNext()) {
+                val oldest = iterator.next()
+                val active = oldest == protect || pending.any { it.requestId == oldest } || current?.requestId == oldest
+                if (!active) {
+                    iterator.remove()
+                    removed = true
+                    break
+                }
+            }
+            if (!removed) break
+        }
+    }
+}
 
 enum class GiftEffectOffer { STARTED, QUEUED, IGNORED }
 
@@ -53,6 +120,10 @@ class GiftEffectQueue {
     fun offer(play: GiftEffectPlay): GiftEffectOffer {
         if (play.requestId.isBlank() || play.url.isBlank()) return GiftEffectOffer.IGNORED
         if (!seen.add(play.requestId)) return GiftEffectOffer.IGNORED
+        if (current != null && pending.size >= MAX_FULLSCREEN_EFFECT_PENDING) {
+            seen.remove(play.requestId)
+            return GiftEffectOffer.IGNORED
+        }
         while (seen.size > 300) {
             val iterator = seen.iterator()
             var removed = false
@@ -85,7 +156,15 @@ class GiftEffectQueue {
         pending.clear()
         current = null
     }
+
+    fun clearSeen() {
+        seen.clear()
+    }
 }
+
+const val MAX_FULLSCREEN_EFFECT_PENDING = 8
+const val MAX_GIFT_BANNER_PENDING = 20
+const val FULLSCREEN_EFFECT_TIMEOUT_MS = 20_000L
 
 fun normalizeEffectType(raw: String?): String = when (raw?.trim()) {
     EFFECT_NONE, EFFECT_YYEVA, EFFECT_SVGA, EFFECT_LOTTIE -> raw.trim()
@@ -156,6 +235,17 @@ fun Gift.yyevaSource(): YyevaSource? = when (val admit = admitFullscreen(this, "
     else -> null
 }
 
+/** Code-drawn stage. YYEVA replaces it only when a mixed MP4 is actually playable. */
+enum class GiftStageStyle { SMALL, MID, LARGE }
+
+fun giftStageStyle(coinPrice: Int): GiftStageStyle = when {
+    coinPrice >= 500 -> GiftStageStyle.LARGE
+    coinPrice >= 100 -> GiftStageStyle.MID
+    else -> GiftStageStyle.SMALL
+}
+
+fun Gift.stageStyle(): GiftStageStyle? = if (yyevaSource() == null) giftStageStyle(coinPrice) else null
+
 fun admitFullscreen(gift: Gift, requestId: String, trigger: GiftEffectTrigger): FullscreenAdmit {
     if (trigger != GiftEffectTrigger.ACCEPTED && trigger != GiftEffectTrigger.ROOM_BROADCAST) return FullscreenAdmit.Skip
     if (gift.effectType != EFFECT_YYEVA) return FullscreenAdmit.Skip
@@ -172,10 +262,21 @@ fun admitFullscreen(gift: Gift, requestId: String, trigger: GiftEffectTrigger): 
     return FullscreenAdmit.Ready(GiftEffectPlay(id, gift.id, url, parseEffectVideoMode(gift.effectVideoMode), md5))
 }
 
-fun playFromAcceptedIntent(intent: PendingGift, catalog: List<Gift>): FullscreenAdmit {
+/** Null means the gift is not in the catalog yet. Skip means it will not use the fullscreen lane. */
+fun playFromAcceptedIntent(intent: PendingGift, catalog: List<Gift>): FullscreenAdmit? {
     val payload = JSONObject(intent.payload)
-    val gift = catalog.firstOrNull { it.id == payload.optString("gift_id") } ?: return FullscreenAdmit.Skip
+    val gift = catalog.firstOrNull { it.id == payload.optString("gift_id") } ?: return null
     return admitFullscreen(gift, payload.optString("request_id"), GiftEffectTrigger.ACCEPTED)
+}
+
+fun sanitizeGiftSenderName(raw: String?): String {
+    val cleaned = raw?.replace(Regex("[\\u0000-\\u001F\\u007F]"), "")?.trim().orEmpty()
+    return cleaned.take(20)
+}
+
+fun giftSenderLabel(name: String, viewerId: Long): String {
+    val cleaned = sanitizeGiftSenderName(name)
+    return cleaned.ifBlank { "用户$viewerId" }
 }
 
 fun playFromBroadcast(event: RoomGiftBroadcast, catalog: List<Gift>): FullscreenAdmit? {
@@ -194,7 +295,7 @@ fun parseRoomGiftBroadcast(data: JSONObject, expectedRoomId: String): RoomGiftBr
     if (viewerId <= 0L) return null
     val quantity = data.optInt("quantity")
     if (quantity !in 1..99) return null
-    return RoomGiftBroadcast(roomId, requestId, giftId, viewerId, quantity)
+    return RoomGiftBroadcast(roomId, requestId, giftId, viewerId, quantity, sanitizeGiftSenderName(data.optString("sender_name")))
 }
 
 fun looksLikeMp4(header: ByteArray): Boolean {

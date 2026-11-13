@@ -22,9 +22,6 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-internal data class GiftSendPresentation(val gift: Gift, val senderName: String,
-    val senderAvatar: String?, val quantity: Int = 1)
-
 @Composable
 internal fun QumiGiftCelebration(gift: Gift, nonce: Int, demo: Boolean,
     senderName: String, senderAvatar: String?, quantity: Int = 1, bottomPadding: Dp = 310.dp,
@@ -42,9 +39,7 @@ internal fun QumiGiftCelebration(gift: Gift, nonce: Int, demo: Boolean,
     }
     // No backdrop or touch handlers: the room and conversation remain usable.
     Box(Modifier.fillMaxSize()) {
-        if (gift.coinPrice >= 500 && gift.yyevaSource() == null) {
-            QumiPremiumGiftEffect(gift, nonce)
-        }
+        gift.stageStyle()?.let { GiftStageEffect(gift, nonce, it) }
         Row(Modifier.align(Alignment.BottomStart).navigationBarsPadding()
             .padding(start = 14.dp, bottom = bottomPadding).widthIn(max = 316.dp).fillMaxWidth(.88f)
             .graphicsLayer { alpha = opacity.value; translationX = entrance.value }

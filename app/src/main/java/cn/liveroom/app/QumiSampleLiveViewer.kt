@@ -265,52 +265,112 @@ internal fun QumiSampleLiveViewer(initialIndex: Int, userId: Long, token: String
     }
 }
 
+/**
+ * On-stage gift drawn with Canvas. Plays for every confirmed gift that has no YYEVA file.
+ * Small gifts rise with a few sparks, mid gifts open a ring, large gifts keep the full burst.
+ */
 @Composable
-internal fun QumiPremiumGiftEffect(gift: Gift, nonce: Int) {
-    val premium = gift.coinPrice >= 500
-    val scale = remember { Animatable(.45f) }
+internal fun GiftStageEffect(gift: Gift, nonce: Int, style: GiftStageStyle = giftStageStyle(gift.coinPrice)) {
+    val scale = remember { Animatable(.55f) }
     val opacity = remember { Animatable(0f) }
+    val rise = remember { Animatable(if (style == GiftStageStyle.SMALL) 72f else 18f) }
     val burst = remember { Animatable(0f) }
-    LaunchedEffect(nonce) {
-        scale.snapTo(.45f)
+    LaunchedEffect(nonce, style) {
+        scale.snapTo(if (style == GiftStageStyle.SMALL) .7f else .5f)
         opacity.snapTo(0f)
+        rise.snapTo(if (style == GiftStageStyle.SMALL) 72f else 18f)
         burst.snapTo(0f)
-        launch { opacity.animateTo(1f, tween(220)) }
-        if (premium) launch { burst.animateTo(1f, tween(1_250)) }
-        scale.animateTo(1.12f, tween(380))
-        scale.animateTo(1f, tween(160))
-        delay(if (premium) 1_550 else 1_150)
-        opacity.animateTo(0f, tween(400))
+        launch { opacity.animateTo(1f, tween(200)) }
+        launch { rise.animateTo(0f, tween(if (style == GiftStageStyle.SMALL) 640 else 420)) }
+        launch { burst.animateTo(1f, tween(if (style == GiftStageStyle.LARGE) 1_300 else 980)) }
+        scale.animateTo(if (style == GiftStageStyle.LARGE) 1.12f else 1.06f, tween(360))
+        scale.animateTo(1f, tween(150))
+        delay(when (style) {
+            GiftStageStyle.SMALL -> 980
+            GiftStageStyle.MID -> 1_200
+            GiftStageStyle.LARGE -> 1_450
+        })
+        opacity.animateTo(0f, tween(320))
     }
-    Box(Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center) {
-        if (premium) Canvas(Modifier.fillMaxSize()) {
-            val radius = (100 + 130 * burst.value).dp.toPx()
-            val fade = (1f - burst.value).coerceIn(0f, 1f) * opacity.value
-            drawCircle(Color(0xFFFFE3A2), radius, center, alpha = fade * .58f,
-                style = Stroke(width = 3.dp.toPx()))
-            repeat(12) { index ->
-                val angle = index * PI / 6
-                val start = Offset(center.x + (radius - 16.dp.toPx()) * cos(angle).toFloat(),
-                    center.y + (radius - 16.dp.toPx()) * sin(angle).toFloat())
-                val end = Offset(center.x + (radius + 16.dp.toPx()) * cos(angle).toFloat(),
-                    center.y + (radius + 16.dp.toPx()) * sin(angle).toFloat())
-                drawLine(Color(0xFFFFE3A2), start, end, strokeWidth = 3.dp.toPx(), alpha = fade)
+    val tint = when (style) {
+        GiftStageStyle.SMALL -> Color(0xFFFF8AB5)
+        GiftStageStyle.MID -> Color(0xFFD7C4FF)
+        GiftStageStyle.LARGE -> Color(0xFFFFE3A2)
+    }
+    val sparks = when (style) {
+        GiftStageStyle.SMALL -> 8
+        GiftStageStyle.MID -> 12
+        GiftStageStyle.LARGE -> 16
+    }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val fade = opacity.value
+            val travel = burst.value
+            val ringCount = when (style) {
+                GiftStageStyle.SMALL -> 0
+                GiftStageStyle.MID -> 1
+                GiftStageStyle.LARGE -> 2
             }
-        }
-        Column(Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value; alpha = opacity.value },
-            horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(245.dp), contentAlignment = Alignment.Center) {
-                GiftArtwork(gift, Modifier.size(if (premium) 208.dp else 185.dp), gift.name)
-                listOf(
-                    Triple((-108).dp, (-76).dp, 23.dp), Triple(100.dp, (-85).dp, 28.dp),
-                    Triple((-117).dp, 58.dp, 18.dp), Triple(110.dp, 69.dp, 21.dp),
-                    Triple((-18).dp, (-113).dp, 18.dp), Triple(39.dp, 112.dp, 16.dp),
-                ).forEach { (x, y, size) ->
-                    Icon(Icons.Rounded.Star, null, Modifier.offset(x, y).size(size),
-                        tint = Color(0xFFFFD66E))
+            repeat(ringCount) { ring ->
+                val radius = (70 + ring * 36 + (90 + ring * 40) * travel).dp.toPx()
+                drawCircle(tint, radius, center, alpha = ((1f - travel) * fade * .62f).coerceIn(0f, 1f),
+                    style = Stroke(width = (if (style == GiftStageStyle.LARGE) 3.5f else 2.5f).dp.toPx()))
+            }
+            repeat(sparks) { index ->
+                val angle = index * (PI * 2 / sparks) + travel * if (style == GiftStageStyle.SMALL) .4 else 1.1
+                val distance = (28 + (if (style == GiftStageStyle.SMALL) 70 else 120) * travel).dp.toPx()
+                val lift = if (style == GiftStageStyle.SMALL) (1f - travel) * 36.dp.toPx() else 0f
+                val point = Offset(
+                    center.x + distance * cos(angle).toFloat(),
+                    center.y + distance * sin(angle).toFloat() - lift,
+                )
+                val dot = (4 + (index % 3) * 2).dp.toPx()
+                drawCircle(tint, dot, point, alpha = ((1f - travel * .35f) * fade).coerceIn(0f, 1f))
+            }
+            if (style == GiftStageStyle.LARGE) {
+                val radius = (100 + 130 * travel).dp.toPx()
+                repeat(12) { index ->
+                    val angle = index * PI / 6
+                    val start = Offset(center.x + (radius - 16.dp.toPx()) * cos(angle).toFloat(),
+                        center.y + (radius - 16.dp.toPx()) * sin(angle).toFloat())
+                    val end = Offset(center.x + (radius + 18.dp.toPx()) * cos(angle).toFloat(),
+                        center.y + (radius + 18.dp.toPx()) * sin(angle).toFloat())
+                    drawLine(tint, start, end, strokeWidth = 3.dp.toPx(), alpha = ((1f - travel) * fade).coerceIn(0f, 1f))
                 }
             }
+        }
+        Column(
+            Modifier.graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+                alpha = opacity.value
+                translationY = rise.value
+            },
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            val art = when (style) {
+                GiftStageStyle.SMALL -> 112.dp
+                GiftStageStyle.MID -> 156.dp
+                GiftStageStyle.LARGE -> 208.dp
+            }
+            Box(Modifier.size(art + 36.dp), contentAlignment = Alignment.Center) {
+                GiftArtwork(gift, Modifier.size(art), gift.name)
+                if (style != GiftStageStyle.SMALL) {
+                    val stars = if (style == GiftStageStyle.LARGE) {
+                        listOf(Triple((-108).dp, (-76).dp, 23.dp), Triple(100.dp, (-85).dp, 28.dp),
+                            Triple((-117).dp, 58.dp, 18.dp), Triple(110.dp, 69.dp, 21.dp),
+                            Triple((-18).dp, (-113).dp, 18.dp), Triple(39.dp, 112.dp, 16.dp))
+                    } else {
+                        listOf(Triple((-78).dp, (-58).dp, 16.dp), Triple(74.dp, (-64).dp, 18.dp),
+                            Triple((-84).dp, 48.dp, 14.dp), Triple(80.dp, 52.dp, 15.dp))
+                    }
+                    stars.forEach { (x, y, size) ->
+                        Icon(Icons.Rounded.Star, null, Modifier.offset(x, y).size(size), tint = tint)
+                    }
+                }
+            }
+            Text(gift.name, color = Color.White, fontSize = if (style == GiftStageStyle.LARGE) 26.sp else 18.sp,
+                fontWeight = FontWeight.Bold)
         }
     }
 }
