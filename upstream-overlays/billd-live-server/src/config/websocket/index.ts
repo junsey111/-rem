@@ -5,7 +5,7 @@ import { REVENUE_API_URL } from '@/config/secret';
 import { authJwt } from '@/app/auth/authJwt';
 import { mediaSessionHash } from '@/service/media-authority';
 import { RequestRateLimiter } from '@/app/request-rate';
-import { giftEvents } from '@/service/gift-broadcast';
+import { giftEvents, recentAcceptedGifts } from '@/service/gift-broadcast';
 import { persistChat, chatEvents } from '@/service/room-chat';
 import { roomPresence } from '@/service/room-presence';
 import axios from '@/utils/request';
@@ -58,6 +58,7 @@ export const connectWebSocket = (server) => {
       gift_id: String(data.gift_id || ''),
       viewer_id: Number(data.viewer_id),
       quantity: Number(data.quantity || 1),
+      sender_name: typeof data.sender_name === 'string' ? data.sender_name : '',
     });
   };
   giftEvents.on('accepted', notifyGift);
@@ -183,6 +184,11 @@ export const connectWebSocket = (server) => {
               );
             }
             await socket.join(data.roomId);
+            if (socket.connected) {
+              for (const gift of recentAcceptedGifts(data.roomId)) {
+                socket.emit('giftAccepted', gift);
+              }
+            }
             const presenceToken = socketToken(socket);
             const presenceAuth = await authJwt({ req: { headers: { authorization: presenceToken ? `Bearer ${presenceToken}` : undefined } } });
             const presenceRoom = await DBController.searchLiveRoomByRoomId(data.roomId);

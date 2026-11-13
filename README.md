@@ -87,7 +87,7 @@ Android 推送为可选配置。构建时传入 `-PfirebaseApiKey=... -Pfirebase
 
 `LiveKitRoomGateway` 已调用官方 SDK 的 `LiveKit.create()` 和 `Room.connect()`。礼物、充值、榜单、收益、审核和管理员操作必须接入业务 API，由服务端校验余额和权限，不能在客户端计算或保存真实账目。
 
-全屏大礼物使用 [YYEVA-Android](https://github.com/yylive/YYEVA-Android) `1.1.73`（`EvaAnimViewV3`，Apache-2.0；协议说明见 [YYEVA](https://github.com/yylive/YYEVA)）。`GiftOutbox` 只保留未确认的支付意图，保存或失败时不播特效。目录字段与 `GET /revenue/gifts` 一致：`effect_type` 为小写 `none`、`yyeva`、`svga`、`lottie`，另有 `effect_url`、`effect_video_mode`、`effect_md5`、`icon_url`。只有 `yyeva` 且 `effect_url` 指向自有 AE 插件导出的混合 `.mp4` 才会进单路全屏队列。不要把上游 demo 素材当作生产资源。给一条已有礼物挂上测试文件示例：
+全屏大礼物使用 [YYEVA-Android](https://github.com/yylive/YYEVA-Android) `1.1.73`（`EvaAnimViewV3`，Apache-2.0；协议说明见 [YYEVA](https://github.com/yylive/YYEVA)）。`GiftOutbox` 只保留未确认的支付意图，保存或失败时不播特效。目录字段与 `GET /revenue/gifts` 一致：`effect_type` 为小写 `none`、`yyeva`、`svga`、`lottie`，另有 `effect_url`、`effect_video_mode`、`effect_md5`、`icon_url`。只有 `yyeva` 且 `effect_url` 指向自有 AE 插件导出的混合 `.mp4` 才会进单路全屏队列。每一笔服务端已确认的礼物都会进同一条横幅队列，送礼人、观众和主播用同一个 `giftAccepted` 事件（含 `sender_name`）对齐；晚 8 秒内加入的连接会补上最近最多 3 笔。横幅和全屏特效画在直播画面之上的不接收触摸的窗口里，避免主机位 GLSurfaceView 把特效裁掉，聊天和关闭按钮仍可点。不要把上游 demo 素材当作生产资源。字段、重放窗口和测试 SQL 见 [GIFTS_EFFECTS.md](upstream-overlays/GIFTS_EFFECTS.md)。给一条已有礼物挂上测试文件示例：
 
 ```sql
 UPDATE gift_catalog

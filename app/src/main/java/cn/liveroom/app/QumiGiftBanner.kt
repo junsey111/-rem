@@ -22,12 +22,10 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-internal data class GiftSendPresentation(val gift: Gift, val senderName: String,
-    val senderAvatar: String?, val quantity: Int = 1)
-
 @Composable
 internal fun QumiGiftCelebration(gift: Gift, nonce: Int, demo: Boolean,
     senderName: String, senderAvatar: String?, quantity: Int = 1, bottomPadding: Dp = 310.dp,
+    premiumFallback: Boolean? = null,
     onFinished: () -> Unit) {
     val opacity = remember { Animatable(0f) }
     val entrance = remember { Animatable(-56f) }
@@ -42,7 +40,7 @@ internal fun QumiGiftCelebration(gift: Gift, nonce: Int, demo: Boolean,
     }
     // No backdrop or touch handlers: the room and conversation remain usable.
     Box(Modifier.fillMaxSize()) {
-        if (gift.coinPrice >= 500 && gift.yyevaSource() == null) {
+        if (premiumFallback ?: (gift.coinPrice >= 500 && gift.yyevaSource() == null)) {
             QumiPremiumGiftEffect(gift, nonce)
         }
         Row(Modifier.align(Alignment.BottomStart).navigationBarsPadding()

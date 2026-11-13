@@ -15,7 +15,7 @@ import java.io.File
 class YyevaGiftEffectPlayer {
     private var view: EvaAnimViewV3? = null
     private var playToken = 0
-    private var failed = false
+    @Volatile private var failed = false
     private var scheduled = false
     private var callback: ((Boolean) -> Unit)? = null
 

@@ -574,11 +574,8 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
     var roomsLoading by remember { mutableStateOf(true) }
     var roomsError by remember { mutableStateOf<String?>(null) }
     var gifts by remember { mutableStateOf(emptyList<Gift>()) }
-    var giftCelebration by remember { mutableStateOf<Pair<String, GiftSendPresentation>?>(null) }
-    var giftCelebrationNonce by remember { mutableIntStateOf(0) }
     var dmCelebration by remember { mutableStateOf<Gift?>(null) }
     var dmCelebrationNonce by remember { mutableIntStateOf(0) }
-    val celebratedGiftRequests = remember { LinkedHashSet<String>() }
     var wallet by remember { mutableStateOf<Wallet?>(null) }
     var level by remember { mutableStateOf<UserLevel?>(null) }
     var dailyEarnings by remember { mutableStateOf<Earnings?>(null) }
@@ -742,28 +739,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
         }
     }
 
-    fun showConfirmedGift(roomId: String, requestId: String, giftId: String, senderId: Long = session.id, quantity: Int = 1) {
-        if (activeRoom?.stream != roomId || requestId.isBlank()) return
-        val gift = gifts.firstOrNull { it.id == giftId } ?: return
-        if (!celebratedGiftRequests.add(requestId)) return
-        if (celebratedGiftRequests.size > 200) {
-            celebratedGiftRequests.remove(celebratedGiftRequests.first())
-        }
-        giftCelebration = roomId to GiftSendPresentation(gift,
-            if (senderId == session.id) session.username else "用户$senderId",
-            if (senderId == session.id) session.avatar else null, quantity)
-        giftCelebrationNonce++
-        val nonce = giftCelebrationNonce
-        if (senderId != session.id) scope.launch {
-            runCatching { api.searchUsers(session.token, senderId.toString()).firstOrNull { it.id == senderId } }
-                .onSuccess { sender ->
-                    if (sender != null && giftCelebrationNonce == nonce && activeRoom?.stream == roomId) {
-                        giftCelebration = roomId to GiftSendPresentation(gift, sender.username, sender.avatar, quantity)
-                    }
-                }
-        }
-    }
-
     val submitGift: (PendingGift) -> Unit = { intent ->
         if (!giftLoading) {
             giftLoading = true
@@ -778,12 +753,7 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                     wallet = if (recovering) api.recoverGift(session.token, intent) else api.sendGift(session.token, intent)
                     giftOutbox.clear()
                     pendingGift = null
-                    effectSession.offerAccepted(intent, activeRoom?.stream)
-                    val giftPayload = JSONObject(intent.payload)
-                    activeRoom?.stream?.let { roomId ->
-                        showConfirmedGift(roomId, giftPayload.optString("request_id"),
-                            giftPayload.optString("gift_id"), quantity = giftPayload.optInt("quantity", 1))
-                    }
+                    effectSession.offerAccepted(intent, activeRoom?.stream, session.username, session.id)
                     notify("礼物已由服务端确认")
                     // A replay returns the original post-debit balance; refresh the current wallet.
                     runCatching { api.wallet(session.token) }.onSuccess { wallet = it }
@@ -1085,9 +1055,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
         try {
             channel.listen(session.token, roomId) { broadcast ->
                 effectSession.offerBroadcast(broadcast)
-                scope.launch {
-                    showConfirmedGift(broadcast.roomId, broadcast.requestId, broadcast.giftId, broadcast.viewerId, broadcast.quantity)
-                }
             }
             awaitCancellation()
         } finally {
@@ -1590,7 +1557,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
     }
 
     fun leaveRoom() {
-        giftCelebration = null
         showRoomChat=false
         showCohost=false
         showBusiness=null
@@ -2530,9 +2496,6 @@ private fun AuthenticatedApp(session: UserSession, onLogout: () -> Unit, onReque
                 invitations = matchInvitations.filter { it.opponentLiveSessionId == room.stream.toLongOrNull() },
                 onRespondInvitation = respondInvitation,
                 effectSession = effectSession,
-                celebrationGift = giftCelebration?.takeIf { it.first == room.stream }?.second,
-                celebrationNonce = giftCelebrationNonce,
-                onCelebrationFinished = { giftCelebration = null },
                 onEndMatch = {
                     val matchId = activeMatchId
                     if (matchId != null && !matchLoading) scope.launch {
@@ -2972,9 +2935,6 @@ private fun RoomSheet(
     onRespondInvitation: (MatchInvitation, Boolean) -> Unit,
     onEndMatch: () -> Unit,
     effectSession: GiftEffectSession,
-    celebrationGift: GiftSendPresentation?,
-    celebrationNonce: Int,
-    onCelebrationFinished: () -> Unit,
     onGift: (Gift) -> Unit,
     onInviteMatch: (LiveRoom, Int) -> Unit,
 ) {
@@ -3058,7 +3018,9 @@ private fun RoomSheet(
             }
             Text("语音房 · ${room.host}", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
         }
-        GiftEffectOverlay(effectSession, Modifier.fillMaxSize())
+        GiftStageLayer(effectSession, gifts, session.id, session.avatar) { senderId ->
+            api.searchUsers(session.token, senderId.toString()).firstOrNull { it.id == senderId }?.avatar
+        }
         if (gate != null && watchBlocked) WatchBlockedOverlay(gate, wallet, onUnlock, onRetryWatch)
         Column(
             Modifier.align(Alignment.TopCenter).fillMaxWidth()
@@ -3142,11 +3104,6 @@ private fun RoomSheet(
                     Text(if (isHost && matchId != null) "PK 管理" else if (isHost && invitations.isNotEmpty()) "PK 邀请（${invitations.size}）" else if (isHost) "邀请 PK" else "送礼物")
                 }
             }
-        }
-        celebrationGift?.let { event ->
-            QumiGiftCelebration(event.gift, celebrationNonce, demo = false,
-                senderName = event.senderName, senderAvatar = event.senderAvatar, quantity = event.quantity,
-                onFinished = onCelebrationFinished)
         }
     }
     participantProfile?.let { id -> DirectChatProfile(session.token, id, session.id,

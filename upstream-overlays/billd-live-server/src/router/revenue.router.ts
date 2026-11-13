@@ -297,6 +297,7 @@ revenueRouter.post('/gifts/send', async (ctx, next) => {
           giftId: body.gift_id,
           viewerId: user.id,
           quantity: body.quantity || 1,
+          senderName: user.username,
         });
       } catch {
         // The debit is already committed. A missed animation must not turn it into an error.
