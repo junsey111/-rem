@@ -90,6 +90,8 @@ class PlatformHttpException(val statusCode: Int, message: String, val errorCode:
 class ModerationRejectedException(message: String) : IllegalStateException(message)
 
 data class UserProfile(val age: Int?, val region: String?, val source: String, val gender: String? = null)
+data class MomentMedia(val id: String, val path: String, val contentType: String, val bytes: Long, val width: Int, val height: Int)
+data class ReportEvidence(val id: String, val reference: String, val path: String, val bytes: Long, val width: Int, val height: Int)
 data class IdentityVerificationStatus(val enabled: Boolean, val requestId: String?, val status: String?)
 
 data class OperationsSummary(val users: Long, val disabledUsers: Long, val listedRooms: Long, val pendingOrders: Long, val creditedOrders: Long, val observedAt: String)
@@ -114,6 +116,9 @@ data class CloseFriendUser(val id: Long, val username: String, val avatar: Strin
 data class CloseFriendRelations(val friends: List<CloseFriendUser>, val incoming: List<CloseFriendUser>, val outgoing: List<CloseFriendUser>)
 data class ProfileVisitor(val user: PublicUser, val lastSeenAt: String)
 data class NotificationPreferences(val messages: Boolean, val visitors: Boolean, val announcements: Boolean, val marketing: Boolean)
+data class PlatformAnnouncementItem(val id: String, val title: String, val summary: String, val content: String, val createdAt: String, val readAt: String?)
+data class UserNotificationItem(val id: String, val kind: String, val actorId: String?, val title: String, val body: String, val readAt: String?, val createdAt: String)
+data class UserNotifications(val items: List<UserNotificationItem>, val unreadCount: Int, val nextCursor: String)
 data class ModerationLive(val id: String, val creatorId: String, val startedAt: String)
 data class ModerationLives(val lives: List<ModerationLive>, val nextCursor: String)
 data class ModerationAction(val id: String, val requestId: String, val operatorId: String, val liveId: String, val reason: String, val createdAt: String)
@@ -265,9 +270,54 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         parseNotificationPreferences(request("/user/notification-preferences", "PUT", token, JSONObject().put(key, enabled)).getJSONObject("preferences"))
     }
 
+    suspend fun registerPushToken(token: String, pushToken: String) = withContext(Dispatchers.IO) {
+        require(pushToken.length in 20..512)
+        request("/user/push-tokens", "PUT", token, JSONObject().put("token", pushToken).put("platform", "android"))
+        Unit
+    }
+
+    suspend fun removePushToken(token: String, pushToken: String) = withContext(Dispatchers.IO) {
+        require(pushToken.length in 1..512)
+        request("/user/push-tokens", "DELETE", token, JSONObject().put("token", pushToken))
+        Unit
+    }
+
     private fun parseNotificationPreferences(data: JSONObject) = NotificationPreferences(
         data.getBoolean("messages"), data.getBoolean("visitors"), data.getBoolean("announcements"), data.getBoolean("marketing"),
     )
+
+    suspend fun announcements(token: String): List<PlatformAnnouncementItem> = withContext(Dispatchers.IO) {
+        val rows = request("/user/announcements", token = token).getJSONArray("announcements")
+        (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
+            PlatformAnnouncementItem(row.getString("id"), row.getString("title"), row.optString("summary"), row.optString("content"), row.optString("created_at"), row.optString("read_at").takeIf(String::isNotBlank))
+        } }
+    }
+
+    suspend fun markAnnouncementRead(token: String, id: String) = withContext(Dispatchers.IO) {
+        require(id.matches(Regex("[1-9][0-9]{0,19}")))
+        request("/user/announcements/$id/read", "POST", token, JSONObject())
+        Unit
+    }
+
+    suspend fun notifications(token: String, beforeId: String = ""): UserNotifications = withContext(Dispatchers.IO) {
+        val path = "/user/notifications" + if (beforeId.isBlank()) "" else "?before_id=$beforeId"
+        val data = request(path, token = token)
+        val rows = data.getJSONArray("notifications")
+        UserNotifications((0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let { row ->
+            UserNotificationItem(row.getString("id"), row.optString("kind"), row.optString("actor_id").takeIf(String::isNotBlank), row.getString("title"), row.optString("body"), row.optString("read_at").takeIf(String::isNotBlank), row.optString("created_at"))
+        } }, data.optInt("unread_count"), data.optString("next_before_id"))
+    }
+
+    suspend fun markNotificationRead(token: String, id: String) = withContext(Dispatchers.IO) {
+        require(id.matches(Regex("[1-9][0-9]{0,19}")) || id.matches(Regex("announcement:[1-9][0-9]{0,19}")))
+        request("/user/notifications/$id/read", "POST", token, JSONObject())
+        Unit
+    }
+
+    suspend fun markNotificationsReadAll(token: String) = withContext(Dispatchers.IO) {
+        request("/user/notifications/read-all", "POST", token, JSONObject())
+        Unit
+    }
 
     suspend fun moments(token: String, scope: String, beforeId: String = "", userId: Long? = null): Pair<List<MomentPost>, String> = withContext(Dispatchers.IO) {
         require(scope in setOf("all", "following", "mine", "mine_post", "mine_video", "liked_post", "liked_video", "favorite_video", "user", "video"))
@@ -414,6 +464,27 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
                 require(output.size() <= 5 * 1024 * 1024) { "图片太大" }
                 output.toByteArray()
             }
+        } finally { connection.disconnect() }
+    }
+
+    suspend fun uploadReportEvidence(token: String, bytes: ByteArray): ReportEvidence = withContext(Dispatchers.IO) {
+        require(bytes.size in 1..(8 * 1024 * 1024)) { "图片不能超过 8MB" }
+        val connection = URL("${baseUrl.trimEnd('/')}/moments/report-evidence").openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "POST"
+            connection.connectTimeout = 8_000
+            connection.readTimeout = 30_000
+            connection.doOutput = true
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.setRequestProperty("Content-Type", "application/octet-stream")
+            connection.outputStream.use { it.write(bytes) }
+            val status = connection.responseCode
+            val raw = (if (status in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val root = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+            if (status !in 200..299) throw PlatformHttpException(status, root.optString("message").ifBlank { "图片上传失败" })
+            val data = root.getJSONObject("data")
+            val row = data.getJSONObject("evidence")
+            ReportEvidence(row.getString("id"), data.getString("reference"), row.getString("path"), row.optLong("bytes"), row.optInt("width"), row.optInt("height"))
         } finally { connection.disconnect() }
     }
 
