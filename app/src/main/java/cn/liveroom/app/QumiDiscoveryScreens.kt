@@ -521,7 +521,12 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
         loading = false
     }
 
-    ModalBottomSheet(onDismissRequest = { if (!busy) onDismiss() }, sheetState = sheetState, containerColor = LiveStyle.sheetSurface) {
+    ModalBottomSheet(onDismissRequest = { if (!busy) onDismiss() }, sheetState = sheetState, containerColor = LiveStyle.sheetSurface,
+        dragHandle = {
+            Box(Modifier.fillMaxWidth().height(24.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(width = 32.dp, height = 4.dp).clip(CircleShape).background(DiscoveryMuted))
+            }
+        }) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(heightFraction).imePadding()) {
             Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("评论 $visibleCount", Modifier.weight(1f), color = DiscoveryInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
