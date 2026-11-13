@@ -36,4 +36,19 @@ class MomentCommentTest {
         assertNull(api.parseMomentComment(row.put("reply_to_username", JSONObject.NULL)).replyToUsername)
         assertNull(api.parseMomentComment(row.put("reply_to_username", "")).replyToUsername)
     }
+
+    @Test fun pictureAndEmojiCommentsRetainTheirContentAfterReload() {
+        val row = comment().put("content", "图片评论😍🌸").put("media_path", "/moments/12/comments/123/media")
+        val parsed = api.parseMomentComment(row)
+        assertEquals("图片评论😍🌸", parsed.content)
+        assertEquals("/moments/12/comments/123/media", parsed.mediaPath)
+        assertEquals("", api.parseMomentComment(row.put("content", "")).content)
+    }
+
+    @Test fun commentImagePathsMustUseTheAuthenticatedCommentEndpoint() {
+        for (path in listOf("null", "", "https://example.com/image.jpg", "/moments/12/media", "/moments/12/comments/../media")) {
+            assertNull(api.parseMomentComment(comment().put("media_path", path)).mediaPath)
+        }
+        assertNull(api.parseMomentComment(comment().put("media_path", JSONObject.NULL)).mediaPath)
+    }
 }

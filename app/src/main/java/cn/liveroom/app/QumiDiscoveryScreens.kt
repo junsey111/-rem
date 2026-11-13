@@ -38,16 +38,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -490,6 +486,7 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
     var loadError by remember(post.id) { mutableStateOf<String?>(null) }
     var actionError by remember(post.id) { mutableStateOf<String?>(null) }
     var content by remember(post.id) { mutableStateOf("") }
+    var commentImage by remember(post.id) { mutableStateOf<CommentImageDraft?>(null) }
     var deleteTarget by remember(post.id) { mutableStateOf<MomentComment?>(null) }
     val api = remember { LivePlatformApi() }
     val scope = rememberCoroutineScope()
@@ -546,7 +543,7 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
                     }) { Text("$message · 重试") } } }
                     items(comments, key = { it.id }) { comment ->
                         Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                            MomentCommentRow(comment, momentNow, onReply = { replyTarget = comment; focusRequester.requestFocus(); keyboard?.show() },
+                            MomentCommentRow(comment, momentNow, token, onReply = { replyTarget = comment; focusRequester.requestFocus(); keyboard?.show() },
                                 onDelete = { deleteTarget = comment }, enabled = !busy)
                             if (comment.replyCount > 0 || comment.id in expandedRoots) {
                                 TextButton(onClick = {
@@ -563,7 +560,7 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
                                 if (comment.id in loadingReplies) CircularProgressIndicator(Modifier.padding(start = 62.dp).size(18.dp),
                                     color = DiscoveryAccent, strokeWidth = 2.dp)
                                 replies[comment.id].orEmpty().forEach { reply ->
-                                    MomentCommentRow(reply, momentNow, modifier = Modifier.padding(start = 40.dp),
+                                    MomentCommentRow(reply, momentNow, token, modifier = Modifier.padding(start = 40.dp),
                                         onReply = { replyTarget = reply; focusRequester.requestFocus(); keyboard?.show() },
                                         onDelete = { deleteTarget = reply }, enabled = !busy)
                                 }
@@ -592,63 +589,38 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
             }
             actionError?.let { Text(it, Modifier.padding(horizontal = 18.dp, vertical = 4.dp), color = Color(0xFFB4233B), fontSize = 12.sp) }
             HorizontalDivider(color = Color(0xFFF0F0F2))
-            BoxWithConstraints(Modifier.fillMaxWidth().padding(start = 14.dp, top = 14.dp, end = 14.dp, bottom = 2.dp)) {
-                val inputWidth = minOf(maxWidth * .68f, 250.dp)
-                Column {
-                    replyTarget?.let { target -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("回复 @${target.username}", Modifier.weight(1f), color = DiscoveryAccent, fontSize = 12.sp)
-                        TextButton(onClick = { replyTarget = null }) { Text("取消回复", color = DiscoveryMuted, fontSize = 12.sp) }
-                    } }
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        var focused by remember { mutableStateOf(false) }
-                        BasicTextField(
-                            value = content, onValueChange = { content = it.take(500) }, singleLine = true,
-                            modifier = Modifier.width(inputWidth).height(44.dp).focusRequester(focusRequester)
-                                .onFocusChanged { focused = it.isFocused }
-                                .clip(CircleShape).background(Color(0xFFF8F6FC))
-                                .border(1.dp, if (focused) DiscoveryAccent else Color(0xFFE6DDF6), CircleShape)
-                                .padding(horizontal = 16.dp),
-                            textStyle = TextStyle(color = DiscoveryInk, fontSize = 14.sp),
-                            cursorBrush = SolidColor(DiscoveryAccent),
-                            decorationBox = { inner -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
-                                if (content.isEmpty()) Text("说点友善的话…", color = DiscoveryMuted, fontSize = 14.sp)
-                                inner()
-                            } },
-                        )
-                        Spacer(Modifier.weight(1f))
-                        Button(enabled = content.isNotBlank() && !busy, onClick = {
-                            val value = content.trim()
-                            val target = replyTarget
-                            busy = true
-                            keyboard?.hide()
-                            scope.launch {
-                                runCatching { api.publishMomentComment(token, post.id, value, target?.id) }
-                                    .onSuccess { created ->
-                                        val rootId = created.parentId
-                                        if (rootId == null) comments = listOf(created) + comments
-                                        else {
-                                            replies = replies + (rootId to (replies[rootId].orEmpty() + created))
-                                            comments = comments.map { if (it.id == rootId) it.copy(replyCount = it.replyCount + 1) else it }
-                                            expandedRoots = expandedRoots + rootId
-                                        }
-                                        visibleCount++
-                                        content = ""
-                                        replyTarget = null
-                                        actionError = null
-                                        onCountChanged(1)
-                                    }
-                                    .onFailure { actionError = it.message ?: "评论发送失败，请重试" }
-                                busy = false
+            replyTarget?.let { target -> Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("回复 ${target.username}", Modifier.weight(1f), color = DiscoveryAccent, fontSize = 12.sp)
+                TextButton(onClick = { replyTarget = null }) { Text("取消回复", color = DiscoveryMuted, fontSize = 12.sp) }
+            } }
+            QumiCommentComposer(value = content, onValueChange = { content = it },
+                image = commentImage, onImageChange = { commentImage = it }, busy = busy, focusRequester = focusRequester,
+                onSend = {
+                    val value = content.trim()
+                    val target = replyTarget
+                    busy = true
+                    keyboard?.hide()
+                    scope.launch {
+                        runCatching { api.publishMomentComment(token, post.id, value, target?.id, commentImage?.bytes) }
+                            .onSuccess { created ->
+                                val rootId = created.parentId
+                                if (rootId == null) comments = listOf(created) + comments
+                                else {
+                                    replies = replies + (rootId to (replies[rootId].orEmpty() + created))
+                                    comments = comments.map { if (it.id == rootId) it.copy(replyCount = it.replyCount + 1) else it }
+                                    expandedRoots = expandedRoots + rootId
+                                }
+                                visibleCount++
+                                content = ""
+                                commentImage = null
+                                replyTarget = null
+                                actionError = null
+                                onCountChanged(1)
                             }
-                        }, modifier = Modifier.width(70.dp).height(44.dp), shape = CircleShape,
-                            contentPadding = PaddingValues(0.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = DiscoveryAccent)) {
-                            Text(if (busy) "发送中" else "发送", fontSize = 13.sp)
-                        }
+                            .onFailure { actionError = it.message ?: "评论发送失败，请重试" }
+                        busy = false
                     }
-                    Text("${content.length}/500", Modifier.padding(start = 15.dp, top = 3.dp), color = DiscoveryMuted, fontSize = 10.sp)
-                }
-            }
+                })
         }
     }
 
@@ -682,16 +654,17 @@ internal fun QumiMomentCommentsSheet(token: String, post: MomentPost, onDismiss:
 }
 
 @Composable
-private fun MomentCommentRow(comment: MomentComment, now: java.time.Instant, onReply: () -> Unit, onDelete: () -> Unit,
+private fun MomentCommentRow(comment: MomentComment, now: java.time.Instant, token: String, onReply: () -> Unit, onDelete: () -> Unit,
     enabled: Boolean, modifier: Modifier = Modifier) {
     Row(modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         QumiUserAvatar(comment.avatar, comment.username, Modifier.size(34.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(comment.username, color = DiscoveryInk, fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold)
             if (comment.parentId != null) comment.replyToUsername?.let {
-                Text("回复 @$it", color = DiscoveryAccent, fontSize = 12.sp, lineHeight = 16.sp)
+                Text("回复 $it", color = DiscoveryAccent, fontSize = 12.sp, lineHeight = 16.sp)
             }
-            Text(comment.content, color = DiscoveryInk, fontSize = 14.sp, lineHeight = 20.sp)
+            if (comment.content.isNotBlank()) Text(comment.content, color = DiscoveryInk, fontSize = 14.sp, lineHeight = 20.sp)
+            comment.mediaPath?.let { QumiCommentImage(token, it) }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(momentCommentTime(comment.createdAt, now), color = DiscoveryMuted, fontSize = 11.sp, lineHeight = 14.sp)
                 Text("回复", Modifier.clip(RoundedCornerShape(4.dp)).clickable(enabled = enabled, onClick = onReply)

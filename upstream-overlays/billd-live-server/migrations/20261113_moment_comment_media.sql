@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS user_moment_comment_media (
+  comment_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  content_type VARCHAR(32) NOT NULL,
+  bytes LONGBLOB NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -45,6 +45,9 @@ internal fun QumiMomentDetailScreen(
     var likeBusy by remember(post.id) { mutableStateOf(false) }
     var error by remember(post.id) { mutableStateOf<String?>(null) }
     var draft by remember(post.id) { mutableStateOf("") }
+    var commentImage by remember(post.id) { mutableStateOf<CommentImageDraft?>(null) }
+    val commentFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     var replyTarget by remember(post.id) { mutableStateOf<MomentComment?>(null) }
     var deleteTarget by remember(post.id) { mutableStateOf<MomentComment?>(null) }
     var reload by remember(post.id) { mutableIntStateOf(0) }
@@ -62,11 +65,11 @@ internal fun QumiMomentDetailScreen(
 
     fun sendComment() {
         val content = draft.trim()
-        if (content.isEmpty() || busy) return
+        if ((content.isEmpty() && commentImage == null) || busy) return
         busy = true
         val target = replyTarget
         scope.launch {
-            runCatching { api.publishMomentComment(token, post.id, content, target?.id) }
+            runCatching { api.publishMomentComment(token, post.id, content, target?.id, commentImage?.bytes) }
                 .onSuccess { created ->
                     if (created.parentId == null) comments = listOf(created) + comments
                     else {
@@ -77,6 +80,7 @@ internal fun QumiMomentDetailScreen(
                     }
                     onPostChanged(post.copy(commentCount = post.commentCount + 1))
                     draft = ""
+                    commentImage = null
                     replyTarget = null
                     error = null
                 }
@@ -167,7 +171,7 @@ internal fun QumiMomentDetailScreen(
                     TextButton(onClick = { reload++ }) { Text("${error} · 点击重试") }
                 }
                 items(comments, key = { it.id }) { comment ->
-                    MomentDetailComment(comment, now, onReply = { replyTarget = comment },
+                    MomentDetailComment(comment, now, token, onReply = { replyTarget = comment; commentFocus.requestFocus(); keyboard?.show() },
                         onDelete = { deleteTarget = comment })
                     if (comment.replyCount > 0 || comment.id in expanded) TextButton(onClick = {
                         if (comment.id in expanded) expanded = expanded - comment.id
@@ -181,8 +185,8 @@ internal fun QumiMomentDetailScreen(
                         }
                     }) { Text(if (comment.id in expanded) "收起回复" else "查看 ${comment.replyCount} 条回复") }
                     if (comment.id in expanded) replies[comment.id].orEmpty().forEach { reply ->
-                        MomentDetailComment(reply, now, Modifier.padding(start = 38.dp),
-                            onReply = { replyTarget = reply }, onDelete = { deleteTarget = reply })
+                        MomentDetailComment(reply, now, token, Modifier.padding(start = 38.dp),
+                            onReply = { replyTarget = reply; commentFocus.requestFocus(); keyboard?.show() }, onDelete = { deleteTarget = reply })
                     }
                 }
                 if (nextCursor.isNotBlank()) item {
@@ -199,23 +203,15 @@ internal fun QumiMomentDetailScreen(
             }
             replyTarget?.let { target ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("回复 @${target.username}", Modifier.weight(1f), color = LiveStyle.accent, fontSize = 12.sp)
+                    Text("回复 ${target.username}", Modifier.weight(1f), color = LiveStyle.accent, fontSize = 12.sp)
                     TextButton(onClick = { replyTarget = null }) { Text("取消") }
                 }
             }
             Surface(color = Color.White, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp), shadowElevation = 8.dp) {
-            Row(Modifier.fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 42.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(value = draft, onValueChange = { draft = it.take(500) },
-                    placeholder = { Text("说点什么…") }, singleLine = true,
-                    modifier = Modifier.weight(1f), shape = CircleShape,
-                    colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = Color(0xFFF7F3FD), focusedContainerColor = Color(0xFFF7F3FD),
-                        focusedBorderColor = Color(0xFF7951ED), unfocusedBorderColor = Color(0xFFECE4F6), cursorColor = Color(0xFF7951ED)))
-                Spacer(Modifier.width(10.dp))
-                Button(onClick = { sendComment() }, enabled = draft.isNotBlank() && !busy,
-                    shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7951ED))) { Text("发送") }
-            }
+            QumiCommentComposer(value = draft, onValueChange = { draft = it },
+                image = commentImage, onImageChange = { commentImage = it }, busy = busy,
+                onSend = { sendComment() }, focusRequester = commentFocus,
+                modifier = Modifier.padding(bottom = 28.dp))
             }
         }
         }
@@ -241,7 +237,7 @@ internal fun QumiMomentDetailScreen(
 }
 
 @Composable
-private fun MomentDetailComment(comment: MomentComment, now: java.time.Instant,
+private fun MomentDetailComment(comment: MomentComment, now: java.time.Instant, token: String,
     modifier: Modifier = Modifier, onReply: () -> Unit, onDelete: () -> Unit) {
     Surface(modifier.fillMaxWidth(), color = Color.White.copy(alpha = .9f), shape = RoundedCornerShape(16.dp)) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -249,9 +245,10 @@ private fun MomentDetailComment(comment: MomentComment, now: java.time.Instant,
         Column(Modifier.weight(1f).padding(start = 10.dp)) {
             Text(comment.username, color = LiveStyle.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             comment.replyToUsername?.takeIf { it.isNotBlank() && it != "null" }?.let {
-                Text("回复 @$it", color = LiveStyle.accent, fontSize = 12.sp)
+                Text("回复 $it", color = LiveStyle.accent, fontSize = 12.sp)
             }
-            Text(comment.content, color = LiveStyle.ink, fontSize = 14.sp)
+            if (comment.content.isNotBlank()) Text(comment.content, color = LiveStyle.ink, fontSize = 14.sp)
+            comment.mediaPath?.let { QumiCommentImage(token, it) }
             Row(Modifier.height(24.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(momentCommentTime(comment.createdAt, now), color = LiveStyle.muted,
                     fontSize = 11.sp, lineHeight = 16.sp)

@@ -9,7 +9,7 @@ import { REVENUE_API_URL } from '@/config/secret';
 import { CustomError } from '@/model/customError.model';
 import User from '@/model/user.model';
 import FollowRelation from '@/model/followRelation.model';
-import { Moment, MomentComment, MomentFavorite, MomentLike, MomentMedia } from '@/model/moment.model';
+import { Moment, MomentComment, MomentCommentMedia, MomentFavorite, MomentLike, MomentMedia } from '@/model/moment.model';
 import DailyCheckin from '@/model/dailyCheckin.model';
 import axios from '@/utils/request';
 import MomentReview from '@/model/momentReview.model';
@@ -22,7 +22,7 @@ const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
 
 function mediaMeta(ctx) {
   const header = ctx.get('x-moment-meta');
-  if (!header || header.length > 2048 || !/^[A-Za-z0-9+/]+={0,2}$/.test(header))
+  if (!header || header.length > 4096 || !/^[A-Za-z0-9+/]+={0,2}$/.test(header))
     throw new CustomError('动态媒体信息无效', 400, 400);
   let meta: any;
   try { meta = JSON.parse(Buffer.from(header, 'base64').toString('utf8')); }
@@ -31,7 +31,7 @@ function mediaMeta(ctx) {
     throw new CustomError('动态媒体信息无效', 400, 400);
   const content = meta.content.trim();
   if (Array.from(content).length > 500) throw new CustomError('动态内容不能超过 500 个字符', 400, 400);
-  return { kind: meta.kind as 'image' | 'video', content };
+  return { kind: meta.kind as 'image' | 'video', content, replyToId: meta.reply_to_comment_id };
 }
 
 async function readMediaBytes(ctx, limit: number): Promise<Buffer> {
@@ -67,7 +67,10 @@ async function normalizedMedia(kind: 'image' | 'video', input: Buffer) {
 
 async function currentUser(ctx) {
   const auth = await authJwt(ctx);
-  if (auth.code !== 200 || !auth.userInfo?.id) throw new CustomError(auth.message || '请重新登录', auth.code || 401, auth.code || 401);
+  if (auth.code !== 200 || !auth.userInfo?.id) {
+    const status = auth.code === 200 ? 401 : auth.code || 401;
+    throw new CustomError(auth.message || '请重新登录', status, status);
+  }
   return auth.userInfo;
 }
 
@@ -83,6 +86,15 @@ async function visibleMoment(id: string, userId: number) {
       [Op.or]: [{ hidden: false }, { user_id: Number(userId) }] },
   });
 }
+
+async function commentMediaIds(rows: any[]) {
+  const media: any[] = rows.length ? await MomentCommentMedia.findAll({ attributes: ['comment_id'],
+    where: { comment_id: { [Op.in]: rows.map(row => row.id) } }, raw: true }) : [];
+  return new Set(media.map(row => String(row.comment_id)));
+}
+
+const commentMediaPath = (momentId: string | number, commentId: string | number) =>
+  `/moments/${momentId}/comments/${commentId}/media`;
 
 async function checkinStatus(userId: number) {
   const today = new Date().toISOString().slice(0, 10);
@@ -202,7 +214,7 @@ router.get('/interactions', async ctx => {
     return { id: source === 'l' ? `like:${row.moment_id}:${row.user_id}:${new Date(row.created_at).getTime()}` : `comment:${row.id}`,
       type: source === 'l' ? 'like' : row.parent_id ? 'reply' : 'comment',
       actor: { id: Number(actor.id), username: actor.username, avatar: actor.avatar || null },
-      content: source === 'c' ? row.content : null, created_at: row.created_at,
+      content: source === 'c' ? row.content || '[图片]' : null, created_at: row.created_at,
       moment: { id: String(moment.id), user_id: Number(moment.user_id), content: moment.content,
         created_at: moment.created_at, author: { id: Number(author.id), username: author.username, avatar: author.avatar || null },
         comment_count: countById.get(String(moment.id)) || 0, media_kind: mediaKind,
@@ -329,6 +341,7 @@ router.get('/:id/comments', async ctx => {
   const hasMore = rows.length > 30;
   const page = rows.slice(0, 30);
   const authorIds = [...new Set(page.map(row => Number(row.user_id)))];
+  const mediaIds = await commentMediaIds(page);
   const [authors, replyCounts]: any[] = await Promise.all([
     authorIds.length ? User.findAll({ attributes: ['id', 'username', 'avatar'], where: { id: { [Op.in]: authorIds }, status: 1 }, raw: true }) : [],
     page.length ? MomentComment.findAll({ attributes: ['parent_id', [fn('COUNT', col('parent_id')), 'count']],
@@ -339,6 +352,7 @@ router.get('/:id/comments', async ctx => {
   const replyCountById = new Map(replyCounts.map((item: any): [string, number] => [String(item.parent_id), Number(item.count)]));
   const comments = page.map(row => ({ id: String(row.id), user_id: Number(row.user_id), content: row.content,
     created_at: row.created_at, author: authorById.get(Number(row.user_id)) || null,
+    media_path: mediaIds.has(String(row.id)) ? commentMediaPath(ctx.params.id, row.id) : null,
     reply_count: replyCountById.get(String(row.id)) || 0, is_mine: Number(row.user_id) === Number(user.id) }))
     .filter(row => row.author);
   successHandler({ ctx, data: { comments, next_before_id: hasMore ? String(page[page.length - 1].id) : '' } });
@@ -361,11 +375,13 @@ router.get('/:id/comments/:commentId/replies', async ctx => {
   const hasMore = rows.length > 30;
   const page = rows.slice(0, 30);
   const authorIds = [...new Set(page.flatMap(row => [Number(row.user_id), Number(row.reply_to_user_id)].filter(Boolean)))];
+  const mediaIds = await commentMediaIds(page);
   const authors: any[] = authorIds.length ? await User.findAll({ attributes: ['id', 'username', 'avatar'],
     where: { id: { [Op.in]: authorIds }, status: 1 }, raw: true }) : [];
   const authorById = new Map(authors.map((author: any): [number, any] => [Number(author.id), author]));
   const replies = page.map(row => ({ id: String(row.id), parent_id: String(root.id), user_id: Number(row.user_id),
     content: row.content, created_at: row.created_at, author: authorById.get(Number(row.user_id)) || null,
+    media_path: mediaIds.has(String(row.id)) ? commentMediaPath(ctx.params.id, row.id) : null,
     reply_to_username: authorById.get(Number(row.reply_to_user_id))?.username || null,
     is_mine: Number(row.user_id) === Number(user.id) })).filter(row => row.author);
   successHandler({ ctx, data: { replies, next_after_id: hasMore ? String(page[page.length - 1].id) : '' } });
@@ -376,24 +392,56 @@ router.post('/:id/comments', async ctx => {
   if (!user.id) throw new CustomError('请重新登录', 401, 401);
   if (rate.consume(`moment-comment:${user.id}`, 30)) throw new CustomError('评论过于频繁，请稍后重试', 429, 429);
   if (!/^[1-9][0-9]{0,19}$/.test(ctx.params.id)) throw new CustomError('动态不存在', 404, 404);
-  const content = typeof ctx.request.body?.content === 'string' ? ctx.request.body.content.trim() : '';
-  if (!content || Array.from(content).length > 500) throw new CustomError('评论需为 1 到 500 个字符', 400, 400);
+  const meta = ctx.is('application/octet-stream') ? mediaMeta(ctx) : null;
+  if (meta && meta.kind !== 'image') throw new CustomError('评论仅支持图片', 400, 400);
+  const content = meta ? meta.content : typeof ctx.request.body?.content === 'string' ? ctx.request.body.content.trim() : '';
+  if ((!content && !meta) || Array.from(content).length > 500) throw new CustomError('请输入评论或选择图片，文字不超过 500 字', 400, 400);
   const moment: any = await visibleMoment(ctx.params.id, user.id);
   if (!moment) throw new CustomError('动态不存在或不可查看', 404, 404);
-  const replyToId = String(ctx.request.body?.reply_to_comment_id || '');
+  const replyToId = String((meta ? meta.replyToId : ctx.request.body?.reply_to_comment_id) || '');
   if (replyToId && !/^[1-9][0-9]{0,19}$/.test(replyToId)) throw new CustomError('回复目标无效', 400, 400);
   const target: any = replyToId ? await MomentComment.findOne({ attributes: ['id', 'user_id', 'parent_id'],
     where: { id: replyToId, moment_id: moment.id, visible: true,
       user_id: { [Op.notIn]: blockedUserIds(Number(user.id)) } } }) : null;
   if (replyToId && !target) throw new CustomError('回复目标不存在', 404, 404);
   const parentId = target ? target.parent_id || target.id : null;
-  const row: any = await MomentComment.create({ moment_id: moment.id, user_id: user.id,
-    parent_id: parentId, reply_to_user_id: target?.user_id || null, content });
+  const media = meta ? await normalizedMedia('image', await readMediaBytes(ctx, MAX_IMAGE_BYTES)) : null;
+  const database = Moment.sequelize;
+  if (!database) throw Error('Moment database is unavailable');
+  const row: any = await database.transaction(async transaction => {
+    const comment: any = await MomentComment.create({ moment_id: moment.id, user_id: user.id,
+      parent_id: parentId, reply_to_user_id: target?.user_id || null, content }, { transaction });
+    if (media) await MomentCommentMedia.create({ comment_id: comment.id,
+      content_type: media.contentType, bytes: media.bytes }, { transaction });
+    return comment;
+  });
   const replyTo: any = target ? await User.findOne({ attributes: ['username'], where: { id: target.user_id } }) : null;
   successHandler({ ctx, data: { comment: { id: String(row.id), user_id: Number(user.id), content: row.content,
     created_at: row.created_at, parent_id: parentId ? String(parentId) : null,
     reply_to_username: replyTo?.username || null,
+    media_path: media ? commentMediaPath(moment.id, row.id) : null,
     author: { id: Number(user.id), username: user.username, avatar: user.avatar || null }, is_mine: true } } });
+});
+
+router.get('/:id/comments/:commentId/media', async ctx => {
+  const user = await currentUser(ctx);
+  if (!/^[1-9][0-9]{0,19}$/.test(ctx.params.id) || !/^[1-9][0-9]{0,19}$/.test(ctx.params.commentId))
+    throw new CustomError('图片不存在', 404, 404);
+  if (!await visibleMoment(ctx.params.id, Number(user.id))) throw new CustomError('图片不存在', 404, 404);
+  const comment: any = await MomentComment.findOne({ attributes: ['id', 'parent_id'],
+    where: { id: ctx.params.commentId, moment_id: ctx.params.id, visible: true,
+      user_id: { [Op.notIn]: blockedUserIds(Number(user.id)) } } });
+  if (!comment) throw new CustomError('图片不存在', 404, 404);
+  if (comment.parent_id && !await MomentComment.findOne({ attributes: ['id'],
+    where: { id: comment.parent_id, moment_id: ctx.params.id, visible: true,
+      user_id: { [Op.notIn]: blockedUserIds(Number(user.id)) } } }))
+    throw new CustomError('图片不存在', 404, 404);
+  const media: any = await MomentCommentMedia.findByPk(comment.id);
+  if (!media) throw new CustomError('图片不存在', 404, 404);
+  ctx.set('Cache-Control', 'private, no-store');
+  ctx.set('X-Content-Type-Options', 'nosniff');
+  ctx.type = media.content_type;
+  ctx.body = Buffer.from(media.bytes);
 });
 
 router.delete('/:id/comments/:commentId', async ctx => {

@@ -46,3 +46,9 @@ export const MomentComment = sequelize.define('user_moment_comment', {
   indexes: [{ fields: ['moment_id', 'visible', 'id'] }, { fields: ['user_id', 'visible', 'id'] },
     { fields: ['moment_id', 'parent_id', 'visible', 'id'] }],
 });
+
+export const MomentCommentMedia = sequelize.define('user_moment_comment_media', {
+  comment_id: { type: DataTypes.BIGINT.UNSIGNED, primaryKey: true },
+  content_type: { type: DataTypes.STRING(32), allowNull: false },
+  bytes: { type: DataTypes.BLOB('long'), allowNull: false },
+}, { freezeTableName: true, timestamps: false });

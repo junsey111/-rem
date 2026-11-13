@@ -105,7 +105,7 @@ data class MomentPost(val id: String, val userId: Long, val username: String, va
     val reviewStatus: String = "APPROVED", val reviewReason: String = "")
 data class MomentUpload(val kind: String, val bytes: ByteArray)
 data class MomentComment(val id: String, val userId: Long, val username: String, val content: String, val createdAt: String, val isMine: Boolean,
-    val avatar: String? = null, val parentId: String? = null, val replyToUsername: String? = null, val replyCount: Long = 0)
+    val avatar: String? = null, val parentId: String? = null, val replyToUsername: String? = null, val replyCount: Long = 0, val mediaPath: String? = null)
 data class MomentInteraction(val id: String, val type: String, val actorId: Long, val actorName: String,
     val actorAvatar: String?, val content: String?, val createdAt: String, val post: MomentPost)
 data class MomentDailyProgress(val published: Int, val liked: Int, val commented: Int)
@@ -357,29 +357,36 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         Unit
     }
 
+    private fun uploadMomentMedia(path: String, token: String, content: String, upload: MomentUpload,
+        replyToId: String? = null): JSONObject {
+        require(upload.kind == "image" || upload.kind == "video")
+        val maxBytes = if (upload.kind == "image") 5 * 1024 * 1024 else 20 * 1024 * 1024
+        require(upload.bytes.size in 1..maxBytes) { if (upload.kind == "image") "图片不能超过 5MB" else "视频不能超过 20MB" }
+        val meta = JSONObject().put("kind", upload.kind).put("content", content)
+        if (replyToId != null) meta.put("reply_to_comment_id", replyToId)
+        val connection = URL("${baseUrl.trimEnd('/')}$path").openConnection() as HttpURLConnection
+        try {
+            connection.instanceFollowRedirects = false
+            connection.requestMethod = "POST"
+            connection.connectTimeout = 8_000
+            connection.readTimeout = 60_000
+            connection.doOutput = true
+            connection.setFixedLengthStreamingMode(upload.bytes.size)
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            connection.setRequestProperty("Content-Type", "application/octet-stream")
+            connection.setRequestProperty("X-Moment-Meta", android.util.Base64.encodeToString(meta.toString().toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP))
+            connection.outputStream.use { it.write(upload.bytes) }
+            val status = connection.responseCode
+            val raw = (if (status in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val root = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+            if (status !in 200..299) throw PlatformHttpException(status, root.optString("message").ifBlank { "发送失败，请重试" })
+            return root.getJSONObject("data")
+        } finally { connection.disconnect() }
+    }
+
     suspend fun publishMoment(token: String, content: String, upload: MomentUpload? = null): MomentPost = withContext(Dispatchers.IO) {
         val row = if (upload == null) request("/moments", "POST", token, JSONObject().put("content", content)) else {
-            require(upload.kind == "image" || upload.kind == "video")
-            val maxBytes = if (upload.kind == "image") 5 * 1024 * 1024 else 20 * 1024 * 1024
-            require(upload.bytes.size in 1..maxBytes) { if (upload.kind == "image") "图片不能超过 5MB" else "视频不能超过 20MB" }
-            val meta = JSONObject().put("kind", upload.kind).put("content", content)
-            val connection = URL("${baseUrl.trimEnd('/')}/moments").openConnection() as HttpURLConnection
-            try {
-                connection.requestMethod = "POST"
-                connection.connectTimeout = 8_000
-                connection.readTimeout = 60_000
-                connection.doOutput = true
-                connection.setFixedLengthStreamingMode(upload.bytes.size)
-                connection.setRequestProperty("Authorization", "Bearer $token")
-                connection.setRequestProperty("Content-Type", "application/octet-stream")
-                connection.setRequestProperty("X-Moment-Meta", android.util.Base64.encodeToString(meta.toString().toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP))
-                connection.outputStream.use { it.write(upload.bytes) }
-                val status = connection.responseCode
-                val raw = (if (status in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
-                val root = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
-                if (status !in 200..299) throw PlatformHttpException(status, root.optString("message").ifBlank { "发布失败" })
-                root.getJSONObject("data")
-            } finally { connection.disconnect() }
+            uploadMomentMedia("/moments", token, content, upload)
         }
         MomentPost(row.getString("id"), row.getLong("user_id"), "我", row.getString("content"), row.optString("created_at"), 0, false,
             mediaKind = row.optString("media_kind").takeIf { it == "image" || it == "video" },
@@ -388,9 +395,10 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
     }
 
     suspend fun momentImage(token: String, path: String): ByteArray = withContext(Dispatchers.IO) {
-        require(path.matches(Regex("/moments/[1-9][0-9]{0,19}/media")))
+        require(path.matches(Regex("/moments/[1-9][0-9]{0,19}(?:/comments/[1-9][0-9]{0,19})?/media")))
         val connection = URL("${baseUrl.trimEnd('/')}$path").openConnection() as HttpURLConnection
         try {
+            connection.instanceFollowRedirects = false
             connection.connectTimeout = 8_000
             connection.readTimeout = 15_000
             connection.setRequestProperty("Authorization", "Bearer $token")
@@ -439,7 +447,8 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         return MomentComment(row.getString("id"), row.getLong("user_id"), author.getString("username"), row.getString("content"),
             row.optString("created_at"), row.optBoolean("is_mine"),
             if (author.isNull("avatar")) null else author.optString("avatar").takeIf(String::isNotBlank),
-            parentId, replyToUsername, row.optLong("reply_count"))
+            parentId, replyToUsername, row.optLong("reply_count"),
+            row.optString("media_path").takeIf { it.matches(Regex("/moments/[1-9][0-9]{0,19}/comments/[1-9][0-9]{0,19}/media")) })
     }
 
     suspend fun momentComments(token: String, momentId: String, beforeId: String = ""): Pair<List<MomentComment>, String> = withContext(Dispatchers.IO) {
@@ -458,12 +467,14 @@ class LivePlatformApi(private val baseUrl: String = BuildConfig.BILLD_API_URL) {
         (0 until rows.length()).mapNotNull { index -> rows.optJSONObject(index)?.let(::parseMomentComment) } to data.optString("next_after_id")
     }
 
-    suspend fun publishMomentComment(token: String, momentId: String, content: String, replyToId: String? = null): MomentComment = withContext(Dispatchers.IO) {
+    suspend fun publishMomentComment(token: String, momentId: String, content: String, replyToId: String? = null, image: ByteArray? = null): MomentComment = withContext(Dispatchers.IO) {
         require(momentId.matches(Regex("[1-9][0-9]{0,19}")))
         require(replyToId == null || replyToId.matches(Regex("[1-9][0-9]{0,19}")))
         val body = JSONObject().put("content", content)
         if (replyToId != null) body.put("reply_to_comment_id", replyToId)
-        parseMomentComment(request("/moments/$momentId/comments", "POST", token, body).getJSONObject("comment"))
+        val data = if (image == null) request("/moments/$momentId/comments", "POST", token, body)
+            else uploadMomentMedia("/moments/$momentId/comments", token, content, MomentUpload("image", image), replyToId)
+        parseMomentComment(data.getJSONObject("comment"))
     }
 
     suspend fun deleteMomentComment(token: String, momentId: String, commentId: String): Long = withContext(Dispatchers.IO) {
